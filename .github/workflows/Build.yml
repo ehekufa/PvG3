@@ -21,12 +21,25 @@ jobs:
         run: |
           set -e
           NDK="$ANDROID_NDK_ROOT"
-          TC="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          GLUE="$NDK/sources/android/native_app_glue"
-          mkdir -p staging/lib/arm64-v8a staging/lib/armeabi-v7a
+          echo "NDK=$NDK"
+          # native_app_glue — это исходник-помощник, не системный заголовок;
+          # путь зависит от версии NDK, поэтому ищем его, а не шьём жёстко.
+          GLUE_HDR="$(find "$NDK" -path '*/android/native_app_glue.h' 2>/dev/null | head -1)"
+          GLUE_SRC="$(find "$NDK" -name 'android_native_app_glue.c' 2>/dev/null | head -1)"
+          if [ -z "$GLUE_HDR" ] || [ -z "$GLUE_SRC" ]; then
+            echo "::error::native_app_glue not found under $NDK"
+            find "$NDK" -iname '*native_app_glue*' || true
+            exit 1
+          fi
+          GLUE_INC="$(dirname "$(dirname "$GLUE_HDR")")"
+          echo "glue header: $GLUE_HDR"
+          echo "glue source: $GLUE_SRC"
+          echo "glue -I:     $GLUE_INC"
 
-          SRC="src/game.c src/android_main.c $GLUE/android_native_app_glue.c"
-          CFLAGS="-O3 -s -fPIC -Isrc -I$GLUE"
+          TC="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          mkdir -p staging/lib/arm64-v8a staging/lib/armeabi-v7a
+          SRC="src/game.c src/android_main.c $GLUE_SRC"
+          CFLAGS="-O3 -s -fPIC -Isrc -I$GLUE_INC"
           LIBS="-landroid -llog -lEGL -lGLESv2 -lm"
 
           echo ":: Compiling arm64-v8a (64-bit)"
