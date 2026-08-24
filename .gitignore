@@ -1,0 +1,11 @@
+# build / generated artifacts
+host_test
+sim_test
+*.o
+*.so
+*.apk
+aligned.apk
+unsigned.apk
+staging/
+build/
+shots/
