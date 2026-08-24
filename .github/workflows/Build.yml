@@ -1,0 +1,62 @@
+name: Build PvG3 (Android APK, arm64 + arm32)
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Android APK (arm64-v8a + armeabi-v7a, Android 10+)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: android-actions/setup-android@v3
+      - uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r25c
+
+      - name: Build native library (both ABIs)
+        run: |
+          set -e
+          NDK="$ANDROID_NDK_ROOT"
+          TC="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          GLUE="$NDK/sources/android/native_app_glue"
+          mkdir -p staging/lib/arm64-v8a staging/lib/armeabi-v7a
+
+          SRC="src/game.c src/android_main.c $GLUE/android_native_app_glue.c"
+          CFLAGS="-O3 -s -fPIC -Isrc -I$GLUE"
+          LIBS="-landroid -llog -lEGL -lGLESv2 -lm"
+
+          echo ":: Compiling arm64-v8a (64-bit)"
+          "$TC/aarch64-linux-android29-clang" $CFLAGS -shared $SRC $LIBS \
+            -o staging/lib/arm64-v8a/libpvg3.so
+
+          echo ":: Compiling armeabi-v7a (32-bit)"
+          "$TC/armv7a-linux-androideabi29-clang" $CFLAGS -shared $SRC $LIBS \
+            -o staging/lib/armeabi-v7a/libpvg3.so
+
+      - name: Package, align and sign single APK
+        run: |
+          set -e
+          SDK="$ANDROID_HOME"
+          BT="$SDK/build-tools/34.0.0"
+
+          "$BT/aapt" package -f -M AndroidManifest.xml \
+            -I "$SDK/platforms/android-34/android.jar" \
+            -F unsigned.apk ./staging/
+
+          "$BT/zipalign" -f 4 unsigned.apk aligned.apk
+
+          keytool -genkey -v -keystore pvg3.keystore -storepass android \
+            -alias pvg3 -keypass android -keyalg RSA -keysize 2048 \
+            -validity 10000 -dname "CN=PvG3" 2>/dev/null || true
+
+          "$BT/apksigner" sign --ks pvg3.keystore --ks-pass pass:android \
+            --out PvG3.apk aligned.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PvG3-Android-arm64-arm32
+          path: PvG3.apk
