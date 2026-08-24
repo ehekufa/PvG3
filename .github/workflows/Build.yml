@@ -13,25 +13,25 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: android-actions/setup-android@v3
-      - uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: r25c
 
       - name: Build native library (both ABIs)
         run: |
           set -e
-          NDK="$ANDROID_NDK_ROOT"
+          # NDK предустановлен на раннере ($ANDROID_NDK_ROOT).
+          NDK="${ANDROID_NDK_ROOT:-$(ls -d "$ANDROID_HOME"/ndk/* 2>/dev/null | head -1)}"
           echo "NDK=$NDK"
-          # native_app_glue — это исходник-помощник, не системный заголовок;
-          # путь зависит от версии NDK, поэтому ищем его, а не шьём жёстко.
-          GLUE_HDR="$(find "$NDK" -path '*/android/native_app_glue.h' 2>/dev/null | head -1)"
+          [ -n "$NDK" ] || { echo "::error::no NDK found"; exit 1; }
+
+          # native_app_glue лежит в <ndk>/sources/android/native_app_glue,
+          # заголовок называется android_native_app_glue.h — ищем по имени.
+          GLUE_HDR="$(find "$NDK" -name 'android_native_app_glue.h' 2>/dev/null | head -1)"
           GLUE_SRC="$(find "$NDK" -name 'android_native_app_glue.c' 2>/dev/null | head -1)"
           if [ -z "$GLUE_HDR" ] || [ -z "$GLUE_SRC" ]; then
             echo "::error::native_app_glue not found under $NDK"
             find "$NDK" -iname '*native_app_glue*' || true
             exit 1
           fi
-          GLUE_INC="$(dirname "$(dirname "$GLUE_HDR")")"
+          GLUE_INC="$(dirname "$GLUE_HDR")"
           echo "glue header: $GLUE_HDR"
           echo "glue source: $GLUE_SRC"
           echo "glue -I:     $GLUE_INC"
