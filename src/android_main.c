@@ -171,8 +171,10 @@ void android_main(struct android_app *app) {
     while (!app->destroyRequested) {
         int events;
         struct android_poll_source *src;
-        /* Block while we have no window; poll every frame once we are drawing. */
-        while (ALooper_pollAll(engine.ready ? 0 : -1, NULL, &events, (void **)&src) >= 0) {
+        /* Block while we have no window; poll every frame once we are drawing.
+         * (ALooper_pollAll is unavailable in newer NDKs — pollOnce in a loop
+         *  drains all pending events identically.) */
+        while (ALooper_pollOnce(engine.ready ? 0 : -1, NULL, &events, (void **)&src) >= 0) {
             if (src) src->process(app, src);
             if (app->destroyRequested) break;
         }
