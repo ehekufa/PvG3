@@ -167,9 +167,54 @@ static const uint8_t FNT[][7] = {
     ['+'] = {0x00,0x04,0x04,0x1F,0x04,0x04,0x00},
 };
 
-static void draw_char(int x, int y, int s, uint32_t c, char ch) {
-    if (ch < ' ' || ch > '~') ch = '?';
-    const uint8_t *g = FNT[(int)ch];
+/* Cyrillic: А-Я (U+0410..U+042F) + Ё (index 32). Rows top..bottom, MSB = left. */
+static const uint8_t FNT_CYR[33][7] = {
+    {0x0E,0x11,0x11,0x1F,0x11,0x11,0x11}, /* А */
+    {0x1F,0x10,0x10,0x1E,0x11,0x11,0x1E}, /* Б */
+    {0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E}, /* В */
+    {0x1F,0x10,0x10,0x10,0x10,0x10,0x10}, /* Г */
+    {0x0E,0x0A,0x0A,0x0A,0x1F,0x15,0x11}, /* Д */
+    {0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F}, /* Е */
+    {0x15,0x15,0x0E,0x1F,0x0E,0x15,0x15}, /* Ж */
+    {0x1E,0x11,0x01,0x0E,0x01,0x11,0x1E}, /* З */
+    {0x11,0x11,0x19,0x15,0x13,0x11,0x11}, /* И */
+    {0x0E,0x00,0x11,0x19,0x15,0x13,0x11}, /* Й */
+    {0x11,0x12,0x14,0x18,0x14,0x12,0x11}, /* К */
+    {0x0E,0x11,0x11,0x11,0x11,0x11,0x11}, /* Л */
+    {0x11,0x1B,0x15,0x15,0x11,0x11,0x11}, /* М */
+    {0x11,0x11,0x11,0x1F,0x11,0x11,0x11}, /* Н */
+    {0x0E,0x11,0x11,0x11,0x11,0x11,0x0E}, /* О */
+    {0x1F,0x11,0x11,0x11,0x11,0x11,0x11}, /* П */
+    {0x1E,0x11,0x11,0x1E,0x10,0x10,0x10}, /* Р */
+    {0x0E,0x11,0x10,0x10,0x10,0x11,0x0E}, /* С */
+    {0x1F,0x04,0x04,0x04,0x04,0x04,0x04}, /* Т */
+    {0x11,0x11,0x0A,0x04,0x04,0x04,0x04}, /* У */
+    {0x04,0x0E,0x15,0x15,0x15,0x0E,0x04}, /* Ф */
+    {0x11,0x11,0x0A,0x04,0x0A,0x11,0x11}, /* Х */
+    {0x11,0x19,0x15,0x13,0x11,0x1F,0x01}, /* Ц */
+    {0x11,0x11,0x11,0x1F,0x01,0x01,0x01}, /* Ч */
+    {0x11,0x11,0x11,0x11,0x11,0x11,0x1F}, /* Ш */
+    {0x11,0x11,0x11,0x11,0x11,0x1F,0x01}, /* Щ */
+    {0x10,0x10,0x1E,0x11,0x11,0x11,0x1E}, /* Ъ */
+    {0x12,0x12,0x12,0x1E,0x12,0x12,0x1E}, /* Ы */
+    {0x10,0x10,0x10,0x1E,0x11,0x11,0x1E}, /* Ь */
+    {0x0E,0x11,0x01,0x07,0x01,0x11,0x0E}, /* Э */
+    {0x16,0x19,0x19,0x19,0x19,0x19,0x16}, /* Ю */
+    {0x0F,0x11,0x11,0x0F,0x01,0x01,0x01}, /* Я */
+    {0x0A,0x00,0x1F,0x10,0x1E,0x10,0x1F}, /* Ё */
+};
+
+static const uint8_t *glyph_for(uint32_t cp) {
+    if (cp == 0x451) cp = 0x401;                    /* ё -> Ё */
+    if (cp >= 0x430 && cp <= 0x44F) cp -= 0x20;     /* а-я -> А-Я */
+    if (cp == 0x401) return FNT_CYR[32];
+    if (cp >= 0x410 && cp <= 0x42F) return FNT_CYR[cp - 0x410];
+    if (cp >= ' ' && cp <= '~') return FNT[cp];
+    return NULL;
+}
+
+static void draw_char(int x, int y, int s, uint32_t c, uint32_t cp) {
+    const uint8_t *g = glyph_for(cp);
     if (!g) return;
     for (int r = 0; r < 7; r++)
         for (int cc = 0; cc < 5; cc++)
@@ -177,11 +222,26 @@ static void draw_char(int x, int y, int s, uint32_t c, char ch) {
                 rect(x + cc * s, y + r * s, x + cc * s + s - 1, y + r * s + s - 1, c);
 }
 
+/* Decodes UTF-8 (ASCII + Cyrillic) so Russian story text renders. */
 static void draw_text(int x, int y, int s, uint32_t c, const char *str) {
-    for (; *str; str++) { draw_char(x, y, s, c, *str); x += 6 * s; }
+    const unsigned char *p = (const unsigned char *)str;
+    while (*p) {
+        uint32_t cp = *p++;
+        if (cp >= 0xC0 && *p) {                     /* 2-byte UTF-8 */
+            uint32_t b = *p++;
+            cp = ((b & 0xC0) == 0x80) ? (((cp & 0x1F) << 6) | (b & 0x3F)) : '?';
+        }
+        draw_char(x, y, s, c, cp);
+        x += 6 * s;
+    }
 }
 
-static int text_w(int s, const char *str) { return (int)strlen(str) * 6 * s; }
+static int text_w(int s, const char *str) {
+    int n = 0;
+    for (const unsigned char *p = (const unsigned char *)str; *p; p++)
+        if ((*p & 0xC0) != 0x80) n++;               /* code points, not bytes */
+    return n * 6 * s;
+}
 
 static void draw_text_c(int cx, int y, int s, uint32_t c, const char *str) {
     draw_text(cx - text_w(s, str) / 2, y, s, c, str);
@@ -250,10 +310,23 @@ static float sky_sun_t;
 static float spawn_t;
 static int to_spawn;
 static int total_zombies;
-static float final_t;
 static float banner_t;
 static float global_t;
 static float flash_t;
+static int boss_spawned;
+static int story_idx;
+static const char *banner_text;
+
+/* story beats: shown as banners as the goose horde progresses (fraction of
+ * the horde already spawned). The tale of the portal, Kirill and Khlebushek. */
+static const struct { float at; const char *text; } STORY[] = {
+    { 0.02f, "МЫ С КИРИЛЛОМ ПРОШЛИ ЧЕРЕЗ ПОРТАЛ!" },
+    { 0.12f, "ХЛЕБУШЕК-ГУСЬ ДРУЖИТ С НАМИ!" },
+    { 0.35f, "УТКИ УКРАЛИ ГУСЕЙ И ПЕРЕДЕЛАЛИ ИХ!" },
+    { 0.60f, "ХЛЕБУШЕК ВЛЮБИЛСЯ В КОРОЛЕВУ УТОК..." },
+    { 0.85f, "ХЛЕБУШЕК: НЕ УБИВАЙТЕ ЕЁ, НО СПАСИТЕ ГУСЕЙ!" },
+};
+#define STORY_N ((int)(sizeof(STORY) / sizeof(STORY[0])))
 
 static Plant grid[ROWS][COLS];
 static Zombie zomb[ZMAX];
@@ -394,38 +467,84 @@ static void draw_plant(int cx, int cy, int type, float hpfrac, float sway, int e
     }
 }
 
-static void draw_zombie(const Zombie *z) {
+/* ------------------------------------------------------------------ */
+/* drawing: enemies (geese) + the duck-queen boss                      */
+/* ------------------------------------------------------------------ */
+
+static void draw_goose(const Zombie *z) {
     float fr = z->hp / z->maxhp; if (fr > 1) fr = 1; if (fr < 0) fr = 0;
-    uint32_t body = z->slow ? COL(120, 160, 175) : COL(150, 170, 130);
-    uint32_t dark = z->slow ? COL(70, 100, 120) : COL(80, 105, 70);
-    body = blend(body, COL(40, 30, 25), (int)((1 - fr) * 90));
-    int x = (int)z->x, y = CELL_CY(z->row) - 6;
-    float w = sinf(z->anim) * 4;
-    /* legs */
-    rect(x - 10, y + 28, x - 2 + (int)w, y + 54, dark);
-    rect(x + 2 - (int)w, y + 28, x + 10, y + 54, dark);
-    /* torso */
-    rect(x - 14, y - 6, x + 12, y + 32, body);
-    /* arms reaching right */
-    rect(x + 8, y - 4 + (int)(w * 0.5f), x + 30, y + 6, body);
-    rect(x + 8, y + 8 - (int)(w * 0.5f), x + 30, y + 18, body);
-    /* head */
-    disc(x + 2, y - 16, 15, body);
-    disc(x - 2, y - 18, 3, COL(230, 230, 230));
-    disc(x + 9, y - 18, 3, COL(230, 230, 230));
-    rect(x - 4, y - 8, x + 8, y - 4, dark);
+    uint32_t body  = z->slow ? COL(185, 210, 228) : COL(246, 246, 240);
+    uint32_t shade = z->slow ? COL(140, 170, 200) : COL(214, 214, 205);
+    int x = (int)z->x, y = CELL_CY(z->row) + 10;
+    float w = sinf(z->anim) * 5;                       /* waddle */
+    /* legs + webbed feet */
+    line_thick(x - 6, y + 10, x - 6 + (int)w, y + 28, 4, COL(235, 145, 45));
+    line_thick(x + 8, y + 10, x + 8 - (int)w, y + 28, 4, COL(235, 145, 45));
+    ellipse(x - 6 + (int)w, y + 30, 8, 3, COL(235, 145, 45));
+    ellipse(x + 8 - (int)w, y + 30, 8, 3, COL(235, 145, 45));
+    /* body, wing, tail */
+    ellipse(x, y, 24, 16, body);
+    ellipse(x + 5, y + 3, 16, 10, shade);
+    line_thick(x + 20, y - 4, x + 31, y - 13, 5, body);
+    /* neck + head (facing left) */
+    line_thick(x - 13, y - 5, x - 20, y - 33, 8, body);
+    disc(x - 20, y - 38, 10, body);
+    /* beak */
+    line_thick(x - 28, y - 39, x - 39, y - 36, 5, COL(240, 150, 45));
+    /* eye */
+    disc(x - 23, y - 41, 2, COL(25, 25, 25));
+    /* damage tint */
+    if (fr < 0.999f)
+        ellipse(x, y, 24, 16, blend(COL(150, 80, 60), body, (int)((1 - fr) * 90)));
     /* headgear */
-    if (z->type == 1) { /* cone */
-        int by = y - 28;
-        line_thick(x + 2, by + 24, x + 2, by, 16, COL(225, 115, 40));
-        rect(x - 5, by + 4, x + 9, by + 7, COL(255, 160, 80));
-        rect(x - 3, by + 12, x + 7, by + 15, COL(255, 160, 80));
-    } else if (z->type == 2) { /* bucket */
-        rect(x - 12, y - 30, x + 16, y - 14, COL(115, 120, 130));
-        rect(x - 12, y - 30, x + 16, y - 26, COL(150, 155, 165));
-        rect(x - 14, y - 22, x + 18, y - 20, COL(80, 85, 95));
+    if (z->type == 1) {                                /* cone goose */
+        int hy = y - 52;
+        line_thick(x - 20, hy + 16, x - 20, hy, 13, COL(230, 115, 40));
+        rect(x - 26, hy + 4, x - 14, hy + 7, COL(255, 165, 85));
+        rect(x - 24, hy + 11, x - 16, hy + 14, COL(255, 165, 85));
+    } else if (z->type == 2) {                         /* bucket goose */
+        rect(x - 31, y - 58, x - 9, y - 44, COL(118, 123, 133));
+        rect(x - 31, y - 58, x - 9, y - 54, COL(155, 160, 170));
+        rect(x - 33, y - 50, x - 7, y - 48, COL(85, 90, 100));
     }
-    if (z->slow) disc(x + 2, y - 16, 16, blend(COL(150, 210, 255), FB[0], 60));
+    if (z->slow) ellipse(x, y, 26, 18, blend(COL(160, 215, 255), body, 70));
+}
+
+static void draw_duck_boss(const Zombie *z) {
+    float fr = z->hp / z->maxhp; if (fr > 1) fr = 1; if (fr < 0) fr = 0;
+    uint32_t body  = z->slow ? COL(205, 220, 235) : COL(252, 250, 244);
+    uint32_t shade = COL(222, 218, 208);
+    int x = (int)z->x, y = CELL_CY(z->row) + 14;
+    float w = sinf(z->anim) * 7;
+    /* legs */
+    line_thick(x - 10, y + 24, x - 10 + (int)w, y + 40, 6, COL(235, 145, 45));
+    line_thick(x + 14, y + 24, x + 14 - (int)w, y + 40, 6, COL(235, 145, 45));
+    /* big body + flapping wing + tail */
+    ellipse(x, y, 44, 30, body);
+    ellipse(x + 8, y + 4, 30, 16 + (int)w, shade);
+    line_thick(x + 38, y - 10, x + 58, y - 22, 9, body);
+    /* neck + head */
+    line_thick(x - 26, y - 8, x - 32, y - 54, 13, body);
+    disc(x - 32, y - 62, 17, body);
+    /* beak */
+    line_thick(x - 45, y - 63, x - 62, y - 58, 8, COL(240, 150, 45));
+    /* angry eye + brow */
+    disc(x - 36, y - 67, 3, COL(25, 25, 25));
+    line_thick(x - 44, y - 74, x - 31, y - 71, 3, COL(40, 30, 30));
+    /* crown (she IS the queen) */
+    rect(x - 42, y - 86, x - 22, y - 79, COL(255, 208, 60));
+    rect(x - 42, y - 92, x - 37, y - 79, COL(255, 208, 60));
+    rect(x - 34, y - 94, x - 29, y - 79, COL(255, 208, 60));
+    rect(x - 26, y - 92, x - 21, y - 79, COL(255, 208, 60));
+    disc(x - 32, y - 84, 2, COL(230, 60, 70));         /* jewel */
+    /* damage tint */
+    if (fr < 0.999f)
+        ellipse(x, y, 44, 30, blend(COL(150, 60, 50), body, (int)((1 - fr) * 80)));
+}
+
+static void draw_enemy(const Zombie *z) {
+    if (z->type == 3) draw_duck_boss(z);
+    else              draw_goose(z);
 }
 
 /* ------------------------------------------------------------------ */
@@ -450,6 +569,22 @@ static void spawn_zombie(void) {
             z->hp = z->maxhp = (float)hp[t];
             z->speed = 22 + rndf() * 6;
             z->eating = 0; z->slow = 0; z->anim = rndf() * 6.28f;
+            return;
+        }
+}
+
+/* The Duck Queen herself — the final-wave boss. */
+static void spawn_boss(void) {
+    for (int i = 0; i < ZMAX; i++)
+        if (!zomb[i].active) {
+            Zombie *z = &zomb[i];
+            z->active = 1;
+            z->row = (int)(rndf() * ROWS);
+            z->x = GAME_W + 60;
+            z->type = 3;
+            z->hp = z->maxhp = 6000;
+            z->speed = 13;
+            z->eating = 0; z->slow = 0; z->anim = 0;
             return;
         }
 }
@@ -494,7 +629,8 @@ static void reset_play(void) {
     total_zombies = 26;
     to_spawn = total_zombies;
     spawn_t = 18.0f;
-    final_t = 0; banner_t = 0; flash_t = 0;
+    banner_t = 0; flash_t = 0;
+    boss_spawned = 0; story_idx = 0; banner_text = NULL;
 }
 
 void game_init(void) {
@@ -518,7 +654,9 @@ void game_debug_snapshot(void) {
     grid[2][3].type = PT_CHERRY; grid[2][3].hp = PDEF[PT_CHERRY].hp; grid[2][3].fuse = 0.5f;
     grid[4][4].type = PT_POTATO; grid[4][4].hp = PDEF[PT_POTATO].hp; grid[4][4].fuse = 0; grid[4][4].armed = 1;
     spawn_zombie(); zomb[0].x = 1080; zomb[0].row = 2; zomb[0].type = 1;
-    spawn_zombie(); zomb[1].x = 1160; zomb[1].row = 1; zomb[0].type = 0;
+    spawn_zombie(); zomb[1].x = 1160; zomb[1].row = 1; zomb[1].type = 0;
+    spawn_boss();   zomb[2].x = 1150; zomb[2].row = 4;
+    banner_text = STORY[1].text; banner_t = 5.0f; story_idx = 2;
     spawn_pea(2, 400, 20, 0);
     spawn_pea(1, 520, 20, 0);
     spawn_sun(700, 360, 1); suns[0].target_y = 360; suns[0].y = 360;
@@ -574,10 +712,26 @@ static void update_play(float dt) {
             to_spawn--;
             float prog = 1.0f - (float)to_spawn / total_zombies;
             spawn_t = (6.0f - 3.6f * prog) + rndf() * 1.5f;
-            if (to_spawn == 6 && final_t == 0) { final_t = 4.0f; spawn_t = 1.0f; }
+            if (to_spawn == 6 && !boss_spawned) {      /* final wave: the queen */
+                boss_spawned = 1;
+                spawn_t = 1.0f;
+                spawn_boss();
+                banner_text = "КОРОЛЕВА УТОК ИДЁТ!";
+                banner_t = 5.0f;
+            }
         }
     }
-    if (final_t > 0) final_t -= dt;
+
+    /* story beats (the portal, Kirill, Khlebushek...) */
+    if (banner_t <= 0 && story_idx < STORY_N) {
+        float prog = 1.0f - (float)to_spawn / total_zombies;
+        if (prog >= STORY[story_idx].at) {
+            banner_text = STORY[story_idx].text;
+            banner_t = 5.0f;
+            story_idx++;
+        }
+    }
+    if (banner_t > 0) banner_t -= dt;
 
     /* plants */
     for (int r = 0; r < ROWS; r++)
@@ -637,7 +791,7 @@ static void update_play(float dt) {
             if (!z->active || z->row != pe->row) continue;
             if (pe->x >= z->x - 24 && pe->x <= z->x + 20) {
                 z->hp -= pe->dmg;
-                if (pe->snow) z->slow = 5;
+                if (pe->snow && z->type != 3) z->slow = 5;   /* the queen ignores frost */
                 burst(pe->x, pe->y, 5, pe->snow ? COL(180, 230, 255) : COL(120, 200, 90), 90);
                 pe->active = 0;
                 if (z->hp <= 0) {
@@ -673,9 +827,10 @@ static void update_play(float dt) {
         int col = (int)((z->x - LAWN_X) / CELL_W);
         if (col < 0) col = 0; if (col >= COLS) col = COLS - 1;
         Plant *p = &grid[z->row][col];
-        if (p->type >= 0 && z->x <= CELL_CX(col) + 28) {
+        int reach = (z->type == 3) ? 62 : 28;          /* the queen's beak is long */
+        if (p->type >= 0 && z->x <= CELL_CX(col) + reach) {
             z->eating = 1;
-            p->hp -= 100 * dt;
+            p->hp -= (z->type == 3 ? 5000.0f : 100.0f) * dt;   /* she smashes plants */
         } else {
             z->eating = 0;
             z->x -= spd * dt;
@@ -688,7 +843,16 @@ static void update_play(float dt) {
         mower[r].x += 520 * dt;
         for (int i = 0; i < ZMAX; i++) {
             Zombie *z = &zomb[i];
-            if (z->active && z->row == r && z->x < mower[r].x + 40 && z->x > mower[r].x - 20) {
+            if (!z->active || z->row != r) continue;
+            if (z->type == 3) {                        /* the queen SMASHES the mower */
+                if (z->x < mower[r].x + 60) {
+                    mower[r].running = 0;
+                    mower[r].used = 1;
+                    burst(mower[r].x, CELL_CY(r), 26, COL(220, 70, 60), 220);
+                }
+                continue;
+            }
+            if (z->x < mower[r].x + 40 && z->x > mower[r].x - 20) {
                 z->active = 0;
                 burst(z->x, CELL_CY(r), 20, COL(200, 60, 60), 200);
             }
@@ -830,7 +994,7 @@ static void draw_seed_bar(void) {
     }
     /* wave progress */
     int spawned = total_zombies - to_spawn;
-    draw_text(1060, 18, 3, COL(230, 220, 190), "WAVE");
+    draw_text(1060, 18, 3, COL(230, 220, 190), "ВОЛНА");
     rect(1060, 40, 1240, 52, COL(60, 40, 25));
     rect(1060, 40, 1060 + spawned * 180 / total_zombies, 52, COL(220, 90, 70));
     draw_int(1080, 60, 3, COL(240, 240, 240), alive_count());
@@ -863,7 +1027,7 @@ static void render(void) {
     /* zombies, sorted by row so closer rows draw on top */
     for (int r = 0; r < ROWS; r++)
         for (int i = 0; i < ZMAX; i++)
-            if (zomb[i].active && zomb[i].row == r) draw_zombie(&zomb[i]);
+            if (zomb[i].active && zomb[i].row == r) draw_enemy(&zomb[i]);
     /* peas */
     for (int i = 0; i < PEAMAX; i++)
         if (peas[i].active) disc((int)peas[i].x, (int)peas[i].y, 9,
@@ -886,15 +1050,33 @@ static void render(void) {
 
     draw_seed_bar();
 
-    if (final_t > 0)
-        draw_text_c(GAME_W / 2, 160, 6, COL(255, 90, 70), "FINAL WAVE!");
+    /* story banner (portal, Kirill, Khlebushek, the queen...) */
+    if (banner_t > 0 && banner_text) {
+        int bs = 3;
+        while (bs > 1 && text_w(bs, banner_text) > GAME_W - 120) bs--;
+        int bw = text_w(bs, banner_text) + 44;
+        rect_blend(GAME_W / 2 - bw / 2, 156, GAME_W / 2 + bw / 2, 160 + 7 * bs + 10, COL(12, 12, 26), 205);
+        draw_text_c(GAME_W / 2, 162, bs, COL(255, 240, 180), banner_text);
+    }
+
+    /* duck-queen boss health bar */
+    for (int i = 0; i < ZMAX; i++)
+        if (zomb[i].active && zomb[i].type == 3) {
+            float bf = zomb[i].hp / zomb[i].maxhp;
+            if (bf < 0) bf = 0;
+            if (bf > 1) bf = 1;
+            rect(GAME_W / 2 - 220, 693, GAME_W / 2 + 220, 717, COL(22, 22, 32));
+            rect(GAME_W / 2 - 216, 697, GAME_W / 2 - 216 + (int)(432 * bf), 713, COL(225, 60, 75));
+            draw_text_c(GAME_W / 2, 698, 2, COL(255, 235, 150), "КОРОЛЕВА УТОК");
+            break;
+        }
 
     if (phase == PH_MENU)
-        draw_overlay_msg("PLANTS VS ZOMBIES", "TAP TO START", 8);
+        draw_overlay_msg("РАСТЕНИЯ ПРОТИВ ГУСЕЙ", "НАЖМИ ЧТОБЫ НАЧАТЬ", 8);
     else if (phase == PH_LOSE)
-        draw_overlay_msg("THE ZOMBIES ATE YOUR BRAINS!", "TAP TO RETRY", 8);
+        draw_overlay_msg("ГУСИ СЪЕЛИ ТВОЙ МОЗГ!", "НАЖМИ ЧТОБЫ ПОВТОРИТЬ", 8);
     else if (phase == PH_WIN)
-        draw_overlay_msg("YOU SURVIVED!", "TAP TO PLAY AGAIN", 8);
+        draw_overlay_msg("КОРОЛЕВА УТОК ПОВЕРЖЕНА!", "ТЫ СПАС ГУСЕЙ! НАЖМИ СНОВА", 8);
 }
 
 void game_tick(float dt, uint32_t *fb) {
