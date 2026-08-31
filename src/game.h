@@ -14,6 +14,9 @@ void game_init(void);
 /* Pointer events in virtual coordinates (0..GAME_W, 0..GAME_H). */
 void game_input_press(int x, int y);
 void game_input_release(int x, int y);
+/* Pointer drag (touch move) — used for the look controls and the move
+ * joystick so the camera can be steered continuously. */
+void game_input_move(int x, int y);
 
 /* Advance the simulation by dt seconds and render one frame into fb.
  * fb must hold GAME_W*GAME_H uint32_t pixels in RGBA8 byte order (R,G,B,A). */
