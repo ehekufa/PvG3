@@ -141,13 +141,47 @@ static int32_t on_input(struct android_app *app, AInputEvent *ev) {
     (void)app;
     if (AInputEvent_getType(ev) != AINPUT_EVENT_TYPE_MOTION) return 0;
     if (!G->ready) return 0;
-    int action = AMotionEvent_getAction(ev) & AMOTION_EVENT_ACTION_MASK;
-    float x = AMotionEvent_getX(ev, 0);
-    float y = AMotionEvent_getY(ev, 0);
-    int vx = (int)(x * GAME_W / G->w);
-    int vy = (int)(y * GAME_H / G->h);
-    if (action == AMOTION_EVENT_ACTION_DOWN) game_input_press(vx, vy);
-    else if (action == AMOTION_EVENT_ACTION_UP) game_input_release(vx, vy);
+
+    int32_t raw = AMotionEvent_getAction(ev);
+    int32_t action = raw & AMOTION_EVENT_ACTION_MASK;
+    int32_t pidx = (raw & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK)
+                   >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
+    int count = AMotionEvent_getPointerCount(ev);
+
+    /* DOWN (first finger or additional) */
+    if (action == AMOTION_EVENT_ACTION_DOWN ||
+        action == AMOTION_EVENT_ACTION_POINTER_DOWN) {
+        int id = AMotionEvent_getPointerId(ev, pidx);
+        float x = AMotionEvent_getX(ev, pidx);
+        float y = AMotionEvent_getY(ev, pidx);
+        int vx = (int)(x * GAME_W / G->w);
+        int vy = (int)(y * GAME_H / G->h);
+        game_touch_down(id, vx, vy);
+    }
+
+    /* UP (first finger or additional) */
+    if (action == AMOTION_EVENT_ACTION_UP ||
+        action == AMOTION_EVENT_ACTION_POINTER_UP) {
+        int id = AMotionEvent_getPointerId(ev, pidx);
+        float x = AMotionEvent_getX(ev, pidx);
+        float y = AMotionEvent_getY(ev, pidx);
+        int vx = (int)(x * GAME_W / G->w);
+        int vy = (int)(y * GAME_H / G->h);
+        game_touch_up(id, vx, vy);
+    }
+
+    /* MOVE — update ALL active pointers */
+    if (action == AMOTION_EVENT_ACTION_MOVE) {
+        for (int i = 0; i < count; i++) {
+            int id = AMotionEvent_getPointerId(ev, i);
+            float x = AMotionEvent_getX(ev, i);
+            float y = AMotionEvent_getY(ev, i);
+            int vx = (int)(x * GAME_W / G->w);
+            int vy = (int)(y * GAME_H / G->h);
+            game_touch_move(id, vx, vy);
+        }
+    }
+
     return 1;
 }
 

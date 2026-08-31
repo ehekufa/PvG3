@@ -520,9 +520,6 @@ static V3 pvel;
 static float grounded;
 
 /* input */
-static int js_active, look_active;
-static float js_ox, js_oy;        /* joystick origin */
-static int last_lx, last_ly;
 static float mvx, mvz;            /* desired move in local x/z */
 static float cooldown_blue, cooldown_orange;
 static int grab_pressed;
@@ -835,51 +832,121 @@ static void level_complete(void) {
 }
 
 /* ------------------------------------------------------------------ */
-/* input                                                              */
+/* input — multitouch: joystick + camera swipe + big buttons          */
 /* ------------------------------------------------------------------ */
 
-void game_input_press(int x, int y) {
+/* Each finger is tracked by id. We classify it on touch_down:
+ *   JOY  — left third of screen → movement joystick
+ *   BTN  — tapped on a button zone → fire that action
+ *   LOOK — anywhere else → camera drag
+ */
+#define MAX_FINGERS 8
+enum { F_NONE, F_JOY, F_LOOK, F_BTN };
+
+static struct {
+    int id;     /* pointer id (-1 = free) */
+    int role;   /* F_JOY, F_LOOK, F_BTN */
+    float ox, oy; /* origin (joy base or look last pos) */
+    float lx, ly; /* last x/y (for look delta) */
+} fingers[MAX_FINGERS];
+
+static int find_finger(int id) {
+    for (int i = 0; i < MAX_FINGERS; i++) if (fingers[i].id == id) return i;
+    return -1;
+}
+static int alloc_finger(void) {
+    for (int i = 0; i < MAX_FINGERS; i++) if (fingers[i].id < 0) return i;
+    return -1;
+}
+
+/* Button definitions (virtual coords) — big round buttons, right side */
+#define BTN_R 50  /* button radius */
+#define BTN_COL 1190  /* x center column */
+
+static struct { int cx, cy; const char *label; uint32_t col; } BTNS[] = {
+    { BTN_COL, GAME_H - 70,  "JUMP",  COL(220,220,230) },
+    { BTN_COL, GAME_H - 180, "BLUE",  COL(90,150,255)  },
+    { BTN_COL, GAME_H - 290, "ORANGE",COL(255,150,50)  },
+    { BTN_COL, GAME_H - 400, "GRAB",  COL(230,200,80)  },
+};
+#define NUM_BTNS 4
+
+static int hit_btn(int x, int y) {
+    for (int i = 0; i < NUM_BTNS; i++) {
+        int dx = x - BTNS[i].cx, dy = y - BTNS[i].cy;
+        if (dx*dx + dy*dy < (BTN_R+15)*(BTN_R+15)) return i;
+    }
+    return -1;
+}
+
+void game_touch_down(int id, int x, int y) {
     if (phase == PH_MENU) { load_level(0); return; }
     if (phase == PH_WIN)  { load_level(0); return; }
 
-    /* button zones on the right edge */
-    if (x > GAME_W - 120) {
-        if (y > GAME_H - 80)      { cooldown_blue = 0.5f; shoot_portal(&PA); return; }
-        if (y > GAME_H - 160)     { cooldown_orange = 0.5f; shoot_portal(&PB); return; }
-        if (y > GAME_H - 240)     { grab_pressed = 1; return; }
-    }
+    int fi = alloc_finger();
+    if (fi < 0) return;
+    fingers[fi].id = id;
+    fingers[fi].ox = (float)x;
+    fingers[fi].oy = (float)y;
+    fingers[fi].lx = (float)x;
+    fingers[fi].ly = (float)y;
 
-    /* left half: move joystick */
-    if (x < GAME_W / 2) {
-        js_active = 1; js_ox = (float)x; js_oy = (float)y; mvx = mvz = 0;
+    /* Check button tap first */
+    int bi = hit_btn(x, y);
+    if (bi >= 0) {
+        fingers[fi].role = F_BTN;
+        if (bi == 0) { if (grounded) { pvel.y = 6.5f; grounded = 0; } }
+        else if (bi == 1) { if (cooldown_blue <= 0) { cooldown_blue = 0.3f; shoot_portal(&PA); } }
+        else if (bi == 2) { if (cooldown_orange <= 0) { cooldown_orange = 0.3f; shoot_portal(&PB); } }
+        else if (bi == 3) { grab_pressed = 1; }
         return;
     }
-    /* right half: look drag */
-    look_active = 1; last_lx = x; last_ly = y;
+
+    /* Left third → joystick */
+    if (x < GAME_W / 3) {
+        fingers[fi].role = F_JOY;
+        mvx = 0; mvz = 0;
+        return;
+    }
+
+    /* Everything else → camera look */
+    fingers[fi].role = F_LOOK;
 }
 
-void game_input_move(int x, int y) {
-    if (js_active) {
-        float dx = x - js_ox, dy = y - js_oy;
-        mvx = dx / 70.0f; mvz = dy / 70.0f;
-        if (mvx > 1) mvx = 1;
-        if (mvx < -1) mvx = -1;
-        if (mvz > 1) mvz = 1;
-        if (mvz < -1) mvz = -1;
+void game_touch_move(int id, int x, int y) {
+    int fi = find_finger(id);
+    if (fi < 0) return;
+
+    if (fingers[fi].role == F_JOY) {
+        float dx = (float)x - fingers[fi].ox;
+        float dy = (float)y - fingers[fi].oy;
+        float maxr = 90.0f;
+        mvx = dx / maxr;
+        mvz = dy / maxr;
+        if (mvx > 1) mvx = 1; if (mvx < -1) mvx = -1;
+        if (mvz > 1) mvz = 1; if (mvz < -1) mvz = -1;
     }
-    if (look_active) {
-        float dx = x - last_lx, dy = y - last_ly;
-        CAM_YAW += dx * 0.005f;
-        CAM_PITCH -= dy * 0.005f;
+
+    if (fingers[fi].role == F_LOOK) {
+        float dx = (float)x - fingers[fi].lx;
+        float dy = (float)y - fingers[fi].ly;
+        CAM_YAW += dx * 0.006f;
+        CAM_PITCH -= dy * 0.006f;
         if (CAM_PITCH > 1.5f) CAM_PITCH = 1.5f;
         if (CAM_PITCH < -1.5f) CAM_PITCH = -1.5f;
-        last_lx = x; last_ly = y;
+        fingers[fi].lx = (float)x;
+        fingers[fi].ly = (float)y;
     }
 }
 
-void game_input_release(int x, int y) {
+void game_touch_up(int id, int x, int y) {
     (void)x; (void)y;
-    js_active = 0; look_active = 0; mvx = mvz = 0;
+    int fi = find_finger(id);
+    if (fi < 0) return;
+
+    if (fingers[fi].role == F_JOY) { mvx = 0; mvz = 0; }
+    fingers[fi].id = -1;
+    fingers[fi].role = F_NONE;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1009,17 +1076,62 @@ static void render(void) {
 /* ------------------------------------------------------------------ */
 
 static void draw_buttons(void) {
-    /* three arcade buttons bottom-right */
-    for (int i = 0; i < 3; i++) {
-        int cx = GAME_W - 60, cy = GAME_H - 60 - i * 80;
-        uint32_t c = i == 0 ? COL(90, 150, 255) : (i == 1 ? COL(255, 150, 50) : COL(230, 200, 80));
-        disc(cx, cy, 26, COL(30, 30, 40));
-        disc(cx, cy, 22, c);
-        disc(cx, cy, 12, COL(20, 20, 28));
+    /* Big round buttons on the right side */
+    for (int i = 0; i < NUM_BTNS; i++) {
+        int cx = BTNS[i].cx, cy = BTNS[i].cy;
+        /* outer shadow */
+        disc(cx + 2, cy + 2, BTN_R + 4, COL(10, 10, 15));
+        /* button background */
+        disc(cx, cy, BTN_R + 2, COL(40, 42, 50));
+        /* button face */
+        disc(cx, cy, BTN_R, BTNS[i].col);
+        /* inner dark circle */
+        disc(cx, cy, BTN_R - 14, COL(25, 27, 35));
+        /* label */
+        int tw = text_w(2, BTNS[i].label);
+        draw_text(cx - tw/2, cy - 7, 2, COL(255,255,255), BTNS[i].label);
     }
-    draw_text(GAME_W - 96, GAME_H - 74, 2, COL(120, 170, 255), "СИН");
-    draw_text(GAME_W - 96, GAME_H - 150, 2, COL(255, 190, 110), "ОРН");
-    draw_text(GAME_W - 96, GAME_H - 226, 2, COL(230, 220, 120), "ВЗЯТЬ");
+}
+
+static void draw_joystick(void) {
+    /* Find active joystick finger */
+    int fi = -1;
+    for (int i = 0; i < MAX_FINGERS; i++)
+        if (fingers[i].role == F_JOY) { fi = i; break; }
+
+    if (fi < 0) {
+        /* Draw hint: faded joystick in default position */
+        int cx = 130, cy = GAME_H - 130;
+        disc(cx, cy, 95, COL(20, 22, 30));
+        disc(cx, cy, 92, COL(35, 38, 48));
+        disc(cx, cy, 40, COL(50, 55, 65));
+        return;
+    }
+
+    /* Draw joystick at touch origin with thumb offset */
+    int bx = (int)fingers[fi].ox;
+    int by = (int)fingers[fi].oy;
+    /* base circle */
+    disc(bx, by, 95, COL(20, 22, 30));
+    disc(bx, by, 92, COL(40, 44, 55));
+    /* ring */
+    for (int a = 0; a < 64; a++) {
+        float ang = (float)a / 64.0f * 6.2832f;
+        int rx = bx + (int)(92 * cosf(ang));
+        int ry = by + (int)(92 * sinf(ang));
+        disc(rx, ry, 3, COL(60, 65, 80));
+    }
+    /* thumb at current offset */
+    int tx = bx + (int)(mvx * 80.0f);
+    int ty = by + (int)(mvz * 80.0f);
+    disc(tx, ty, 42, COL(80, 90, 110));
+    disc(tx, ty, 38, COL(130, 145, 170));
+}
+
+static void draw_crosshair(void) {
+    int cx = GAME_W / 2, cy = GAME_H / 2;
+    rect(cx - 14, cy - 1, cx + 14, cy + 1, COL(255, 255, 255));
+    rect(cx - 1, cy - 14, cx + 1, cy + 14, COL(255, 255, 255));
 }
 
 static void draw_hud(void) {
@@ -1029,6 +1141,8 @@ static void draw_hud(void) {
         draw_text_c(GAME_W / 2, 90, 12, COL(120, 200, 255), "PvG3: ПОРТАЛ");
         draw_text_c(GAME_W / 2, 250, 5, COL(240, 240, 230), "3D-ГОЛОВОЛОМКА");
         draw_text_c(GAME_W / 2, 330, 3, COL(200, 210, 220), "НАЖМИ ЧТОБЫ НАЧАТЬ");
+        draw_text_c(GAME_W / 2, 400, 2, COL(150, 170, 190),
+                    "ЛЕВАЯ ЧАСТЬ — джойстик  СВАЙП — камера  КНОПКИ — справа");
         return;
     }
 
@@ -1039,22 +1153,23 @@ static void draw_hud(void) {
     }
 
     /* top banner */
-    rect(0, 0, GAME_W, 52, COL(12, 14, 20));
+    rect(0, 0, GAME_W, 48, COL(12, 14, 20));
     draw_text(16, 10, 3, COL(150, 200, 255), "УРОВЕНЬ");
     int x = 16 + text_w(3, "УРОВЕНЬ ") + 6;
     draw_int(x, 10, 3, COL(255, 220, 120), level_idx + 1);
     draw_text(GAME_W / 2 - text_w(3, lv->name) / 2, 10, 3, COL(240, 240, 230), lv->name);
 
-    /* objective / hint */
-    draw_text(GAME_W / 2 - text_w(2, lv->hint) / 2, 58, 2, COL(255, 235, 150), lv->hint);
-    /* controls reminder */
-    draw_text(GAME_W / 2 - text_w(2, "ЛЕВО — движение  ПРАВО — камера") / 2, 82, 2,
-              COL(170, 200, 220), "ЛЕВО — движение  ПРАВО — камера");
+    /* hint */
+    int hw = text_w(2, lv->hint);
+    if (hw < GAME_W - 200)
+        draw_text(GAME_W / 2 - hw / 2, 54, 2, COL(255, 235, 150), lv->hint);
 
     /* message centre */
-    if (msg && msg_t > 0 && phase == PH_PLAY)
+    if (msg && msg_t > 0)
         draw_text_c(GAME_W / 2, 300, 4, COL(255, 240, 180), msg);
 
+    draw_crosshair();
+    draw_joystick();
     draw_buttons();
 }
 
@@ -1066,12 +1181,14 @@ void game_init(void) {
     RNG = 0xC0FFEE11u;
     memset(ZBUF, 0, sizeof ZBUF);
     FY = 1.0f / tanf(GAME_FOV * 0.5f);
-    FX = FY * ((float)GAME_H / (float)GAME_W); /* aspect = w/h → x scale = f/(w/h) */
+    FX = FY * ((float)GAME_H / (float)GAME_W);
     CAM_PITCH = -0.05f;
     global_t = 0;
     grab_pressed = 0;
     msg = NULL; msg_t = 0;
-    /* a nice chamber behind the title screen */
+    mvx = mvz = 0;
+    /* reset all fingers */
+    for (int i = 0; i < MAX_FINGERS; i++) { fingers[i].id = -1; fingers[i].role = F_NONE; }
     load_level(0);
     phase = PH_MENU;
 }
