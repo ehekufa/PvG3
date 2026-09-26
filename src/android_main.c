@@ -14,6 +14,8 @@
 #include <GLES2/gl2.h>
 #include <time.h>
 #include <string.h>
+#include <stdio.h>
+#include <limits.h>
 
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  "PvG3", __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "PvG3", __VA_ARGS__)
@@ -137,8 +139,46 @@ static void on_app_cmd(struct android_app *app, int32_t cmd) {
     }
 }
 
+/* Garden plants survive a normal app restart. Only Kirill's three plant IDs
+ * are saved; invalid/truncated files are ignored by game_garden_import. */
+static int garden_path(struct android_app *app, char path[PATH_MAX]) {
+    const char *dir = app->activity ? app->activity->internalDataPath : NULL;
+    if (!dir) return 0;
+    int n = snprintf(path, PATH_MAX, "%s/pvg3-garden.v1", dir);
+    return n > 0 && n < PATH_MAX;
+}
+
+static void garden_load(struct android_app *app) {
+    char path[PATH_MAX];
+    if (!garden_path(app, path)) return;
+    FILE *f = fopen(path, "rb");
+    if (!f) return;
+    unsigned char bytes[4 + GAME_GARDEN_CELLS];
+    size_t count = fread(bytes, 1, sizeof bytes, f);
+    int extra = fgetc(f);
+    fclose(f);
+    if (count == sizeof bytes && extra == EOF && memcmp(bytes, "PVG1", 4) == 0)
+        game_garden_import(bytes + 4);
+}
+
+static void garden_save(struct android_app *app) {
+    char path[PATH_MAX], tmp[PATH_MAX];
+    if (!garden_path(app, path)) return;
+    int n = snprintf(tmp, sizeof tmp, "%s.tmp", path);
+    if (n <= 0 || n >= (int)sizeof tmp) return;
+    unsigned char bytes[4 + GAME_GARDEN_CELLS] = { 'P', 'V', 'G', '1' };
+    game_garden_export(bytes + 4);
+    FILE *f = fopen(tmp, "wb");
+    if (!f) { LOGE("cannot open garden save file"); return; }
+    size_t count = fwrite(bytes, 1, sizeof bytes, f);
+    int closed = fclose(f);
+    if (count != sizeof bytes || closed != 0 || rename(tmp, path) != 0) {
+        LOGE("cannot save Zen Garden");
+        remove(tmp);
+    }
+}
+
 static int32_t on_input(struct android_app *app, AInputEvent *ev) {
-    (void)app;
     if (AInputEvent_getType(ev) != AINPUT_EVENT_TYPE_MOTION) return 0;
     if (!G->ready) return 0;
     int action = AMotionEvent_getAction(ev) & AMOTION_EVENT_ACTION_MASK;
@@ -146,8 +186,11 @@ static int32_t on_input(struct android_app *app, AInputEvent *ev) {
     float y = AMotionEvent_getY(ev, 0);
     int vx = (int)(x * GAME_W / G->w);
     int vy = (int)(y * GAME_H / G->h);
-    if (action == AMOTION_EVENT_ACTION_DOWN) game_input_press(vx, vy);
-    else if (action == AMOTION_EVENT_ACTION_UP) game_input_release(vx, vy);
+    if (action == AMOTION_EVENT_ACTION_DOWN) {
+        int was_garden = game_phase() == GAME_GARDEN;
+        game_input_press(vx, vy);
+        if (was_garden) garden_save(app); /* also save when leaving the garden */
+    } else if (action == AMOTION_EVENT_ACTION_UP) game_input_release(vx, vy);
     return 1;
 }
 
@@ -161,6 +204,7 @@ void android_main(struct android_app *app) {
     app->onInputEvent = on_input;
 
     game_init();
+    garden_load(app);
 
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);

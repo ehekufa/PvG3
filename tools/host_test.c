@@ -49,6 +49,22 @@ int main(void) {
     game_tick(0.016f, fb);
     write_bmp("shots/menu.bmp", GAME_W, GAME_H, fb);
 
+    game_input_press(480, 640);             /* САД ДЗЕН */
+    game_input_press(780, 70);              /* Kirill's blue coin sunflower */
+    game_input_press(300, 204);
+    game_input_press(370, 70);              /* peashooter */
+    game_input_press(420, 420);
+    game_input_press(575, 70);              /* walnut */
+    game_input_press(660, 528);
+    game_tick(0, fb);
+    write_bmp("shots/garden.bmp", GAME_W, GAME_H, fb);
+    game_input_press(985, 63);              /* book from garden */
+    game_input_press(320, 535);             /* sunflower's page */
+    game_tick(0, fb);
+    write_bmp("shots/book.bmp", GAME_W, GAME_H, fb);
+    game_input_press(1130, 50);             /* garden */
+    game_input_press(1160, 60);             /* menu */
+
     game_input_press(640, 540);             /* ИГРАТЬ -> intro */
     game_tick(1.5f, fb);
     write_bmp("shots/intro.bmp", GAME_W, GAME_H, fb);
@@ -61,6 +77,10 @@ int main(void) {
     game_input_press(640, 540);             /* first level */
     game_tick(0, fb);
     write_bmp("shots/level1.bmp", GAME_W, GAME_H, fb);
+    game_input_press(780, 70);              /* buy Kirill's sunflower */
+    game_input_press(300, 204);
+    game_tick(6.3f, fb);                    /* first coin appears beside it */
+    write_bmp("shots/coin.bmp", GAME_W, GAME_H, fb);
 
     game_debug_snapshot();                 /* final level, queen in robot */
     for (int i = 0; i < 30; i++) game_tick(0.016f, fb);

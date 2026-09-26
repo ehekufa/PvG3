@@ -15,7 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 # replace the artwork; the renderer scales it when needed.
 # Roles have been confirmed by the author. In particular, the white bird is
 # Khlebushek (NOT a zombie), the brown face is the walnut, the red art is a
-# lawnmower (NOT a cherry bomb), and the yellow duck is the only common enemy.
+# lawnmower (NOT a cherry bomb), the yellow duck is the only common enemy,
+# and the blue flower is Kirill's coin-making sunflower (NOT a snow pea).
 IMAGES = [
     ("KHLEBUSHEK", "Без названия680_20260926092924.png"),
     ("MASK", "Без названия681_20260926093006.png"),
@@ -24,7 +25,7 @@ IMAGES = [
     ("ROBOT", "Без названия682_20260926094249.png"),
     ("PEA", "Без названия684_20260926094420.png"),
     ("WALL", "Без названия685_20260926094527.png"),
-    ("SNOW", "Без названия685_20260926094634.png"),
+    ("SUNFLOWER", "Без названия685_20260926094634.png"),
     ("MAP", "Без названия687_20260926095025.png"),
     ("MOWER", "Без названия688_20260926095109.png"),
 ]

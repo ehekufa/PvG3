@@ -3,7 +3,7 @@
 #ifndef PVG3_SPRITES_DATA_H
 #define PVG3_SPRITES_DATA_H
 
-enum { SPR_KHLEBUSHEK, SPR_MASK, SPR_KIRILL, SPR_DUCK, SPR_ROBOT, SPR_PEA, SPR_WALL, SPR_SNOW, SPR_MAP, SPR_MOWER, SPR_COUNT };
+enum { SPR_KHLEBUSHEK, SPR_MASK, SPR_KIRILL, SPR_DUCK, SPR_ROBOT, SPR_PEA, SPR_WALL, SPR_SUNFLOWER, SPR_MAP, SPR_MOWER, SPR_COUNT };
 
 /* Без названия680_20260926092924.png (100x100, 1524 runs) */
 static const uint64_t packed_khlebushek[] = {
@@ -4394,7 +4394,7 @@ static const uint64_t packed_wall[] = {
 };
 
 /* Без названия685_20260926094634.png (100x100, 2387 runs) */
-static const uint64_t packed_snow[] = {
+static const uint64_t packed_sunflower[] = {
     0x0000015300000000ULL, 0x0000000103000000ULL, 0x000000010f000000ULL, 0x0000000131000000ULL, 0x000000016a000000ULL,
     0x000000019b000000ULL, 0x00000001bf000000ULL, 0x00000001d1000000ULL, 0x00000001de000000ULL, 0x00000001e6000000ULL,
     0x00000001da000000ULL, 0x00000001bf000000ULL, 0x0000000195000000ULL, 0x000000015d000000ULL, 0x0000000129000000ULL,
@@ -8016,7 +8016,7 @@ static const SpritePacked SPRITE_DATA[SPR_COUNT] = {
     { 300, 300, packed_robot, 11734 },
     { 100, 100, packed_pea, 2287 },
     { 100, 100, packed_wall, 1684 },
-    { 100, 100, packed_snow, 2387 },
+    { 100, 100, packed_sunflower, 2387 },
     { 500, 500, packed_map, 14594 },
     { 100, 100, packed_mower, 1029 }
 };

@@ -9,7 +9,8 @@
 #define GAME_H 720
 
 /* Public phases (use these names rather than assuming integer values). */
-enum { GAME_MENU, GAME_INTRO, GAME_PLAY, GAME_LEVEL_CLEAR, GAME_WIN, GAME_LOSE };
+enum { GAME_MENU, GAME_INTRO, GAME_PLAY, GAME_LEVEL_CLEAR, GAME_WIN, GAME_LOSE,
+       GAME_GARDEN, GAME_BOOK };
 
 /* Reset the game back to the title screen. */
 void game_init(void);
@@ -28,6 +29,12 @@ void game_tick(float dt, uint32_t *fb);
 /* Host screenshot helper: jump into a populated level-10 scene. */
 void game_debug_snapshot(void);
 
+/* Zen Garden layout is stored by the Android host in the app's private data.
+ * 0 = empty plot, 1..3 = one of Kirill's three drawn plants. */
+#define GAME_GARDEN_CELLS 45
+void game_garden_export(uint8_t cells[GAME_GARDEN_CELLS]);
+int game_garden_import(const uint8_t cells[GAME_GARDEN_CELLS]);
+
 /* Current GAME_* phase. */
 int game_phase(void);
 
@@ -41,6 +48,10 @@ int game_debug_plant_type(int row, int col);
 int game_debug_seed_count(void);
 int game_debug_first_enemy_type(void);
 int game_debug_mower_used(int row);
+int game_debug_coin_balance(void);
+int game_debug_coin_count(void);
+int game_debug_garden_plant_type(int row, int col);
+int game_debug_book_plant(void);
 #endif
 
 #endif /* GAME_H_INCLUDED */

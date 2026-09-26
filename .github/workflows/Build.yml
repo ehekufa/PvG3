@@ -23,6 +23,7 @@ jobs:
       - name: Verify artwork and ten-level game flow
         run: |
           python3 tools/pack_sprites.py
+          python3 tools/check_art_roles.py
           git diff --exit-code -- src/sprites_data.h
           gcc -std=c11 -O2 -Wall -Wextra -Werror -DGAME_TEST -Isrc \
             src/game.c tools/sim_test.c -o sim_test -lm
