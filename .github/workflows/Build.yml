@@ -14,6 +14,14 @@ jobs:
 
       - uses: android-actions/setup-android@v3
 
+      - name: Verify artwork and ten-level game flow
+        run: |
+          python3 tools/pack_sprites.py
+          git diff --exit-code -- src/sprites_data.h
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -DGAME_TEST -Isrc \
+            src/game.c tools/sim_test.c -o sim_test -lm
+          ./sim_test
+
       - name: Build native library (both ABIs)
         run: |
           set -e

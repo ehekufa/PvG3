@@ -1,11 +1,11 @@
-/* host_test.c — compiles game.c on a desktop and writes BMP screenshots so the
- * renderer/logic can be verified without an Android device. Not part of the APK.
- *
- *   gcc -O2 -Wall -Isrc src/game.c tools/host_test.c -o host_test -lm
+/* Desktop screenshots for menu, cutscene, level one and the final robot fight.
+ * gcc -O2 -Wall -Isrc src/game.c tools/host_test.c -o host_test -lm
  */
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <sys/stat.h>
 #include "game.h"
 
 static void write_bmp(const char *path, int w, int h, const uint32_t *rgba) {
@@ -22,6 +22,7 @@ static void write_bmp(const char *path, int w, int h, const uint32_t *rgba) {
     hdr[26] = 1; hdr[28] = 24;
     fwrite(hdr, 1, 54, f);
     unsigned char *buf = (unsigned char *)malloc(imgsize);
+    if (!buf) { fprintf(stderr, "out of memory writing %s\n", path); fclose(f); return; }
     for (int y = 0; y < h; y++) {
         const uint32_t *src = rgba + (h - 1 - y) * w; /* BMP is bottom-up */
         unsigned char *dst = buf + y * row;
@@ -39,17 +40,30 @@ static void write_bmp(const char *path, int w, int h, const uint32_t *rgba) {
 }
 
 int main(void) {
+    if (mkdir("shots", 0755) != 0 && errno != EEXIST) {
+        perror("shots");
+        return 1;
+    }
     static uint32_t fb[GAME_W * GAME_H];
-
-    /* Title screen. */
     game_init();
     game_tick(0.016f, fb);
     write_bmp("shots/menu.bmp", GAME_W, GAME_H, fb);
 
-    /* A populated play scene. */
-    game_debug_snapshot();
+    game_input_press(640, 540);             /* ИГРАТЬ -> intro */
+    game_tick(1.5f, fb);
+    write_bmp("shots/intro.bmp", GAME_W, GAME_H, fb);
+    game_input_press(640, 540);             /* Dima's line */
+    game_tick(0, fb);
+    write_bmp("shots/dima.bmp", GAME_W, GAME_H, fb);
+    game_input_press(640, 540);             /* Kirill's line */
+    game_tick(0, fb);
+    write_bmp("shots/kirill.bmp", GAME_W, GAME_H, fb);
+    game_input_press(640, 540);             /* first level */
+    game_tick(0, fb);
+    write_bmp("shots/level1.bmp", GAME_W, GAME_H, fb);
+
+    game_debug_snapshot();                 /* final level, queen in robot */
     for (int i = 0; i < 30; i++) game_tick(0.016f, fb);
     write_bmp("shots/play.bmp", GAME_W, GAME_H, fb);
-
     return 0;
 }
