@@ -16,14 +16,16 @@ enum { GAME_MENU, GAME_INTRO, GAME_PLAY, GAME_LEVEL_CLEAR, GAME_WIN, GAME_LOSE,
 /* Reset the game back to the title screen. */
 void game_init(void);
 
-/* Campaign progress and currently running countdown (seconds).
- * game_completed_level() counts individually completed levels (0..10). */
+/* Current level is 0 during the replayable intro, otherwise 1..10.
+ * game_completed_level() counts individually completed combat levels. */
 int game_level(void);
 int game_completed_level(void);
 int game_resume_level(void);
-float game_seconds_left(void);
+/* Includes not-yet-spawned opponents; excludes the separate robot boss. */
+int game_wave_remaining(void);
+int game_wave_total(void);
 
-/* Versioned, checksummed campaign snapshot. Includes the board, countdown,
+/* Versioned, checksummed campaign snapshot. Includes the board, wave,
  * coins, enemies and unlocked progress; load returns to the menu, where Play
  * resumes an in-progress battle. The separately saved Zen Garden is excluded.
  * Import validates the entire snapshot before changing any game state. */
@@ -43,7 +45,7 @@ void game_tick(float dt, uint32_t *fb);
 void game_debug_snapshot(void);
 
 /* Zen Garden layout is stored by the Android host in the app's private data.
- * 0 = empty plot, 1..3 = one of Kirill's three drawn plants. */
+ * 0 = empty plot, 1..4 = one of Kirill's four drawn plants. */
 #define GAME_GARDEN_CELLS 45
 void game_garden_export(uint8_t cells[GAME_GARDEN_CELLS]);
 int game_garden_import(const uint8_t cells[GAME_GARDEN_CELLS]);
@@ -54,6 +56,8 @@ int game_phase(void);
 #ifdef GAME_TEST
 /* Deterministic test hooks; excluded from the Android build. */
 void game_debug_finish_wave(void);
+void game_debug_spawn_duck(int row, float x);
+float game_debug_duck_x(int row);
 void game_debug_defeat_boss(void);
 int game_debug_boss_alive(void);
 float game_debug_boss_x(void);
@@ -64,6 +68,7 @@ int game_debug_first_enemy_type(void);
 int game_debug_mower_used(int row);
 int game_debug_coin_balance(void);
 int game_debug_coin_count(void);
+float game_debug_cooldown(int plant);
 int game_debug_garden_plant_type(int row, int col);
 int game_debug_book_plant(void);
 int game_debug_level_completed(int level);

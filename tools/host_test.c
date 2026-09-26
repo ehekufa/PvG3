@@ -1,4 +1,4 @@
-/* Desktop screenshots: menu, level select, cutscene, Zen Garden, timer and robot.
+/* Desktop screenshots: menu, level 0, waves, Jumper, Zen Garden and robot.
  * gcc -O2 -Wall -Wextra -Werror -Isrc src/game.c src/font.c \
  *     tools/host_test.c -o host_test -lm && ./host_test
  */
@@ -52,21 +52,30 @@ int main(void) {
     game_input_press(325, 640);             /* УРОВНИ */
     game_tick(0, fb);
     write_bmp("shots/select.bmp", GAME_W, GAME_H, fb);
+    game_input_press(640, 600);             /* level 0: replayable story */
+    game_tick(0, fb);
+    write_bmp("shots/intro_replay.bmp", GAME_W, GAME_H, fb);
+    game_input_press(1150, 50);             /* skip -> selector */
     game_input_press(1130, 50);             /* back to menu */
 
     game_input_press(625, 640);             /* САД ДЗЕН */
-    game_input_press(780, 70);              /* Kirill's blue coin sunflower */
+    game_input_press(655, 70);              /* Kirill's blue coin sunflower */
     game_input_press(300, 204);
-    game_input_press(370, 70);              /* peashooter */
+    game_input_press(335, 70);              /* peashooter */
     game_input_press(420, 420);
-    game_input_press(575, 70);              /* walnut */
+    game_input_press(495, 70);              /* walnut */
     game_input_press(660, 528);
+    game_input_press(815, 70);              /* illustrated Jumper Fighter */
+    game_input_press(780, 528);
     game_tick(0, fb);
     write_bmp("shots/garden.bmp", GAME_W, GAME_H, fb);
     game_input_press(985, 63);              /* book from garden */
-    game_input_press(320, 535);             /* sunflower's page */
+    game_input_press(320, 173 + 3 * 121 + 35); /* Jumper's page */
     game_tick(0, fb);
     write_bmp("shots/book.bmp", GAME_W, GAME_H, fb);
+    game_input_press(320, 173 + 2 * 121 + 35); /* sunflower's page */
+    game_tick(0, fb);
+    write_bmp("shots/book_sunflower.bmp", GAME_W, GAME_H, fb);
     game_input_press(1130, 50);             /* garden */
     game_input_press(1160, 60);             /* menu */
 
@@ -82,7 +91,7 @@ int main(void) {
     game_input_press(640, 540);             /* first level */
     game_tick(0, fb);
     write_bmp("shots/level1.bmp", GAME_W, GAME_H, fb);
-    game_input_press(780, 70);              /* buy Kirill's sunflower */
+    game_input_press(655, 70);              /* buy Kirill's sunflower */
     game_input_press(300, 204);
     game_tick(6.3f, fb);                    /* first coin appears beside it */
     write_bmp("shots/coin.bmp", GAME_W, GAME_H, fb);

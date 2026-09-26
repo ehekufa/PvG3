@@ -17,6 +17,7 @@ EXPECTED = {
     "PEA": "Без названия684_20260926094420.png",
     "WALL": "Без названия685_20260926094527.png",
     "SUNFLOWER": "Без названия685_20260926094634.png",
+    "JUMPER": "Без названия684_20260926162008.png",
     "MAP": "Без названия687_20260926095025.png",
     "MOWER": "Без названия688_20260926095109.png",
 }
@@ -27,4 +28,4 @@ for name, filename in EXPECTED.items():
     w, h, pixels = png_pixels(ROOT / filename)
     assert w > 0 and h > 0 and any(p >> 24 for p in pixels), (name, filename)
 
-print("OK: ten original drawings, including Kirill's coin sunflower and the duck")
+print("OK: eleven original drawings, including Kirill's jumper, coin sunflower and the duck")

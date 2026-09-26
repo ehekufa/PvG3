@@ -20,7 +20,7 @@ jobs:
           test -d "$ANDROID_NDK_ROOT"
           echo "SDK=$ANDROID_HOME NDK=$ANDROID_NDK_ROOT"
 
-      - name: Verify artwork, licensed font, timed levels and save/resume
+      - name: Verify artwork, licensed font, waves, jumper and save/resume
         run: |
           python3 tools/pack_sprites.py
           python3 tools/pack_font.py

@@ -205,12 +205,12 @@ _Static_assert(ROWS * COLS == GAME_GARDEN_CELLS, "garden save size mismatch");
 #define LAWN_Y 150
 #define CELL_W 120
 #define CELL_H 108
-#define CARD_X 285
-#define CARD_STEP 205
-#define CARD_W 170
-#define BOOK_ENTRY_Y 175
-#define BOOK_ENTRY_STEP 155
-#define BOOK_ENTRY_H 132
+#define CARD_X 260
+#define CARD_STEP 160
+#define CARD_W 150
+#define BOOK_ENTRY_Y 173
+#define BOOK_ENTRY_STEP 121
+#define BOOK_ENTRY_H 112
 
 #define ZMAX 80
 #define PEAMAX 200
@@ -219,18 +219,17 @@ _Static_assert(ROWS * COLS == GAME_GARDEN_CELLS, "garden save size mismatch");
 #define COIN_VALUE 25
 #define COIN_INTERVAL 8.0f
 #define MAX_LEVEL 10
-#define BOSS_SECONDS 100.0f  /* survive the slow robot, not a kill quota */
-
-static float level_seconds(int n) { return 45.0f + 5.0f * n; }
+#define JUMPER_PUSH (3.0f * CELL_W) /* contact sends any attacker three tiles back */
 
 typedef enum { PH_MENU = GAME_MENU, PH_INTRO = GAME_INTRO, PH_PLAY = GAME_PLAY,
                PH_LEVEL_CLEAR = GAME_LEVEL_CLEAR, PH_WIN = GAME_WIN,
                PH_LOSE = GAME_LOSE, PH_GARDEN = GAME_GARDEN,
                PH_BOOK = GAME_BOOK, PH_SELECT = GAME_SELECT } Phase;
 
-/* Only the three plants Kirill drew are selectable, both on the lawn and in
- * the Zen Garden. The blue flower creates coins; it is NOT a snow pea. */
-enum { PT_NONE = -1, PT_PEA = 0, PT_WALL, PT_SUNFLOWER, PT_COUNT };
+/* Only plants the author drew are selectable, on the lawn and in the garden.
+ * Keep existing IDs stable: they are stored in the legacy Zen Garden file. */
+enum { PT_NONE = -1, PT_PEA = 0, PT_WALL, PT_SUNFLOWER, PT_JUMPER, PT_COUNT };
+_Static_assert(PT_JUMPER == 3, "existing garden plant IDs must not change");
 enum { EN_DUCK = 0, EN_ROBOT };
 
 typedef struct {
@@ -252,6 +251,10 @@ static const PlantDef PDEF[PT_COUNT] = {
                        "ПОДСОЛНУХ-НАРКОМАН", "ПОДСОЛНУХ",
                        "СОЗДАЁТ МОНЕТЫ ДЛЯ ПОКУПКИ РАСТЕНИЙ.",
                        "НЕ СТРЕЛЯЕТ И НЕ ЗАМОРАЖИВАЕТ." },
+    [PT_JUMPER] = { 250, 300, 20.0f, COL(190, 49, 214), SPR_JUMPER,
+                    "ДЖАМПЕР-БОЕЦ", "ДЖАМПЕР",
+                    "ПРИ УДАРЕ ИСЧЕЗАЕТ.",
+                    "ОТБРАСЫВАЕТ УТКУ И РОБОТА НА 3 КЛЕТКИ." },
 };
 
 typedef struct { int type; float hp; float fire_t; float sway; } Plant;
@@ -267,9 +270,8 @@ static int level;                     /* 1..10 */
 static unsigned completed_mask;       /* one bit per actually survived level */
 static int resume_level;              /* Continue starts/resumes this level */
 static int saved_battle;              /* 1 = continue exact in-progress board */
-static float level_left;              /* regular countdown */
-static float boss_left;               /* timed final robot phase */
-static int boss_phase;
+static int boss_phase;                /* queen arrives after all wave ducks die */
+static int intro_replay;              /* level 0 returns to select without wiping progress */
 static int intro_step;                /* crying, Dima speaks, Kirill speaks */
 static float intro_t;
 static int coin_balance;
@@ -407,7 +409,7 @@ static int spawn_boss(void) {
             Zombie *z = &zomb[i];
             z->active = 1;
             z->row = 2;
-            z->x = GAME_W - 140; /* visible at the right edge for the timed finale */
+            z->x = GAME_W - 140; /* visible at the right edge for the final fight */
             z->type = EN_ROBOT;
             z->hp = z->maxhp = 5500;
             z->speed = 10;             /* much slower than the ordinary ducks */
@@ -448,8 +450,6 @@ static void start_level(int n) {
     level = n;
     resume_level = n;
     saved_battle = 1;
-    level_left = level_seconds(n);
-    boss_left = BOSS_SECONDS;
     boss_phase = 0;
     memset(grid, 0, sizeof(grid));
     for (int r = 0; r < ROWS; r++)
@@ -479,6 +479,7 @@ void game_init(void) {
     global_t = 0;
     intro_step = 0;
     intro_t = 0;
+    intro_replay = 0;
     completed_mask = 0;
     resume_level = 1;
     start_level(1);
@@ -504,10 +505,11 @@ void game_debug_snapshot(void) {
     grid[0][3].fire_t = COIN_INTERVAL;
     grid[4][1].type = PT_SUNFLOWER; grid[4][1].hp = PDEF[PT_SUNFLOWER].hp;
     grid[4][1].fire_t = COIN_INTERVAL;
+    grid[2][5].type = PT_JUMPER; grid[2][5].hp = PDEF[PT_JUMPER].hp;
     spawn_zombie(); zomb[0].x = 980; zomb[0].row = 4;
     spawn_zombie(); zomb[1].x = 1100; zomb[1].row = 0;
     spawn_boss();   zomb[2].x = 1020; boss_spawned = 1;
-    boss_phase = 1; boss_left = 76; level_left = 0; to_spawn = 0;
+    boss_phase = 1; to_spawn = 0;
     banner_text = "КОРОЛЕВА В РОБОТЕ!"; banner_t = 5;
     spawn_pea(2, 400, 20);
     spawn_pea(1, 520, 20);
@@ -518,47 +520,25 @@ void game_debug_snapshot(void) {
 /* update                                                             */
 /* ------------------------------------------------------------------ */
 
+/* One contact consumes the author's Jumper Fighter. It does not invent a
+ * projectile or a new enemy type: the duck (or the queen's robot) is shoved
+ * three planting cells away from the house without being killed. */
+static void jumper_hit(Zombie *z, int row, int col) {
+    grid[row][col].type = PT_NONE;
+    grid[row][col].hp = 0;
+    z->x += JUMPER_PUSH;
+    z->eating = 0;
+    burst(CELL_CX(col), CELL_CY(row), 20, PDEF[PT_JUMPER].body, 160);
+}
+
 static void update_play(float dt) {
     global_t += dt;
-    /* Survive the countdown. Kills help defend the lawn, but never trigger
-     * victory or summon the queen early. The final robot has its own timer. */
-    if (!boss_phase) {
-        level_left -= dt;
-        if (level_left <= 0) {
-            level_left = 0;
-            to_spawn = 0;
-            if (level == MAX_LEVEL) {
-                boss_phase = 1;
-                boss_left = BOSS_SECONDS;
-                /* Make room for the robot even if every duck slot is full. */
-                memset(zomb, 0, sizeof(zomb));
-                memset(peas, 0, sizeof(peas));
-                boss_spawned = spawn_boss();
-                banner_text = "КОРОЛЕВА В РОБОТЕ!";
-                banner_t = 5;
-            } else {
-                completed_mask |= 1u << (level - 1);
-                resume_level = level + 1;
-                saved_battle = 0;
-                phase = PH_LEVEL_CLEAR;
-                return;
-            }
-        }
-    } else {
-        boss_left -= dt;
-        if (boss_left <= 0) {
-            boss_left = 0;
-            completed_mask |= 1u << (MAX_LEVEL - 1);
-            resume_level = MAX_LEVEL;
-            saved_battle = 0;
-            phase = PH_WIN;
-            return;
-        }
-    }
+    /* Spawn cadence shapes the wave, but time never decides victory: all
+     * ordinary enemies must be defeated, then the level-10 robot as well. */
     for (int i = 0; i < PT_COUNT; i++)
         if (cooldown[i] > 0) cooldown[i] -= dt;
 
-    /* Only the author's duck spawns before the timed robot finale. */
+    /* Only the author's duck spawns before the robot finale. */
     if (to_spawn > 0) {
         spawn_t -= dt;
         if (spawn_t <= 0) {
@@ -636,6 +616,17 @@ static void update_play(float dt) {
 
         if (z->type == EN_ROBOT) {
             z->x -= spd * dt;          /* never stops to eat: the mech TRAMPLES */
+            int repelled = 0;
+            for (int r = z->row - 1; r <= z->row + 1 && !repelled; r++) {
+                if (r < 0 || r >= ROWS) continue;
+                for (int c = 0; c < COLS; c++)
+                    if (grid[r][c].type == PT_JUMPER && fabsf(z->x - CELL_CX(c)) < 78) {
+                        jumper_hit(z, r, c);
+                        repelled = 1;
+                        break;
+                    }
+            }
+            if (repelled) continue; /* stop the charge before it tramples */
             for (int r = z->row - 1; r <= z->row + 1; r++) {
                 if (r < 0 || r >= ROWS) continue;
                 for (int c = 0; c < COLS; c++)
@@ -668,6 +659,10 @@ static void update_play(float dt) {
         if (col < 0) col = 0;
         if (col >= COLS) col = COLS - 1;
         Plant *p = &grid[z->row][col];
+        if (p->type == PT_JUMPER && z->x <= CELL_CX(col) + 28) {
+            jumper_hit(z, z->row, col);
+            continue;
+        }
         if (p->type >= 0 && z->x <= CELL_CX(col) + 28) {
             z->eating = 1;
             p->hp -= 100.0f * dt;
@@ -712,6 +707,27 @@ static void update_play(float dt) {
     }
 
     update_parts(dt);
+
+    /* A wave ends only when every scheduled duck has spawned AND all of them
+     * have been defeated (including mower kills in this frame). The robot is
+     * revealed only after the entire tenth wave; defeating it wins the game. */
+    int alive = 0;
+    for (int i = 0; i < ZMAX; i++) if (zomb[i].active) alive++;
+    if (to_spawn == 0 && alive == 0) {
+        if (level == MAX_LEVEL && !boss_phase) {
+            if (spawn_boss()) {
+                boss_phase = 1;
+                boss_spawned = 1;
+                banner_text = "КОРОЛЕВА В РОБОТЕ!";
+                banner_t = 5;
+            }
+        } else {
+            completed_mask |= 1u << (level - 1);
+            resume_level = level == MAX_LEVEL ? MAX_LEVEL : level + 1;
+            saved_battle = 0;
+            phase = level == MAX_LEVEL ? PH_WIN : PH_LEVEL_CLEAR;
+        }
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -722,10 +738,24 @@ static int inside(int x, int y, int x0, int y0, int x1, int y1) {
     return x >= x0 && x <= x1 && y >= y0 && y <= y1;
 }
 
+/* Level 0 is repeatable. Rewatching from the selector must NOT discard a
+ * saved battle or mark any level completed; the first story run leads to 1. */
+static void finish_intro(void) {
+    if (intro_replay) phase = PH_SELECT;
+    else start_level(1);
+}
+
+static void start_intro(int replay) {
+    intro_replay = replay;
+    intro_step = 0;
+    intro_t = 0;
+    phase = PH_INTRO;
+}
+
 static void advance_intro(void) {
     intro_step++;
     intro_t = 0;
-    if (intro_step >= 3) start_level(1);
+    if (intro_step >= 3) finish_intro();
 }
 
 static void open_book(void) {
@@ -739,7 +769,7 @@ void game_input_press(int x, int y) {
         if (inside(x, y, 440, 490, 840, 600)) {
             if (saved_battle) phase = PH_PLAY;
             else if (completed_mask == 0 && resume_level == 1) {
-                intro_step = 0; intro_t = 0; phase = PH_INTRO;
+                start_intro(0);
             } else start_level(resume_level);
         } else if (inside(x, y, 175, 606, 475, 672)) {
             phase = PH_SELECT;
@@ -751,6 +781,7 @@ void game_input_press(int x, int y) {
     }
     if (phase == PH_SELECT) {
         if (inside(x, y, 1045, 18, 1265, 85)) { phase = PH_MENU; return; }
+        if (inside(x, y, 425, 567, 855, 641)) { start_intro(1); return; }
         for (int n = 1; n <= MAX_LEVEL; n++) {
             int col = (n - 1) % 5, row = (n - 1) / 5;
             if (inside(x, y, 100 + col * 220, 210 + row * 190,
@@ -762,7 +793,7 @@ void game_input_press(int x, int y) {
         return;
     }
     if (phase == PH_INTRO) {
-        if (inside(x, y, 1020, 10, 1270, 92)) start_level(1); /* skip */
+        if (inside(x, y, 1020, 10, 1270, 92)) finish_intro(); /* skip */
         else advance_intro();                                  /* next line */
         return;
     }
@@ -828,7 +859,7 @@ void game_input_press(int x, int y) {
     }
     if (collected) return;
 
-    /* Only the three packets with drawings can be selected. */
+    /* Only packets backed by the author's drawings can be selected. */
     if (y >= 16 && y <= 132) {
         for (int i = 0; i < PT_COUNT; i++) {
             int x0 = CARD_X + i * CARD_STEP;
@@ -903,6 +934,15 @@ static void draw_mowers(void) {
     }
 }
 
+int game_wave_remaining(void) {
+    int remaining = to_spawn;
+    for (int i = 0; i < ZMAX; i++)
+        if (zomb[i].active && zomb[i].type == EN_DUCK) remaining++;
+    return remaining;
+}
+
+int game_wave_total(void) { return total_zombies; }
+
 static void draw_seed_bar(void) {
     if (sprite_pixels[SPR_MAP])
         sprite_crop(SPR_MAP, 0, 0, GAME_W, 140, 0, 0, 242, 135, 0);
@@ -912,8 +952,7 @@ static void draw_seed_bar(void) {
     draw_coin_icon(64, 70, 26);
     draw_text(105, 25, 2, COL(255, 223, 131), "МОНЕТЫ");
     draw_int(105, 53, 5, COL(250, 250, 250), coin_balance);
-    /* Packet labels make the blue coin-producing flower impossible to confuse
-     * with a snow pea. These are the ONLY three selectable drawings. */
+    /* Four illustrated packets; the blue sunflower still makes coins. */
     for (int i = 0; i < PT_COUNT; i++) {
         int x0 = CARD_X + i * CARD_STEP;
         int affordable = coin_balance >= PDEF[i].cost && cooldown[i] <= 0;
@@ -921,9 +960,9 @@ static void draw_seed_bar(void) {
         rect(x0 - 3, 15, x0 + CARD_W + 3, 135, border);
         rect(x0, 18, x0 + CARD_W, 132, COL(236, 224, 188));
         rect(x0, 18, x0 + CARD_W, 24, PDEF[i].body);
-        sprite_draw(PDEF[i].sprite, x0 + 51, 26, 68, 68, 0);
+        sprite_draw(PDEF[i].sprite, x0 + (CARD_W - 68) / 2, 26, 68, 68, 0);
         draw_text_c(x0 + CARD_W / 2, 95, 2, COL(64, 42, 29), PDEF[i].short_name);
-        draw_int(x0 + 72, 115, 2, COL(64, 42, 29), PDEF[i].cost);
+        draw_int(x0 + CARD_W / 2 - 13, 115, 2, COL(64, 42, 29), PDEF[i].cost);
         if (!affordable) rect_blend(x0, 18, x0 + CARD_W, 132, COL(10, 10, 25), 115);
         if (cooldown[i] > 0) {
             float frac = cooldown[i] / PDEF[i].recharge;
@@ -934,13 +973,25 @@ static void draw_seed_bar(void) {
     rect(900, 95, 1030, 139, COL(92, 66, 44));
     rect(903, 98, 1027, 136, COL(176, 133, 82));
     draw_text_c(965, 107, 3, COL(255, 247, 217), "КНИГА");
-    /* Countdown, not a duck-kill quota. Keep the menu button unobstructed. */
-    float left = boss_phase ? boss_left : level_left;
-    float duration = boss_phase ? BOSS_SECONDS : level_seconds(level);
-    int seconds = (int)ceilf(fmaxf(0, left));
-    int bar = (int)(188 * fmaxf(0, fminf(1, left / duration)));
-    draw_text(1055, 9, 3, COL(255, 230, 175), boss_phase ? "РОБОТ" : "ВРЕМЯ");
-    draw_int(1190, 9, 3, seconds < 11 ? COL(255, 105, 94) : COL(255, 245, 165), seconds);
+    /* Defeated opponents advance the wave, not the clock. Robot health
+     * replaces wave progress only after all of level ten's ducks are gone. */
+    int defeated = total_zombies - game_wave_remaining();
+    if (defeated < 0) defeated = 0;
+    if (defeated > total_zombies) defeated = total_zombies;
+    int bar = total_zombies ? defeated * 188 / total_zombies : 0;
+    char progress[24];
+    snprintf(progress, sizeof(progress), "%d/%d", defeated, total_zombies);
+    if (boss_phase) {
+        for (int i = 0; i < ZMAX; i++)
+            if (zomb[i].active && zomb[i].type == EN_ROBOT) {
+                float health = fmaxf(0, fminf(1, zomb[i].hp / zomb[i].maxhp));
+                bar = (int)(188 * health);
+                snprintf(progress, sizeof(progress), "%d%%", (int)ceilf(100 * health));
+                break;
+            }
+    }
+    draw_text(1055, 9, 3, COL(255, 230, 175), boss_phase ? "РОБОТ" : "ВОЛНА");
+    draw_text(1190, 12, 2, COL(255, 245, 165), progress);
     rect(1055, 43, 1245, 58, COL(42, 29, 25));
     if (bar > 0) rect(1056, 44, 1056 + bar, 57,
                       boss_phase ? COL(210, 72, 76) : COL(244, 139, 62));
@@ -1015,8 +1066,8 @@ static void draw_menu(void) {
                 "АВТОСОХРАНЕНИЕ. ВСЕ РАСТЕНИЯ СОЗДАЛ КИРИЛЛ.");
 }
 
-/* Any of the ten stages can be replayed or started directly. A completed
- * stage gets a distinct colour; the most recent battle has a gold outline. */
+/* Level 0 replays the story; any of the ten waves can also be replayed.
+ * Completed stages are green; the last in-progress battle is gold. */
 static void draw_level_select(void) {
     draw_background();
     rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(11, 20, 31), 200);
@@ -1037,13 +1088,15 @@ static void draw_level_select(void) {
         snprintf(label, sizeof(label), "УРОВЕНЬ %d", n);
         draw_text_c(x + 90, y + 12, 3, COL(255, 239, 198), label);
         draw_text_c(x + 90, y + 56, 2, COL(249, 214, 154), LEVEL_NAMES[n - 1]);
-        snprintf(label, sizeof(label), "%d СЕК", (int)level_seconds(n));
+        if (n == MAX_LEVEL) snprintf(label, sizeof(label), "%d + РОБОТ", 5 + n * 3);
+        else snprintf(label, sizeof(label), "%d ВРАГОВ", 5 + n * 3);
         draw_text_c(x + 90, y + 97, 2, COL(238, 233, 212), label);
     }
-    draw_text_c(640, 621, 3, COL(255, 231, 191),
-                "ПОБЕДА ПО ТАЙМЕРУ, А НЕ ПО ЧИСЛУ ПОБЕЖДЁННЫХ");
-    draw_text_c(640, 669, 2, COL(242, 231, 203),
-                "НА ДЕСЯТОМ УРОВНЕ ПОСЛЕ ВОЛНЫ ПОЯВИТСЯ РОБОТ КОРОЛЕВЫ");
+    draw_text_c(640, 166, 2, COL(255, 231, 191),
+                "ВОЛНА ЗАКОНЧИТСЯ, КОГДА ВСЕ ЕЁ ВРАГИ ПОБЕЖДЕНЫ");
+    draw_button(425, 567, 855, 641, "УРОВЕНЬ 0: КАТ-СЦЕНА", 4);
+    draw_text_c(640, 668, 2, COL(242, 231, 203),
+                "ПОВТОР КАТ-СЦЕНЫ НЕ СБРАСЫВАЕТ СОХРАНЕНИЕ");
 }
 
 /* Free planting space for every plant Kirill has actually drawn. It is
@@ -1070,7 +1123,7 @@ static void draw_garden(void) {
         rect(x0 - 3, 43, x0 + CARD_W + 3, 135, border);
         rect(x0, 46, x0 + CARD_W, 132, COL(236, 224, 188));
         rect(x0, 46, x0 + CARD_W, 51, PDEF[i].body);
-        sprite_draw(PDEF[i].sprite, x0 + 55, 51, 62, 62, 0);
+        sprite_draw(PDEF[i].sprite, x0 + (CARD_W - 62) / 2, 51, 62, 62, 0);
         draw_text_c(x0 + CARD_W / 2, 113, 2, COL(64, 42, 29), PDEF[i].short_name);
     }
     draw_button(915, 40, 1070, 87, "КНИГА", 3);
@@ -1103,12 +1156,13 @@ static void draw_book(void) {
              book_selected == i ? COL(184, 119, 56) : COL(166, 143, 111));
         rect(165, y0 + 5, 535, y0 + BOOK_ENTRY_H - 5,
              book_selected == i ? COL(255, 233, 160) : COL(240, 222, 181));
-        sprite_draw(PDEF[i].sprite, 180, y0 + 17, 98, 98, 0);
-        draw_text(293, y0 + 21, 2, COL(75, 52, 33), PDEF[i].short_name);
-        draw_text(293, y0 + 57, 2, COL(100, 70, 39), "ЦЕНА:");
-        draw_int(380, y0 + 57, 2, COL(100, 70, 39), PDEF[i].cost);
-        draw_text(293, y0 + 90, 2, COL(111, 75, 42),
-                  i == PT_PEA ? "АТАКА" : i == PT_WALL ? "ЗАЩИТА" : "МОНЕТЫ");
+        sprite_draw(PDEF[i].sprite, 180, y0 + 14, 80, 80, 0);
+        draw_text(275, y0 + 13, 2, COL(75, 52, 33), PDEF[i].short_name);
+        draw_text(275, y0 + 44, 2, COL(100, 70, 39), "ЦЕНА:");
+        draw_int(362, y0 + 44, 2, COL(100, 70, 39), PDEF[i].cost);
+        draw_text(275, y0 + 78, 2, COL(111, 75, 42),
+                  i == PT_PEA ? "АТАКА" : i == PT_WALL ? "ЗАЩИТА" :
+                  i == PT_JUMPER ? "ОТБРОС" : "МОНЕТЫ");
     }
 
     const PlantDef *p = &PDEF[book_selected];
@@ -1147,7 +1201,7 @@ static void draw_intro(void) {
     draw_background();
     rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(17, 24, 48), 105);
     rect_blend(0, 0, GAME_W - 1, 115, COL(17, 20, 35), 221);
-    draw_text_c(535, 37, 6, COL(255, 224, 157), "НАЧАЛО ИСТОРИИ");
+    draw_text_c(535, 37, 6, COL(255, 224, 157), "УРОВЕНЬ 0: КАТ-СЦЕНА");
     draw_button(1020, 10, 1270, 89, "ПРОПУСТИТЬ", 3);
     draw_khlebushek(245, 492, 246, intro_step == 0);
     /* Dima really walks toward Khlebushek in the first shot. */
@@ -1219,7 +1273,7 @@ static void draw_result(void) {
     rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(11, 17, 31), 199);
     if (phase == PH_LEVEL_CLEAR) {
         draw_text_c(640, 246, 7, COL(255, 231, 163), "УРОВЕНЬ ПРОЙДЕН!");
-        draw_text_c(640, 329, 3, COL(255, 228, 171), "ВРЕМЯ ИСТЕКЛО - ПОБЕДА!");
+        draw_text_c(640, 329, 3, COL(255, 228, 171), "ВСЯ ВОЛНА ПОБЕЖДЕНА!");
         draw_text_c(570, 375, 4, COL(248, 247, 231), "СЛЕДУЮЩИЙ УРОВЕНЬ:");
         draw_int(878, 375, 4, COL(255, 216, 119), level + 1);
         draw_button(390, 450, 890, 565, "ДАЛЬШЕ", 7);
@@ -1262,14 +1316,13 @@ void game_tick(float dt, uint32_t *fb) {
 }
 
 int game_phase(void) { return (int)phase; }
-int game_level(void) { return level; }
+int game_level(void) { return phase == PH_INTRO ? 0 : level; }
 int game_completed_level(void) {
     int count = 0;
     for (int n = 0; n < MAX_LEVEL; n++) count += (completed_mask >> n) & 1u;
     return count;
 }
 int game_resume_level(void) { return resume_level; }
-float game_seconds_left(void) { return boss_phase ? boss_left : level_left; }
 
 void game_garden_export(uint8_t cells[GAME_GARDEN_CELLS]) {
     if (!cells) return;
@@ -1288,22 +1341,22 @@ int game_garden_import(const uint8_t cells[GAME_GARDEN_CELLS]) {
     return 1;
 }
 
-/* The garden deliberately remains in pvg3-garden.v1 for compatibility. The
- * separate campaign snapshot has a fixed layout: every field/member is a
- * 32-bit integer or IEEE-754 float on the supported little-endian Android
- * ABIs. No pointers, renderer buffers or uninitialized bytes are persisted.
- * V2 uses a per-level completion mask; V1 (highest level) can still be read.
- * A checksum rejects incomplete files. Bump the version on any layout change. */
+/* The garden remains in pvg3-garden.v1. Campaign V3 intentionally has the
+ * EXACT SAME byte layout as V1/V2: fourth seed cooldown reuses the former
+ * boss countdown field; the first three cooldown slots stay in place. This
+ * keeps old in-progress boards and completion data readable when we switch
+ * from a timer to a kill-completed wave. No pointers or random bytes persist.
+ * All fields are 32-bit integers/floats on the supported little-endian ABIs. */
 _Static_assert(sizeof(int) == 4 && sizeof(float) == 4, "save needs 32-bit fields");
 typedef struct {
     uint32_t magic, version;
     int completed, resume, active, level;
-    float level_left, boss_left;
+    float old_level_left, jumper_cooldown; /* V1/V2: level_left, boss_left */
     int boss_phase, boss_spawned, coin_balance, selected;
     int to_spawn, total_zombies;
     float spawn_t, global_t, banner_t;
     uint32_t rng;
-    float cooldown[PT_COUNT];
+    float cooldown[PT_JUMPER]; /* original three plant slots; do not resize */
     Plant grid[ROWS][COLS];
     Zombie zomb[ZMAX];
     Pea peas[PEAMAX];
@@ -1311,9 +1364,12 @@ typedef struct {
     Mower mower[ROWS];
     uint32_t checksum;
 } SaveState;
+_Static_assert(sizeof(SaveState) == 9988 &&
+               offsetof(SaveState, checksum) == sizeof(SaveState) - 4,
+               "Keep the campaign V1/V2 save layout readable on both Android ABIs");
 
 #define SAVE_MAGIC 0x33477650u /* little-endian bytes 'P', 'v', 'G', '3' */
-#define SAVE_VERSION 2u
+#define SAVE_VERSION 3u
 
 static uint32_t save_checksum(const SaveState *s) {
     const uint8_t *p = (const uint8_t *)s;
@@ -1336,8 +1392,7 @@ int game_save_export(void *dst, size_t capacity) {
     s.active = saved_battle;
     s.level = level;
     if (s.active) {
-        s.level_left = level_left;
-        s.boss_left = boss_left;
+        s.jumper_cooldown = cooldown[PT_JUMPER];
         s.boss_phase = boss_phase;
         s.boss_spawned = boss_spawned;
         s.coin_balance = coin_balance;
@@ -1348,7 +1403,7 @@ int game_save_export(void *dst, size_t capacity) {
         s.global_t = global_t;
         s.banner_t = banner_t;
         s.rng = RNG;
-        memcpy(s.cooldown, cooldown, sizeof(cooldown));
+        memcpy(s.cooldown, cooldown, sizeof(s.cooldown));
         memcpy(s.grid, grid, sizeof(grid));
         memcpy(s.zomb, zomb, sizeof(zomb));
         memcpy(s.peas, peas, sizeof(peas));
@@ -1364,11 +1419,12 @@ int game_save_import(const void *src, size_t length) {
     if (!src || length != sizeof(SaveState)) return 0;
     SaveState s;
     memcpy(&s, src, sizeof(s)); /* src need not be suitably aligned */
-    if (s.magic != SAVE_MAGIC || (s.version != 1u && s.version != SAVE_VERSION) ||
+    if (s.magic != SAVE_MAGIC ||
+        (s.version != 1u && s.version != 2u && s.version != SAVE_VERSION) ||
         s.checksum != save_checksum(&s) ||
         s.completed < 0 ||
         (s.version == 1u && s.completed > MAX_LEVEL) ||
-        (s.version == SAVE_VERSION && s.completed >= (1 << MAX_LEVEL)) ||
+        (s.version >= 2u && s.completed >= (1 << MAX_LEVEL)) ||
         s.resume < 1 || s.resume > MAX_LEVEL ||
         (s.active != 0 && s.active != 1) ||
         s.level < 1 || s.level > MAX_LEVEL) return 0;
@@ -1376,16 +1432,21 @@ int game_save_import(const void *src, size_t length) {
         if (s.level != s.resume || (s.boss_phase != 0 && s.boss_phase != 1) ||
             (s.boss_spawned != 0 && s.boss_spawned != 1) ||
             (s.boss_phase && (s.level != MAX_LEVEL || !s.boss_spawned)) ||
-            !isfinite(s.level_left) || s.level_left < 0 ||
-            s.level_left > level_seconds(s.level) ||
-            !isfinite(s.boss_left) || s.boss_left < 0 || s.boss_left > BOSS_SECONDS ||
+            (s.version < SAVE_VERSION &&
+             (!isfinite(s.old_level_left) || s.old_level_left < 0 ||
+              s.old_level_left > 45 + s.level * 5 ||
+              !isfinite(s.jumper_cooldown) || s.jumper_cooldown < 0 ||
+              s.jumper_cooldown > 100)) ||
+            (s.version == SAVE_VERSION &&
+             (!isfinite(s.jumper_cooldown) ||
+              s.jumper_cooldown > PDEF[PT_JUMPER].recharge + 1)) ||
             s.coin_balance < 0 || s.coin_balance > 1000000 ||
             s.selected < -1 || s.selected >= PT_COUNT ||
             s.total_zombies != 5 + s.level * 3 ||
             s.to_spawn < 0 || s.to_spawn > s.total_zombies ||
             !isfinite(s.spawn_t) || !isfinite(s.global_t) || !isfinite(s.banner_t))
             return 0;
-        for (int i = 0; i < PT_COUNT; i++)
+        for (int i = 0; i < PT_JUMPER; i++)
             if (!isfinite(s.cooldown[i]) || s.cooldown[i] > PDEF[i].recharge + 1)
                 return 0;
         for (int r = 0; r < ROWS; r++) {
@@ -1426,8 +1487,6 @@ int game_save_import(const void *src, size_t length) {
     saved_battle = s.active;
     level = s.active ? s.level : s.resume;
     if (s.active) {
-        level_left = s.level_left;
-        boss_left = s.boss_left;
         boss_phase = s.boss_phase;
         boss_spawned = s.boss_spawned;
         coin_balance = s.coin_balance;
@@ -1438,7 +1497,8 @@ int game_save_import(const void *src, size_t length) {
         global_t = s.global_t;
         banner_t = s.banner_t;
         RNG = s.rng;
-        memcpy(cooldown, s.cooldown, sizeof(cooldown));
+        memcpy(cooldown, s.cooldown, sizeof(s.cooldown));
+        cooldown[PT_JUMPER] = s.version == SAVE_VERSION ? s.jumper_cooldown : 0;
         memcpy(grid, s.grid, sizeof(grid));
         memcpy(zomb, s.zomb, sizeof(zomb));
         memcpy(peas, s.peas, sizeof(peas));
@@ -1457,6 +1517,24 @@ void game_debug_finish_wave(void) {
     to_spawn = 0;
     for (int i = 0; i < ZMAX; i++)
         if (zomb[i].type != EN_ROBOT) zomb[i].active = 0;
+}
+void game_debug_spawn_duck(int row, float x) {
+    if (row < 0 || row >= ROWS) return;
+    for (int i = 0; i < ZMAX; i++)
+        if (!zomb[i].active) {
+            Zombie *z = &zomb[i];
+            memset(z, 0, sizeof(*z));
+            z->active = 1; z->type = EN_DUCK; z->row = row; z->x = x;
+            z->hp = z->maxhp = 100; z->speed = 25;
+            if (to_spawn > 0) to_spawn--;
+            return;
+        }
+}
+float game_debug_duck_x(int row) {
+    for (int i = 0; i < ZMAX; i++)
+        if (zomb[i].active && zomb[i].type == EN_DUCK && zomb[i].row == row)
+            return zomb[i].x;
+    return -1;
 }
 void game_debug_defeat_boss(void) {
     for (int i = 0; i < ZMAX; i++)
@@ -1494,6 +1572,9 @@ int game_debug_coin_count(void) {
     int count = 0;
     for (int i = 0; i < COINMAX; i++) if (coins[i].active) count++;
     return count;
+}
+float game_debug_cooldown(int plant) {
+    return (unsigned)plant < PT_COUNT ? cooldown[plant] : -1;
 }
 int game_debug_garden_plant_type(int row, int col) {
     if ((unsigned)row >= ROWS || (unsigned)col >= COLS) return PT_NONE;
