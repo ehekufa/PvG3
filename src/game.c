@@ -264,7 +264,7 @@ typedef struct { int used; int running; float x; } Mower;
 
 static Phase phase;
 static int level;                     /* 1..10 */
-static int completed_level;           /* highest timed level survived */
+static unsigned completed_mask;       /* one bit per actually survived level */
 static int resume_level;              /* Continue starts/resumes this level */
 static int saved_battle;              /* 1 = continue exact in-progress board */
 static float level_left;              /* regular countdown */
@@ -479,7 +479,7 @@ void game_init(void) {
     global_t = 0;
     intro_step = 0;
     intro_t = 0;
-    completed_level = 0;
+    completed_mask = 0;
     resume_level = 1;
     start_level(1);
     saved_battle = 0;
@@ -537,7 +537,7 @@ static void update_play(float dt) {
                 banner_text = "КОРОЛЕВА В РОБОТЕ!";
                 banner_t = 5;
             } else {
-                if (completed_level < level) completed_level = level;
+                completed_mask |= 1u << (level - 1);
                 resume_level = level + 1;
                 saved_battle = 0;
                 phase = PH_LEVEL_CLEAR;
@@ -548,7 +548,7 @@ static void update_play(float dt) {
         boss_left -= dt;
         if (boss_left <= 0) {
             boss_left = 0;
-            completed_level = MAX_LEVEL;
+            completed_mask |= 1u << (MAX_LEVEL - 1);
             resume_level = MAX_LEVEL;
             saved_battle = 0;
             phase = PH_WIN;
@@ -738,7 +738,7 @@ void game_input_press(int x, int y) {
     if (phase == PH_MENU) {
         if (inside(x, y, 440, 490, 840, 600)) {
             if (saved_battle) phase = PH_PLAY;
-            else if (completed_level == 0 && resume_level == 1) {
+            else if (completed_mask == 0 && resume_level == 1) {
                 intro_step = 0; intro_t = 0; phase = PH_INTRO;
             } else start_level(resume_level);
         } else if (inside(x, y, 175, 606, 475, 672)) {
@@ -1000,10 +1000,10 @@ static void draw_menu(void) {
     ellipse(1091, 473, 116, 13, COL(29, 53, 35));
     sprite_draw(SPR_ROBOT, 980, 226, 240, 240, 0);
     draw_text_c(1100, 473, 3, COL(255, 220, 168), "КОРОЛЕВА");
-    if (saved_battle || completed_level > 0) {
+    if (saved_battle || completed_mask != 0) {
         char status[96];
         snprintf(status, sizeof(status), "ПРОЙДЕНО %d / 10. ИГРАТЬ: УРОВЕНЬ %d",
-                 completed_level, resume_level);
+                 game_completed_level(), resume_level);
         rect_blend(430, 445, 850, 482, COL(17, 26, 34), 220);
         draw_text_c(640, 450, 2, COL(255, 231, 170), status);
     }
@@ -1023,13 +1023,13 @@ static void draw_level_select(void) {
     draw_text_c(630, 32, 6, COL(255, 226, 159), "ВЫБОР УРОВНЯ");
     draw_button(1045, 18, 1265, 85, "НАЗАД", 4);
     char status[64];
-    snprintf(status, sizeof(status), "ПРОЙДЕНО: %d / 10", completed_level);
+    snprintf(status, sizeof(status), "ПРОЙДЕНО: %d / 10", game_completed_level());
     draw_text_c(640, 121, 3, COL(248, 236, 204), status);
     for (int n = 1; n <= MAX_LEVEL; n++) {
         int col = (n - 1) % 5, row = (n - 1) / 5;
         int x = 100 + col * 220, y = 210 + row * 190;
         uint32_t frame = saved_battle && resume_level == n ? COL(255, 226, 113) :
-                         n <= completed_level ? COL(96, 180, 102) : COL(158, 129, 96);
+                         (completed_mask & (1u << (n - 1))) ? COL(96, 180, 102) : COL(158, 129, 96);
         rect(x, y + 5, x + 180, y + 135, COL(15, 26, 30));
         rect(x, y, x + 180, y + 130, frame);
         rect(x + 5, y + 5, x + 175, y + 125, COL(65, 52, 50));
@@ -1232,7 +1232,7 @@ static void draw_result(void) {
         draw_button(660, 460, 975, 565, "В МЕНЮ", 4);
     } else if (phase == PH_WIN) {
         draw_text_c(640, 237, 7, COL(255, 231, 163), "РОБОТ ОСТАНОВЛЕН!");
-        draw_text_c(640, 340, 4, COL(248, 247, 231), "10 УРОВНЕЙ ПРОЙДЕНО. ГУСИ СПАСЕНЫ!");
+        draw_text_c(640, 340, 4, COL(248, 247, 231), "ФИНАЛ ПРОЙДЕН. ГУСИ СПАСЕНЫ!");
         draw_button(425, 460, 855, 580, "В МЕНЮ", 6);
     }
 }
@@ -1263,7 +1263,11 @@ void game_tick(float dt, uint32_t *fb) {
 
 int game_phase(void) { return (int)phase; }
 int game_level(void) { return level; }
-int game_completed_level(void) { return completed_level; }
+int game_completed_level(void) {
+    int count = 0;
+    for (int n = 0; n < MAX_LEVEL; n++) count += (completed_mask >> n) & 1u;
+    return count;
+}
 int game_resume_level(void) { return resume_level; }
 float game_seconds_left(void) { return boss_phase ? boss_left : level_left; }
 
@@ -1284,12 +1288,12 @@ int game_garden_import(const uint8_t cells[GAME_GARDEN_CELLS]) {
     return 1;
 }
 
-/* The garden deliberately remains in pvg3-garden.v1 for compatibility. This
- * separate snapshot is a fixed-layout, little-endian v1 format: every field
- * and every member of its arrays is a 32-bit integer or IEEE-754 float on
- * the supported Android ABIs. No pointers, renderer buffers, or padding-only
- * allocation contents are saved. A checksum rejects incomplete/corrupt files.
- * Bump the version if the layout changes. */
+/* The garden deliberately remains in pvg3-garden.v1 for compatibility. The
+ * separate campaign snapshot has a fixed layout: every field/member is a
+ * 32-bit integer or IEEE-754 float on the supported little-endian Android
+ * ABIs. No pointers, renderer buffers or uninitialized bytes are persisted.
+ * V2 uses a per-level completion mask; V1 (highest level) can still be read.
+ * A checksum rejects incomplete files. Bump the version on any layout change. */
 _Static_assert(sizeof(int) == 4 && sizeof(float) == 4, "save needs 32-bit fields");
 typedef struct {
     uint32_t magic, version;
@@ -1309,7 +1313,7 @@ typedef struct {
 } SaveState;
 
 #define SAVE_MAGIC 0x33477650u /* little-endian bytes 'P', 'v', 'G', '3' */
-#define SAVE_VERSION 1u
+#define SAVE_VERSION 2u
 
 static uint32_t save_checksum(const SaveState *s) {
     const uint8_t *p = (const uint8_t *)s;
@@ -1327,7 +1331,7 @@ int game_save_export(void *dst, size_t capacity) {
     memset(&s, 0, sizeof(s));
     s.magic = SAVE_MAGIC;
     s.version = SAVE_VERSION;
-    s.completed = completed_level;
+    s.completed = (int)completed_mask;
     s.resume = resume_level;
     s.active = saved_battle;
     s.level = level;
@@ -1360,9 +1364,11 @@ int game_save_import(const void *src, size_t length) {
     if (!src || length != sizeof(SaveState)) return 0;
     SaveState s;
     memcpy(&s, src, sizeof(s)); /* src need not be suitably aligned */
-    if (s.magic != SAVE_MAGIC || s.version != SAVE_VERSION ||
+    if (s.magic != SAVE_MAGIC || (s.version != 1u && s.version != SAVE_VERSION) ||
         s.checksum != save_checksum(&s) ||
-        s.completed < 0 || s.completed > MAX_LEVEL ||
+        s.completed < 0 ||
+        (s.version == 1u && s.completed > MAX_LEVEL) ||
+        (s.version == SAVE_VERSION && s.completed >= (1 << MAX_LEVEL)) ||
         s.resume < 1 || s.resume > MAX_LEVEL ||
         (s.active != 0 && s.active != 1) ||
         s.level < 1 || s.level > MAX_LEVEL) return 0;
@@ -1415,7 +1421,7 @@ int game_save_import(const void *src, size_t length) {
                 !isfinite(c->bob) || !isfinite(c->vy))) return 0;
         }
     }
-    completed_level = s.completed;
+    completed_mask = s.version == 1u ? (1u << s.completed) - 1u : (unsigned)s.completed;
     resume_level = s.resume;
     saved_battle = s.active;
     level = s.active ? s.level : s.resume;
@@ -1494,4 +1500,7 @@ int game_debug_garden_plant_type(int row, int col) {
     return garden[row][col];
 }
 int game_debug_book_plant(void) { return book_selected; }
+int game_debug_level_completed(int n) {
+    return n >= 1 && n <= MAX_LEVEL && !!(completed_mask & (1u << (n - 1)));
+}
 #endif

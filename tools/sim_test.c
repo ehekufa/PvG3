@@ -35,6 +35,17 @@ static void advance(float seconds) {
 
 static void pass_timer(void) { advance(game_seconds_left() + 0.15f); }
 
+/* Simulate a snapshot from the previous format: same layout, but completed
+ * meant "highest level" in V1 rather than a per-level bitmask. */
+static void make_legacy_save(uint8_t *bytes, size_t length, uint32_t highest) {
+    uint32_t version = 1, hash = 2166136261u;
+    memcpy(bytes + 4, &version, 4);
+    memcpy(bytes + 8, &highest, 4);
+    for (size_t i = 0; i < length - 4; i++)
+        hash = (hash ^ bytes[i]) * 16777619u;
+    memcpy(bytes + length - 4, &hash, 4);
+}
+
 int main(void) {
     /* Embedded PT Sans really covers Cyrillic and has anti-aliased edges. */
     assert(font_init() && font_has_glyph(0x416) && font_has_glyph(0x451));
@@ -250,6 +261,12 @@ int main(void) {
     game_input_press(640, 520);              /* final -> menu */
     assert(game_phase() == GAME_MENU && game_completed_level() == 10);
     assert(game_save_export(saved, len));
+    memcpy(bad, saved, len);
+    make_legacy_save(bad, len, 10);         /* accept pre-mask save format */
+    game_init();
+    assert(game_save_import(bad, len));
+    assert(game_completed_level() == 10);
+    for (int n = 1; n <= 10; n++) assert(game_debug_level_completed(n));
     game_init();
     assert(game_save_import(saved, len));
     assert(game_completed_level() == 10 && game_resume_level() == 10);
@@ -270,6 +287,23 @@ int main(void) {
     game_input_press(190, 270);              /* replay level 1 from selection */
     assert(game_phase() == GAME_PLAY && game_level() == 1);
     assert(game_completed_level() == 10 && game_seconds_left() == 50.0f);
+
+    /* Skipping directly to 10 must NOT mark the other nine as completed.
+     * The save retains individual completion flags and the correct count. */
+    game_init();
+    game_input_press(325, 640);
+    game_input_press(1070, 470);
+    assert(game_level() == 10 && game_completed_level() == 0);
+    game_debug_finish_wave();
+    pass_timer();
+    pass_timer();
+    assert(game_phase() == GAME_WIN && game_completed_level() == 1);
+    assert(game_debug_level_completed(10) && !game_debug_level_completed(1));
+    assert(game_save_export(saved, len));
+    game_init();
+    assert(game_save_import(saved, len));
+    assert(game_completed_level() == 1 && game_debug_level_completed(10));
+    assert(!game_debug_level_completed(1));
     free(saved);
     free(bad);
 

@@ -16,7 +16,8 @@ enum { GAME_MENU, GAME_INTRO, GAME_PLAY, GAME_LEVEL_CLEAR, GAME_WIN, GAME_LOSE,
 /* Reset the game back to the title screen. */
 void game_init(void);
 
-/* Campaign progress and currently running countdown (seconds). */
+/* Campaign progress and currently running countdown (seconds).
+ * game_completed_level() counts individually completed levels (0..10). */
 int game_level(void);
 int game_completed_level(void);
 int game_resume_level(void);
@@ -65,6 +66,7 @@ int game_debug_coin_balance(void);
 int game_debug_coin_count(void);
 int game_debug_garden_plant_type(int row, int col);
 int game_debug_book_plant(void);
+int game_debug_level_completed(int level);
 #endif
 
 #endif /* GAME_H_INCLUDED */

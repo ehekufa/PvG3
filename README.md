@@ -100,7 +100,7 @@ Sans Regular** с поддержкой кириллицы, а не пиксел�
 исходников выполни `python3 tools/pack_sprites.py` и `python3 tools/pack_font.py`;
 сгенерированные заголовки хранятся в репозитории.
 
-GitHub Actions собирает подписанный APK версии **1.2** для `arm64-v8a` и
+GitHub Actions собирает подписанный APK версии **1.2.1** для `arm64-v8a` и
 `armeabi-v7a`, Android 10+ (API 29). Результат — артефакт
 `PvG3-Android-arm64-arm32` из workflow **Build PvG3 (Android APK, arm64 + arm32)**.
 Каждая сборка подписывается новым тестовым ключом, поэтому перед установкой
