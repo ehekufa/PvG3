@@ -7,12 +7,18 @@ on:
 jobs:
   build:
     name: Android APK (arm64-v8a + armeabi-v7a, Android 10+)
-    runs-on: ubuntu-latest
+    # Pinned runner has Android SDK 34, build-tools 34.0.0 and NDK installed.
+    runs-on: ubuntu-24.04
 
     steps:
       - uses: actions/checkout@v4
 
-      - uses: android-actions/setup-android@v3
+      - name: Check preinstalled Android toolchain
+        run: |
+          test -f "$ANDROID_HOME/platforms/android-34/android.jar"
+          test -x "$ANDROID_HOME/build-tools/34.0.0/aapt"
+          test -d "$ANDROID_NDK_ROOT"
+          echo "SDK=$ANDROID_HOME NDK=$ANDROID_NDK_ROOT"
 
       - name: Verify artwork and ten-level game flow
         run: |
@@ -76,6 +82,9 @@ jobs:
 
           "$BT/apksigner" sign --ks pvg3.keystore --ks-pass pass:android \
             --out PvG3.apk aligned.apk
+          "$BT/apksigner" verify --verbose PvG3.apk
+          unzip -l PvG3.apk | grep 'lib/arm64-v8a/libpvg3.so'
+          unzip -l PvG3.apk | grep 'lib/armeabi-v7a/libpvg3.so'
 
       - uses: actions/upload-artifact@v4
         with:
