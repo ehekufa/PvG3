@@ -1,5 +1,6 @@
-/* Desktop screenshots for menu, cutscene, level one and the final robot fight.
- * gcc -O2 -Wall -Isrc src/game.c tools/host_test.c -o host_test -lm
+/* Desktop screenshots: menu, level select, cutscene, Zen Garden, timer and robot.
+ * gcc -O2 -Wall -Wextra -Werror -Isrc src/game.c src/font.c \
+ *     tools/host_test.c -o host_test -lm && ./host_test
  */
 #include <errno.h>
 #include <stdio.h>
@@ -48,8 +49,12 @@ int main(void) {
     game_init();
     game_tick(0.016f, fb);
     write_bmp("shots/menu.bmp", GAME_W, GAME_H, fb);
+    game_input_press(325, 640);             /* УРОВНИ */
+    game_tick(0, fb);
+    write_bmp("shots/select.bmp", GAME_W, GAME_H, fb);
+    game_input_press(1130, 50);             /* back to menu */
 
-    game_input_press(480, 640);             /* САД ДЗЕН */
+    game_input_press(625, 640);             /* САД ДЗЕН */
     game_input_press(780, 70);              /* Kirill's blue coin sunflower */
     game_input_press(300, 204);
     game_input_press(370, 70);              /* peashooter */

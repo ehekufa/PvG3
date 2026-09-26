@@ -20,13 +20,16 @@ jobs:
           test -d "$ANDROID_NDK_ROOT"
           echo "SDK=$ANDROID_HOME NDK=$ANDROID_NDK_ROOT"
 
-      - name: Verify artwork and ten-level game flow
+      - name: Verify artwork, licensed font, timed levels and save/resume
         run: |
           python3 tools/pack_sprites.py
+          python3 tools/pack_font.py
           python3 tools/check_art_roles.py
-          git diff --exit-code -- src/sprites_data.h
+          git diff --exit-code -- src/sprites_data.h src/font_data.h
+          test -s assets/fonts/OFL.txt
+          test -s assets/licenses/stb_truetype-MIT.txt
           gcc -std=c11 -O2 -Wall -Wextra -Werror -DGAME_TEST -Isrc \
-            src/game.c tools/sim_test.c -o sim_test -lm
+            src/game.c src/font.c tools/sim_test.c -o sim_test -lm
           ./sim_test
 
       - name: Build native library (both ABIs)
@@ -53,7 +56,7 @@ jobs:
 
           TC="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
           mkdir -p staging/lib/arm64-v8a staging/lib/armeabi-v7a
-          SRC="src/game.c src/android_main.c $GLUE_SRC"
+          SRC="src/game.c src/font.c src/android_main.c $GLUE_SRC"
           CFLAGS="-O3 -s -fPIC -Isrc -I$GLUE_INC"
           LIBS="-landroid -llog -lEGL -lGLESv2 -lm"
 
@@ -71,6 +74,12 @@ jobs:
           SDK="$ANDROID_HOME"
           BT="$SDK/build-tools/34.0.0"
 
+          # The embedded PT Sans and stb_truetype travel with their notices.
+          mkdir -p staging/assets/licenses
+          cp assets/fonts/OFL.txt staging/assets/licenses/PT_Sans-OFL.txt
+          cp assets/licenses/stb_truetype-MIT.txt staging/assets/licenses/stb_truetype-MIT.txt
+          cp LICENSE staging/assets/licenses/PvG3-MIT.txt
+
           "$BT/aapt" package -f -M AndroidManifest.xml \
             -I "$SDK/platforms/android-34/android.jar" \
             -F unsigned.apk ./staging/
@@ -86,6 +95,8 @@ jobs:
           "$BT/apksigner" verify --verbose PvG3.apk
           unzip -l PvG3.apk | grep 'lib/arm64-v8a/libpvg3.so'
           unzip -l PvG3.apk | grep 'lib/armeabi-v7a/libpvg3.so'
+          unzip -l PvG3.apk | grep 'assets/licenses/PT_Sans-OFL.txt'
+          unzip -l PvG3.apk | grep 'assets/licenses/stb_truetype-MIT.txt'
 
       - uses: actions/upload-artifact@v4
         with:

@@ -1,6 +1,7 @@
 #ifndef GAME_H_INCLUDED
 #define GAME_H_INCLUDED
 
+#include <stddef.h>
 #include <stdint.h>
 
 /* Internal virtual resolution the game renders at. The platform layer
@@ -10,13 +11,24 @@
 
 /* Public phases (use these names rather than assuming integer values). */
 enum { GAME_MENU, GAME_INTRO, GAME_PLAY, GAME_LEVEL_CLEAR, GAME_WIN, GAME_LOSE,
-       GAME_GARDEN, GAME_BOOK };
+       GAME_GARDEN, GAME_BOOK, GAME_SELECT };
 
 /* Reset the game back to the title screen. */
 void game_init(void);
 
-/* Current level, 1..10. */
+/* Campaign progress and currently running countdown (seconds). */
 int game_level(void);
+int game_completed_level(void);
+int game_resume_level(void);
+float game_seconds_left(void);
+
+/* Versioned, checksummed campaign snapshot. Includes the board, countdown,
+ * coins, enemies and unlocked progress; load returns to the menu, where Play
+ * resumes an in-progress battle. The separately saved Zen Garden is excluded.
+ * Import validates the entire snapshot before changing any game state. */
+size_t game_save_size(void);
+int game_save_export(void *dst, size_t capacity);
+int game_save_import(const void *src, size_t length);
 
 /* Pointer events in virtual coordinates (0..GAME_W, 0..GAME_H). */
 void game_input_press(int x, int y);
@@ -44,6 +56,7 @@ void game_debug_finish_wave(void);
 void game_debug_defeat_boss(void);
 int game_debug_boss_alive(void);
 float game_debug_boss_x(void);
+void game_debug_boss_set_x(float x);
 int game_debug_plant_type(int row, int col);
 int game_debug_seed_count(void);
 int game_debug_first_enemy_type(void);
