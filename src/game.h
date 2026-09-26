@@ -38,6 +38,8 @@ void game_debug_defeat_boss(void);
 int game_debug_boss_alive(void);
 float game_debug_boss_x(void);
 int game_debug_plant_type(int row, int col);
+int game_debug_seed_count(void);
+int game_debug_first_enemy_type(void);
 int game_debug_mower_used(int row);
 #endif
 

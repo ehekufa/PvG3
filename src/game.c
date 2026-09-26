@@ -102,17 +102,6 @@ static void ellipse(int cx, int cy, int rx, int ry, uint32_t c) {
         }
 }
 
-static void line_thick(int x0, int y0, int x1, int y1, int t, uint32_t c) {
-    int dx = x1 - x0, dy = y1 - y0;
-    int steps = dx < 0 ? -dx : dx;
-    if (dy < 0 ? -dy : dy) steps = steps > (dy < 0 ? -dy : dy) ? steps : (dy < 0 ? -dy : dy);
-    if (steps == 0) { disc(x0, y0, t / 2, c); return; }
-    for (int i = 0; i <= steps; i++) {
-        int x = x0 + dx * i / steps, y = y0 + dy * i / steps;
-        disc(x, y, t / 2, c);
-    }
-}
-
 /* The PNGs are packed as consecutive (count, RGBA) runs at build time. Decode
  * only once, not on every frame; no Android file paths or third-party decoder. */
 typedef struct { int w, h; const uint64_t *runs; unsigned nruns; } SpritePacked;
@@ -330,6 +319,9 @@ static float rndf(void) { return (float)(rnd() & 0xFFFFFF) / (float)0x1000000; }
 #define LAWN_Y 150
 #define CELL_W 120
 #define CELL_H 108
+#define CARD_X 285
+#define CARD_STEP 205
+#define CARD_W 170
 
 #define ZMAX 80
 #define PEAMAX 200
@@ -340,21 +332,20 @@ typedef enum { PH_MENU = GAME_MENU, PH_INTRO = GAME_INTRO, PH_PLAY = GAME_PLAY,
                PH_LEVEL_CLEAR = GAME_LEVEL_CLEAR, PH_WIN = GAME_WIN,
                PH_LOSE = GAME_LOSE } Phase;
 
-/* plant types */
-enum { PT_NONE = -1, PT_SUN = 0, PT_PEA, PT_WALL, PT_SNOW, PT_CHERRY, PT_POTATO, PT_COUNT };
+/* Only the three plants the author drew are playable. Other pictures are
+ * story characters, the duck enemy, the queen's robot, map and mower. */
+enum { PT_NONE = -1, PT_PEA = 0, PT_WALL, PT_SNOW, PT_COUNT };
+enum { EN_DUCK = 0, EN_ROBOT };
 
-typedef struct { int cost; int hp; float recharge; uint32_t body, accent; const char *name; } PlantDef;
+typedef struct { int cost; int hp; float recharge; uint32_t body; } PlantDef;
 
 static const PlantDef PDEF[PT_COUNT] = {
-    [PT_SUN]    = {  50, 300, 7.5f, COL(245,210,60),  COL(180,120,40), "SUN"    },
-    [PT_PEA]    = { 100, 300, 7.5f, COL( 70,170,70),  COL( 40,110,40), "PEA"    },
-    [PT_WALL]   = {  50,4000,30.0f, COL(180,120,70),  COL(120, 80,45), "NUT"    },
-    [PT_SNOW]   = { 175, 300, 7.5f, COL(120,200,235), COL( 60,130,180),"SNOW"   },
-    [PT_CHERRY] = { 150, 300,28.0f, COL(220, 40, 45), COL(255,120,110),"BOMB"   },
-    [PT_POTATO] = {  25, 300,22.0f, COL(170,130, 80), COL( 90, 60,35), "MINE"   },
+    [PT_PEA]  = { 100,  300,  7.5f, COL( 70, 170,  70) },
+    [PT_WALL] = {  50, 4000, 30.0f, COL(180, 120,  70) },
+    [PT_SNOW] = { 175,  300,  7.5f, COL(120, 200, 235) },
 };
 
-typedef struct { int type; float hp; float fire_t; float sun_t; float fuse; int armed; float sway; } Plant;
+typedef struct { int type; float hp; float fire_t; float sway; } Plant;
 typedef struct { int active; int row; float x; float hp; float maxhp; int type;
                  float speed; int eating; float slow; float anim; } Zombie;
 typedef struct { int active; int row; float x; float y; int dmg; int snow; } Pea;
@@ -374,12 +365,11 @@ static int to_spawn;
 static int total_zombies;
 static float banner_t;
 static float global_t;
-static float flash_t;
 static int boss_spawned;
 static const char *banner_text;
 
 static const char *LEVEL_NAMES[10] = {
-    "ПЕРВАЯ ЗАЩИТА", "НОВАЯ ВОЛНА", "У ЗАБОРА", "ВСТРЕЧАЙ ГУСЕЙ",
+    "ПЕРВАЯ ЗАЩИТА", "НОВАЯ ВОЛНА", "У ЗАБОРА", "ВСТРЕЧАЙ УТОК",
     "СЕРЕДИНА ПУТИ", "СЛОЖНЕЕ И СЛОЖНЕЕ", "ДЕРЖИ ОБОРОНУ",
     "ПОСЛЕДНИЙ РУБЕЖ", "ПЕРЕД БУРЕЙ", "КОРОЛЕВА БЛИЗКО"
 };
@@ -442,195 +432,30 @@ static void draw_sun_icon(int cx, int cy, int r) {
     disc(cx, cy, r - r / 4, COL(255, 250, 200));
 }
 
-static void draw_plant(int cx, int cy, int type, float hpfrac, float sway, int extra) {
-    if (type < 0) return;
-    /* Three plants have their own uploaded PNGs. Others keep their original
-     * hand-drawn fallback; Kirill's picture is a character, NOT a plant. */
-    int image = type == PT_PEA ? SPR_PEA : type == PT_SNOW ? SPR_SNOW :
-                type == PT_CHERRY ? SPR_CHERRY : -1;
-    if (image >= 0 && sprite_pixels[image]) {
-        ellipse(cx, cy + 30, 33, 8, COL(47, 112, 30));
-        sprite_draw(image, cx - 43, cy - 48 + (int)(sway * 2), 86, 86, 0);
-        if (extra) disc(cx + 30, cy - 34, 5, COL(255, 232, 100));
-        return;
-    }
-    const PlantDef *d = &PDEF[type];
-    int base = cy + 34;
-    /* stem + leaves shared by procedurally drawn plants */
-    line_thick(cx, base, cx + (int)(sway * 4), cy + 4, 8, COL(40, 100, 45));
-    ellipse(cx - 20, base - 4, 18, 10, COL(50, 130, 55));
-    ellipse(cx + 20, base - 4, 18, 10, COL(50, 130, 55));
-
-    switch (type) {
-    case PT_SUN: {
-        int py = cy - (int)(sway * 3);
-        for (int k = 0; k < 10; k++) {
-            float a = k * (6.283f / 10) + sway * 0.5f;
-            ellipse(cx + (int)(cosf(a) * 30), py + (int)(sinf(a) * 30), 14, 14, d->body);
-        }
-        disc(cx, py, 24, d->accent);
-        disc(cx, py, 18, COL(80, 50, 25));
-        disc(cx - 6, py - 3, 3, COL(20, 20, 20));
-        disc(cx + 6, py - 3, 3, COL(20, 20, 20));
-        break;
-    }
-    case PT_PEA:
-    case PT_SNOW: {
-        int hx = cx + (int)(sway * 2);
-        disc(hx, cy, 22, d->body);
-        disc(hx + 16, cy - 2, 13, d->accent);
-        disc(hx + 20, cy - 2, 9, d->body);
-        disc(hx - 6, cy - 6, 3, COL(20, 20, 20));
-        if (type == PT_SNOW) {
-            disc(hx + 20, cy - 2, 5, COL(220, 245, 255));
-            for (int k = 0; k < 3; k++)
-                disc(hx - 18 + k * 6, cy + 18 + (k % 2) * 4, 2, COL(220, 245, 255));
-        }
-        break;
-    }
-    case PT_CHERRY: {
-        int bx = cx - 12, by = cy + 8;
-        disc(bx, by, 16, d->body);
-        disc(cx + 12, cy + 10, 16, d->body);
-        disc(bx - 2, by - 4, 5, COL(255, 150, 140));
-        disc(cx + 10, cy + 6, 5, COL(255, 150, 140));
-        line_thick(cx, cy, cx + 6, cy - 18, 4, COL(90, 130, 45));
-        line_thick(cx + 6, cy - 18, cx + 18, cy - 26, 3, COL(60, 110, 40));
-        disc(cx + 18, cy - 26, 3, COL(255, 240, 120));
-        if (extra) {                                    /* about to detonate */
-            disc(cx, cy, 26, blend(d->body, COL(255, 255, 200), 120));
-            disc(cx + 8, cy - 24, 4, COL(255, 240, 150));
-        }
-        break;
-    }
-    case PT_POTATO: {
-        ellipse(cx, cy, 24, 18, d->body);
-        ellipse(cx - 8, cy - 4, 4, 4, d->accent);
-        ellipse(cx + 6, cy + 4, 4, 4, d->accent);
-        ellipse(cx + 4, cy - 6, 4, 4, d->accent);
-        if (extra) {                                    /* armed */
-            disc(cx, cy - 16, 4, COL(255, 60, 50));
-            for (int k = 0; k < 6; k++) {
-                float a = k * 1.047f;
-                line_thick(cx + (int)(cosf(a) * 22), cy + (int)(sinf(a) * 15),
-                           cx + (int)(cosf(a) * 30), cy + (int)(sinf(a) * 21), 2, d->accent);
-            }
-        }
-        break;
-    }
-    case PT_WALL: {
-        ellipse(cx, cy, 30, 38, d->body);
-        ellipse(cx - 10, cy - 6, 8, 8, COL(150, 95, 55));
-        disc(cx - 8, cy - 4, 3, COL(20, 20, 20));
-        disc(cx + 8, cy - 4, 3, COL(20, 20, 20));
-        rect(cx - 10, cy + 8, cx + 10, cy + 14, COL(90, 55, 30));
-        if (hpfrac < 0.66f) line_thick(cx - 18, cy - 10, cx - 4, cy + 6, 2, COL(120, 80, 45));
-        if (hpfrac < 0.33f) line_thick(cx + 4, cy - 16, cx + 16, cy + 10, 2, COL(120, 80, 45));
-        break;
-    }
-    }
+static void draw_plant(int cx, int cy, int type, float sway) {
+    if (type < 0 || type >= PT_COUNT) return;
+    const int image[PT_COUNT] = { SPR_PEA, SPR_WALL, SPR_SNOW };
+    /* Each selectable plant is the author's own picture; no substitutes. */
+    ellipse(cx, cy + 32, 34, 7, COL(47, 112, 30));
+    sprite_draw(image[type], cx - 43, cy - 48 + (int)(sway * 2), 86, 86, 0);
 }
 
 /* ------------------------------------------------------------------ */
-/* drawing: geese and the Duck Queen's piloted robot                    */
+/* author's duck-zombie and the Duck Queen's piloted robot            */
 /* ------------------------------------------------------------------ */
-
-static void draw_goose(const Zombie *z) {
-    if (sprite_pixels[SPR_GOOSE]) {
-        int x = (int)z->x, y = CELL_CY(z->row);
-        ellipse(x, y + 36, 40, 8, COL(48, 120, 34));
-        /* This uploaded goose faces right. Flip it to march toward the house. */
-        sprite_draw(SPR_GOOSE, x - 46, y - 50 + (int)(sinf(z->anim) * 2), 92, 92, 1);
-        if (z->type == 1) { /* cone */
-            line_thick(x - 22, y - 40, x - 22, y - 61, 15, COL(234, 119, 46));
-            rect(x - 33, y - 43, x - 11, y - 39, COL(255, 178, 67));
-        } else if (z->type == 2) { /* bucket */
-            rect(x - 36, y - 64, x - 9, y - 43, COL(120, 131, 143));
-            rect(x - 38, y - 46, x - 7, y - 42, COL(82, 92, 109));
-        }
-        if (z->slow > 0) rect_blend(x - 40, y - 40, x + 40, y + 30, COL(150, 215, 255), 50);
-        return;
-    }
-    float fr = z->hp / z->maxhp; if (fr > 1) fr = 1; if (fr < 0) fr = 0;
-    uint32_t body  = z->slow ? COL(185, 210, 228) : COL(246, 246, 240);
-    uint32_t shade = z->slow ? COL(140, 170, 200) : COL(214, 214, 205);
-    int x = (int)z->x, y = CELL_CY(z->row) + 10;
-    float w = sinf(z->anim) * 5;                       /* waddle */
-    /* legs + webbed feet */
-    line_thick(x - 6, y + 10, x - 6 + (int)w, y + 28, 4, COL(235, 145, 45));
-    line_thick(x + 8, y + 10, x + 8 - (int)w, y + 28, 4, COL(235, 145, 45));
-    ellipse(x - 6 + (int)w, y + 30, 8, 3, COL(235, 145, 45));
-    ellipse(x + 8 - (int)w, y + 30, 8, 3, COL(235, 145, 45));
-    /* body, wing, tail */
-    ellipse(x, y, 24, 16, body);
-    ellipse(x + 5, y + 3, 16, 10, shade);
-    line_thick(x + 20, y - 4, x + 31, y - 13, 5, body);
-    /* neck + head (facing left) */
-    line_thick(x - 13, y - 5, x - 20, y - 33, 8, body);
-    disc(x - 20, y - 38, 10, body);
-    /* beak */
-    line_thick(x - 28, y - 39, x - 39, y - 36, 5, COL(240, 150, 45));
-    /* eye */
-    disc(x - 23, y - 41, 2, COL(25, 25, 25));
-    /* damage tint */
-    if (fr < 0.999f)
-        ellipse(x, y, 24, 16, blend(COL(150, 80, 60), body, (int)((1 - fr) * 90)));
-    /* headgear */
-    if (z->type == 1) {                                /* cone goose */
-        int hy = y - 52;
-        line_thick(x - 20, hy + 16, x - 20, hy, 13, COL(230, 115, 40));
-        rect(x - 26, hy + 4, x - 14, hy + 7, COL(255, 165, 85));
-        rect(x - 24, hy + 11, x - 16, hy + 14, COL(255, 165, 85));
-    } else if (z->type == 2) {                         /* bucket goose */
-        rect(x - 31, y - 58, x - 9, y - 44, COL(118, 123, 133));
-        rect(x - 31, y - 58, x - 9, y - 54, COL(155, 160, 170));
-        rect(x - 33, y - 50, x - 7, y - 48, COL(85, 90, 100));
-    }
-    if (z->slow) ellipse(x, y, 26, 18, blend(COL(160, 215, 255), body, 70));
-}
-
-static void draw_duck_boss(const Zombie *z) {
-    if (sprite_pixels[SPR_ROBOT]) {
-        int x = (int)z->x, y = CELL_CY(z->row);
-        ellipse(x, y + 66, 75, 12, COL(38, 85, 28));
-        /* The drawing already has the crowned queen INSIDE the robot. */
-        sprite_draw(SPR_ROBOT, x - 95, y - 122 + (int)(sinf(z->anim) * 2), 190, 190, 0);
-        return;
-    }
-    float fr = z->hp / z->maxhp; if (fr > 1) fr = 1; if (fr < 0) fr = 0;
-    uint32_t body  = z->slow ? COL(205, 220, 235) : COL(252, 250, 244);
-    uint32_t shade = COL(222, 218, 208);
-    int x = (int)z->x, y = CELL_CY(z->row) + 14;
-    float w = sinf(z->anim) * 7;
-    /* legs */
-    line_thick(x - 10, y + 24, x - 10 + (int)w, y + 40, 6, COL(235, 145, 45));
-    line_thick(x + 14, y + 24, x + 14 - (int)w, y + 40, 6, COL(235, 145, 45));
-    /* big body + flapping wing + tail */
-    ellipse(x, y, 44, 30, body);
-    ellipse(x + 8, y + 4, 30, 16 + (int)w, shade);
-    line_thick(x + 38, y - 10, x + 58, y - 22, 9, body);
-    /* neck + head */
-    line_thick(x - 26, y - 8, x - 32, y - 54, 13, body);
-    disc(x - 32, y - 62, 17, body);
-    /* beak */
-    line_thick(x - 45, y - 63, x - 62, y - 58, 8, COL(240, 150, 45));
-    /* angry eye + brow */
-    disc(x - 36, y - 67, 3, COL(25, 25, 25));
-    line_thick(x - 44, y - 74, x - 31, y - 71, 3, COL(40, 30, 30));
-    /* crown (she IS the queen) */
-    rect(x - 42, y - 86, x - 22, y - 79, COL(255, 208, 60));
-    rect(x - 42, y - 92, x - 37, y - 79, COL(255, 208, 60));
-    rect(x - 34, y - 94, x - 29, y - 79, COL(255, 208, 60));
-    rect(x - 26, y - 92, x - 21, y - 79, COL(255, 208, 60));
-    disc(x - 32, y - 84, 2, COL(230, 60, 70));         /* jewel */
-    /* damage tint */
-    if (fr < 0.999f)
-        ellipse(x, y, 44, 30, blend(COL(150, 60, 50), body, (int)((1 - fr) * 80)));
-}
 
 static void draw_enemy(const Zombie *z) {
-    if (z->type == 3) draw_duck_boss(z);
-    else              draw_goose(z);
+    int x = (int)z->x, y = CELL_CY(z->row);
+    if (z->type == EN_ROBOT) {
+        ellipse(x, y + 66, 75, 12, COL(38, 85, 28));
+        sprite_draw(SPR_ROBOT, x - 95, y - 122 + (int)(sinf(z->anim) * 2), 190, 190, 0);
+    } else {
+        ellipse(x, y + 36, 40, 8, COL(48, 120, 34));
+        /* The duck faces right in the PNG: turn it towards the house. */
+        sprite_draw(SPR_DUCK, x - 46, y - 50 + (int)(sinf(z->anim) * 2), 92, 92, 1);
+        if (z->slow > 0)
+            rect_blend(x - 40, y - 40, x + 40, y + 30, COL(150, 215, 255), 50);
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -642,16 +467,11 @@ static int spawn_zombie(void) {
         if (!zomb[i].active) {
             Zombie *z = &zomb[i];
             float prog = total_zombies ? 1.0f - (float)to_spawn / total_zombies : 0;
-            float r = rndf();
-            int t = 0;
-            if (level >= 3 && prog > 0.3f && r < 0.22f + 0.018f * level) t = 1;
-            if (level >= 6 && prog > 0.5f && r > 0.84f - 0.01f * level) t = 2;
             z->active = 1;
             z->row = (int)(rndf() * ROWS);
             z->x = GAME_W + 30 + rndf() * 60;
-            z->type = t;
-            const int hp[3] = {200, 560, 1100};
-            z->hp = z->maxhp = hp[t] * (1.0f + 0.04f * (level - 1));
+            z->type = EN_DUCK; /* one enemy species, the author's yellow duck */
+            z->hp = z->maxhp = (180 + 35 * (level - 1)) * (1.0f + 0.25f * prog);
             z->speed = 22 + level * 0.7f + rndf() * 5;
             z->eating = 0; z->slow = 0; z->anim = rndf() * 6.28f;
             return 1;
@@ -668,23 +488,22 @@ static int spawn_boss(void) {
             z->active = 1;
             z->row = 2;
             z->x = GAME_W + 90;
-            z->type = 3;
+            z->type = EN_ROBOT;
             z->hp = z->maxhp = 5500;
-            z->speed = 10;             /* much slower than ordinary geese */
+            z->speed = 10;             /* much slower than the ordinary ducks */
             z->eating = 0; z->slow = 0; z->anim = 0;
             return 1;
         }
     return 0;
 }
 
-static void spawn_sun(float x, float y, int from_sky) {
+static void spawn_sun(float x, float y) {
     for (int i = 0; i < SUNMAX; i++)
         if (!suns[i].active) {
             Sun *s = &suns[i];
             s->active = 1; s->x = x; s->y = y; s->bob = rndf() * 6.28f;
-            if (from_sky) { s->vy = 50; s->target_y = 220 + rndf() * 400; }
-            else { s->vy = -40; s->target_y = y; }
-            s->life = 9.0f;
+            s->vy = 80; s->target_y = 220 + rndf() * 400;
+            s->life = 16.0f; /* enough time to land and collect without a sunflower */
             return;
         }
 }
@@ -714,13 +533,14 @@ static void start_level(int n) {
     memset(parts, 0, sizeof(parts));
     for (int r = 0; r < ROWS; r++) { mower[r].used = 0; mower[r].running = 0; mower[r].x = LAWN_X - 30; }
     for (int i = 0; i < PT_COUNT; i++) cooldown[i] = 0;
-    sun_res = 175 + (n - 1) * 25;
+    /* No undrawn sunflower: starting sun plus regular sky drops fund seeds. */
+    sun_res = 250 + (n - 1) * 30;
     selected = -1;
-    sky_sun_t = 5.0f;
+    sky_sun_t = 3.0f;
     total_zombies = 5 + n * 3;
     to_spawn = total_zombies;
     spawn_t = 11.0f - n * 0.2f;
-    banner_t = 4; flash_t = 0;
+    banner_t = 4;
     boss_spawned = 0;
     banner_text = LEVEL_NAMES[n - 1];
     phase = PH_PLAY;
@@ -739,69 +559,41 @@ void game_init(void) {
 void game_debug_snapshot(void) {
     game_init();
     start_level(10);
-    /* A populated final-level scene for a desktop screenshot. */
-    sun_res = 300;
-    grid[2][1].type = PT_SUN; grid[2][1].hp = PDEF[PT_SUN].hp;
-    grid[2][2].type = PT_PEA; grid[2][2].hp = PDEF[PT_PEA].hp;
-    grid[1][2].type = PT_PEA; grid[1][2].hp = PDEF[PT_PEA].hp;
+    /* A populated scene showing ONLY authored plants, duck and robot. */
+    sun_res = 420;
+    grid[2][1].type = PT_PEA;  grid[2][1].hp = PDEF[PT_PEA].hp;
+    grid[2][2].type = PT_PEA;  grid[2][2].hp = PDEF[PT_PEA].hp;
+    grid[1][2].type = PT_PEA;  grid[1][2].hp = PDEF[PT_PEA].hp;
     grid[3][2].type = PT_WALL; grid[3][2].hp = PDEF[PT_WALL].hp;
     grid[0][3].type = PT_SNOW; grid[0][3].hp = PDEF[PT_SNOW].hp;
-    grid[4][1].type = PT_SUN; grid[4][1].hp = PDEF[PT_SUN].hp;
-    grid[2][3].type = PT_CHERRY; grid[2][3].hp = PDEF[PT_CHERRY].hp; grid[2][3].fuse = 0.5f;
-    grid[4][4].type = PT_POTATO; grid[4][4].hp = PDEF[PT_POTATO].hp; grid[4][4].fuse = 0; grid[4][4].armed = 1;
-    spawn_zombie(); zomb[0].x = 980; zomb[0].row = 4; zomb[0].type = 1;
-    spawn_zombie(); zomb[1].x = 1100; zomb[1].row = 0; zomb[1].type = 0;
+    grid[4][1].type = PT_SNOW; grid[4][1].hp = PDEF[PT_SNOW].hp;
+    spawn_zombie(); zomb[0].x = 980; zomb[0].row = 4;
+    spawn_zombie(); zomb[1].x = 1100; zomb[1].row = 0;
     spawn_boss();   zomb[2].x = 1020; boss_spawned = 1;
     banner_text = "КОРОЛЕВА В РОБОТЕ!"; banner_t = 5;
     spawn_pea(2, 400, 20, 0);
     spawn_pea(1, 520, 20, 0);
-    spawn_sun(700, 360, 1); suns[0].target_y = 360; suns[0].y = 360;
+    spawn_sun(700, 360); suns[0].target_y = 360; suns[0].y = 360;
 }
 
 /* ------------------------------------------------------------------ */
 /* update                                                             */
 /* ------------------------------------------------------------------ */
 
-static void explode_cherry(int r, int c) {
-    int cx = CELL_CX(c), cy = CELL_CY(r);
-    flash_t = 0.28f;
-    burst(cx, cy, 60, COL(255, 120, 60), 280);
-    burst(cx, cy, 40, COL(255, 230, 120), 200);
-    for (int i = 0; i < ZMAX; i++) {
-        Zombie *z = &zomb[i];
-        if (!z->active) continue;
-        if (abs(z->row - r) <= 1 && fabsf(z->x - cx) < CELL_W * 1.7f) {
-            z->hp -= 3000;
-            if (z->hp <= 0) { z->active = 0; burst(z->x, CELL_CY(z->row), 14, COL(150,170,130), 160); }
-        }
-    }
-}
-
-static void explode_potato(int r, int c) {
-    int cx = CELL_CX(c), cy = CELL_CY(r);
-    flash_t = 0.12f;
-    burst(cx, cy, 24, COL(220, 160, 80), 200);
-    for (int i = 0; i < ZMAX; i++) {
-        Zombie *z = &zomb[i];
-        if (!z->active || z->row != r) continue;
-        if (fabsf(z->x - cx) < CELL_W * 0.8f) {
-            z->hp -= 1800;
-            if (z->hp <= 0) { z->active = 0; burst(z->x, CELL_CY(z->row), 12, COL(150,170,130), 150); }
-        }
-    }
-}
-
 static void update_play(float dt) {
     global_t += dt;
     for (int i = 0; i < PT_COUNT; i++)
         if (cooldown[i] > 0) cooldown[i] -= dt;
 
-    /* sky sun */
+    /* Sky sun is the only income; the author did not draw a sunflower. */
     sky_sun_t -= dt;
-    if (sky_sun_t <= 0) { spawn_sun(LAWN_X + 100 + rndf() * (COLS * CELL_W - 200), -30, 1); sky_sun_t = 9 + rndf() * 4; }
+    if (sky_sun_t <= 0) {
+        spawn_sun(LAWN_X + 100 + rndf() * (COLS * CELL_W - 200), -30);
+        sky_sun_t = 6 + rndf() * 2.5f;
+    }
 
-    /* Each level is a fresh wave. Later levels introduce armored geese; the
-     * robot is NOT part of these waves — it waits until level 10's very end. */
+    /* The author's duck is the only wave enemy. Health grows with the level;
+     * the queen's robot still appears ONLY after level ten's duck wave. */
     if (to_spawn > 0) {
         spawn_t -= dt;
         if (spawn_t <= 0) {
@@ -821,13 +613,7 @@ static void update_play(float dt) {
             Plant *p = &grid[r][c];
             if (p->type < 0) continue;
             p->sway = sinf(global_t * 2 + r + c) * 1.2f;
-            if (p->type == PT_SUN) {
-                p->sun_t -= dt;
-                if (p->sun_t <= 0) {
-                    spawn_sun(CELL_CX(c) + (rndf() - 0.5f) * 30, CELL_CY(r) - 30, 0);
-                    p->sun_t = 9.0f;
-                }
-            } else if (p->type == PT_PEA || p->type == PT_SNOW) {
+            if (p->type == PT_PEA || p->type == PT_SNOW) {
                 int target = 0;
                 for (int i = 0; i < ZMAX; i++)
                     if (zomb[i].active && zomb[i].row == r && zomb[i].x > CELL_CX(c)) { target = 1; break; }
@@ -835,28 +621,6 @@ static void update_play(float dt) {
                 if (target && p->fire_t <= 0) {
                     spawn_pea(r, CELL_CX(c) + 16, 20, p->type == PT_SNOW);
                     p->fire_t = (p->type == PT_SNOW) ? 1.5f : 1.4f;
-                }
-            } else if (p->type == PT_CHERRY) {
-                p->fuse -= dt;
-                if (p->fuse <= 0.0f) {
-                    explode_cherry(r, c);
-                    p->type = PT_NONE;
-                    continue;
-                }
-            } else if (p->type == PT_POTATO) {
-                if (!p->armed) {
-                    p->fuse -= dt;
-                    if (p->fuse <= 0.0f) p->armed = 1;
-                } else {
-                    int hit = 0;
-                    for (int i = 0; i < ZMAX; i++)
-                        if (zomb[i].active && zomb[i].row == r &&
-                            fabsf(zomb[i].x - CELL_CX(c)) < CELL_W * 0.5f) { hit = 1; break; }
-                    if (hit) {
-                        explode_potato(r, c);
-                        p->type = PT_NONE;
-                        continue;
-                    }
                 }
             }
             if (p->hp <= 0) { p->type = PT_NONE; burst(CELL_CX(c), CELL_CY(r), 12, COL(80, 160, 70), 120); }
@@ -871,7 +635,7 @@ static void update_play(float dt) {
         for (int j = 0; j < ZMAX; j++) {
             Zombie *z = &zomb[j];
             if (!z->active) continue;
-            int robot = z->type == 3;
+            int robot = z->type == EN_ROBOT;
             if (abs(z->row - pe->row) > (robot ? 1 : 0)) continue;
             if (pe->x >= z->x - (robot ? 65 : 24) && pe->x <= z->x + (robot ? 55 : 20)) {
                 z->hp -= pe->dmg;
@@ -887,15 +651,15 @@ static void update_play(float dt) {
         }
     }
 
-    /* geese and the final robot */
+    /* ducks and the final robot */
     for (int i = 0; i < ZMAX; i++) {
         Zombie *z = &zomb[i];
         if (!z->active) continue;
         if (z->slow > 0) z->slow -= dt;
-        z->anim += dt * (z->type == 3 ? 2 : 8);
+        z->anim += dt * (z->type == EN_ROBOT ? 2 : 8);
         float spd = z->speed * (z->slow > 0 ? 0.5f : 1.0f);
 
-        if (z->type == 3) {
+        if (z->type == EN_ROBOT) {
             z->x -= spd * dt;          /* never stops to eat: the mech TRAMPLES */
             for (int r = z->row - 1; r <= z->row + 1; r++) {
                 if (r < 0 || r >= ROWS) continue;
@@ -943,8 +707,8 @@ static void update_play(float dt) {
         mower[r].x += 520 * dt;
         for (int i = 0; i < ZMAX; i++) {
             Zombie *z = &zomb[i];
-            if (!z->active || abs(z->row - r) > (z->type == 3 ? 1 : 0)) continue;
-            if (z->type == 3) {                        /* robot smashes mowers */
+            if (!z->active || abs(z->row - r) > (z->type == EN_ROBOT ? 1 : 0)) continue;
+            if (z->type == EN_ROBOT) {                        /* robot smashes mowers */
                 if (z->x < mower[r].x + 80 && z->x > mower[r].x - 100) {
                     mower[r].running = 0;
                     mower[r].used = 1;
@@ -972,7 +736,7 @@ static void update_play(float dt) {
 
     update_parts(dt);
 
-    /* A wave ends only after all its geese actually die (including mower
+    /* A wave ends only after all its ducks actually die (including mower
      * kills this frame). The queen and her robot arrive ONLY at the very end
      * of level ten; destroying the robot then finishes the whole game. */
     int remaining = 0;
@@ -987,7 +751,6 @@ static void update_play(float dt) {
         } else phase = level == 10 ? PH_WIN : PH_LEVEL_CLEAR;
     }
 
-    if (flash_t > 0) flash_t -= dt;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1044,14 +807,12 @@ void game_input_press(int x, int y) {
         }
     }
 
-    /* seed bar */
+    /* Only the three packets with drawings can be selected. */
     if (y >= 16 && y <= 132) {
-        int sx = 250;
         for (int i = 0; i < PT_COUNT; i++) {
-            int x0 = sx + i * 122;
-            if (x >= x0 && x <= x0 + 112) {
-                if (sun_res >= PDEF[i].cost && cooldown[i] <= 0) selected = i;
-                else selected = -1;
+            int x0 = CARD_X + i * CARD_STEP;
+            if (x >= x0 && x <= x0 + CARD_W) {
+                selected = (sun_res >= PDEF[i].cost && cooldown[i] <= 0) ? i : -1;
                 return;
             }
         }
@@ -1065,9 +826,6 @@ void game_input_press(int x, int y) {
             grid[r][c].type = selected;
             grid[r][c].hp = (float)PDEF[selected].hp;
             grid[r][c].fire_t = 0.4f;
-            grid[r][c].sun_t = 4.0f;
-            grid[r][c].fuse = (selected == PT_CHERRY) ? 1.1f : (selected == PT_POTATO ? 1.0f : 0.0f);
-            grid[r][c].armed = 0;
             sun_res -= PDEF[selected].cost;
             cooldown[selected] = PDEF[selected].recharge;
             burst(CELL_CX(c), CELL_CY(r), 8, PDEF[selected].body, 90);
@@ -1118,12 +876,9 @@ static void draw_background(void) {
 
 static void draw_mowers(void) {
     for (int r = 0; r < ROWS; r++) {
-        int x = (int)mower[r].x, y = CELL_CY(r) + 18;
         if (mower[r].used && !mower[r].running) continue;
-        rect(x - 22, y - 14, x + 22, y + 14, COL(190, 70, 60));
-        rect(x - 18, y - 10, x + 6, y + 10, COL(230, 230, 220));
-        disc(x - 16, y + 14, 8, COL(40, 40, 40));
-        disc(x + 14, y + 14, 8, COL(40, 40, 40));
+        int x = (int)mower[r].x, y = CELL_CY(r) + 18;
+        sprite_draw(SPR_MOWER, x - 44, y - 43, 88, 86, 0);
     }
 }
 
@@ -1137,20 +892,20 @@ static void draw_seed_bar(void) {
     rect(0, 140, GAME_W - 1, 146, COL(70, 46, 28));
     draw_sun_icon(64, 70, 26);
     draw_int(104, 50, 6, COL(250, 250, 250), sun_res);
-    /* seed packets */
+    /* Only the author's peashooter, walnut and snow-pea have packets. */
     for (int i = 0; i < PT_COUNT; i++) {
-        int x0 = 250 + i * 122;
+        int x0 = CARD_X + i * CARD_STEP;
         int affordable = sun_res >= PDEF[i].cost && cooldown[i] <= 0;
         uint32_t border = selected == i ? COL(255, 234, 70) : COL(65, 44, 31);
-        rect(x0 - 3, 15, x0 + 115, 135, border);
-        rect(x0, 18, x0 + 112, 132, COL(236, 224, 188));
-        rect(x0, 18, x0 + 112, 24, PDEF[i].body);
-        draw_plant(x0 + 56, 76, i, 1, 0, 0);
-        if (!affordable) rect_blend(x0, 18, x0 + 112, 132, COL(10, 10, 25), 115);
+        rect(x0 - 3, 15, x0 + CARD_W + 3, 135, border);
+        rect(x0, 18, x0 + CARD_W, 132, COL(236, 224, 188));
+        rect(x0, 18, x0 + CARD_W, 24, PDEF[i].body);
+        draw_plant(x0 + CARD_W / 2, 70, i, 0);
+        if (!affordable) rect_blend(x0, 18, x0 + CARD_W, 132, COL(10, 10, 25), 115);
         draw_int(x0 + 12, 108, 3, affordable ? COL(63, 39, 22) : COL(250, 228, 198), PDEF[i].cost);
         if (cooldown[i] > 0) {
             float frac = cooldown[i] / PDEF[i].recharge;
-            rect_blend(x0, 18, x0 + 112, 18 + (int)(114 * frac), COL(10, 10, 20), 115);
+            rect_blend(x0, 18, x0 + CARD_W, 18 + (int)(114 * frac), COL(10, 10, 20), 115);
         }
     }
     /* level, wave progress and the way back to the menu */
@@ -1160,7 +915,7 @@ static void draw_seed_bar(void) {
     rect(1056, 40, 1056 + spawned * 188 / total_zombies, 53, COL(244, 139, 62));
     draw_text(1055, 70, 3, COL(245, 240, 211), "УРОВЕНЬ");
     draw_int(1210, 70, 3, COL(255, 245, 165), level);
-    draw_text(1028, 112, 2, COL(255, 236, 202), "ГУСИ");
+    draw_text(1028, 112, 2, COL(255, 236, 202), "УТКИ");
     draw_int(1086, 112, 2, COL(255, 236, 202), alive_count());
     rect(1140, 99, 1265, 137, COL(55, 49, 58));
     rect(1143, 102, 1262, 134, COL(108, 84, 64));
@@ -1183,19 +938,20 @@ static void draw_button(int x0, int y0, int x1, int y1, const char *label, int s
 }
 
 static void draw_dima(int cx, int feet_y, int size) {
-    /* The tiny yellow eyes / black mask are the user's Dima drawing. */
-    ellipse(cx, feet_y - size / 3, size / 3, size / 2, COL(20, 24, 35));
-    ellipse(cx, feet_y - size / 3, size / 3 - 6, size / 2 - 6, COL(44, 43, 57));
+    /* Show the author's masked Dima as-is, without an invented body. */
     sprite_draw(SPR_MASK, cx - size / 2, feet_y - size, size, size, 0);
     draw_text_c(cx, feet_y + 8, 3, COL(255, 239, 197), "ДИМА");
 }
 
-static void draw_bread(int cx, int feet_y, int size, int crying) {
-    sprite_draw(SPR_BREAD, cx - size / 2, feet_y - size, size, size, 0);
-    if (crying) { /* tears over the bread drawing */
+static void draw_khlebushek(int cx, int feet_y, int size, int crying) {
+    /* The author's white bird (680), not the walnut (685). */
+    sprite_draw(SPR_KHLEBUSHEK, cx - size / 2, feet_y - size, size, size, 0);
+    if (crying) {
         int drop = (int)(global_t * 32) % 24;
-        ellipse(cx + size / 9, feet_y - size / 2 + drop, 5, 11, COL(105, 205, 255));
-        ellipse(cx - size / 7, feet_y - size / 2 + 8 + drop, 4, 9, COL(146, 221, 255));
+        int eye_x = cx - size / 2 + 49 * size / 100;
+        int eye_y = feet_y - size + 17 * size / 100;
+        ellipse(eye_x, eye_y + 11 + drop, 4, 10, COL(105, 205, 255));
+        ellipse(eye_x - size / 20, eye_y + 19 + drop, 3, 8, COL(146, 221, 255));
     }
     draw_text_c(cx, feet_y + 8, 3, COL(255, 239, 197), "ХЛЕБУШЕК");
 }
@@ -1213,7 +969,7 @@ static void draw_menu(void) {
     draw_text_c(640, 60, 7, COL(255, 229, 157), "РАСТЕНИЯ ПРОТИВ ГУСЕЙ");
     draw_text_c(640, 146, 4, COL(239, 240, 224), "ИСТОРИЯ ХЛЕБУШКА - 10 УРОВНЕЙ");
 
-    draw_bread(160, 466, 170, 0);
+    draw_khlebushek(160, 466, 170, 0);
     draw_dima(345, 460, 190);
     draw_kirill(939, 463, 190);
     ellipse(1091, 473, 116, 13, COL(29, 53, 35));
@@ -1230,7 +986,7 @@ static void draw_intro(void) {
     rect_blend(0, 0, GAME_W - 1, 115, COL(17, 20, 35), 221);
     draw_text_c(535, 37, 6, COL(255, 224, 157), "НАЧАЛО ИСТОРИИ");
     draw_button(1020, 10, 1270, 89, "ПРОПУСТИТЬ", 3);
-    draw_bread(245, 492, 246, intro_step == 0);
+    draw_khlebushek(245, 492, 246, intro_step == 0);
     /* Dima really walks toward Khlebushek in the first shot. */
     float approach = intro_t / 2.8f;
     if (approach > 1 || intro_step > 0) approach = 1;
@@ -1260,10 +1016,7 @@ static void draw_play_scene(void) {
         for (int c = 0; c < COLS; c++) {
             Plant *p = &grid[r][c];
             if (p->type < 0) continue;
-            int ex = (p->type == PT_POTATO && p->armed) ||
-                     (p->type == PT_CHERRY && p->fuse < 0.4f);
-            draw_plant(CELL_CX(c), CELL_CY(r), p->type,
-                       p->hp / PDEF[p->type].hp, p->sway, ex);
+            draw_plant(CELL_CX(c), CELL_CY(r), p->type, p->sway);
         }
     for (int r = 0; r < ROWS; r++)
         for (int i = 0; i < ZMAX; i++)
@@ -1280,11 +1033,6 @@ static void draw_play_scene(void) {
                      blend(COL(0, 0, 0), COL(255, 240, 120), 80));
         }
     draw_parts();
-    if (flash_t > 0) {
-        int a = (int)(flash_t * 700);
-        if (a > 200) a = 200;
-        rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(255, 255, 255), a);
-    }
     draw_seed_bar();
     if (banner_t > 0 && banner_text && phase == PH_PLAY) {
         int s = 3;
@@ -1295,7 +1043,7 @@ static void draw_play_scene(void) {
         draw_text_c(640, 165, s, COL(255, 240, 180), banner_text);
     }
     for (int i = 0; i < ZMAX; i++)
-        if (zomb[i].active && zomb[i].type == 3) {
+        if (zomb[i].active && zomb[i].type == EN_ROBOT) {
             float bf = zomb[i].hp / zomb[i].maxhp;
             if (bf < 0) bf = 0;
             if (bf > 1) bf = 1;
@@ -1315,7 +1063,7 @@ static void draw_result(void) {
         draw_button(390, 450, 890, 565, "ДАЛЬШЕ", 7);
     } else if (phase == PH_LOSE) {
         draw_text_c(640, 254, 7, COL(255, 202, 161),
-                    level == 10 && boss_spawned ? "РОБОТ УНИЧТОЖИЛ ВСЕХ!" : "ГУСИ ПРОРВАЛИСЬ!");
+                    level == 10 && boss_spawned ? "РОБОТ УНИЧТОЖИЛ ВСЕХ!" : "УТКИ ПРОРВАЛИСЬ!");
         draw_text_c(640, 361, 4, COL(248, 247, 231), "ПОПРОБУЙ ЕЩЁ РАЗ");
         draw_button(335, 460, 645, 565, "ПОВТОРИТЬ", 4);
         draw_button(660, 460, 975, 565, "В МЕНЮ", 4);
@@ -1354,25 +1102,30 @@ int game_level(void) { return level; }
 void game_debug_finish_wave(void) {
     to_spawn = 0;
     for (int i = 0; i < ZMAX; i++)
-        if (zomb[i].type != 3) zomb[i].active = 0;
+        if (zomb[i].type != EN_ROBOT) zomb[i].active = 0;
 }
 void game_debug_defeat_boss(void) {
     for (int i = 0; i < ZMAX; i++)
-        if (zomb[i].type == 3) zomb[i].active = 0;
+        if (zomb[i].type == EN_ROBOT) zomb[i].active = 0;
 }
 int game_debug_boss_alive(void) {
     for (int i = 0; i < ZMAX; i++)
-        if (zomb[i].type == 3 && zomb[i].active) return 1;
+        if (zomb[i].type == EN_ROBOT && zomb[i].active) return 1;
     return 0;
 }
 float game_debug_boss_x(void) {
     for (int i = 0; i < ZMAX; i++)
-        if (zomb[i].type == 3 && zomb[i].active) return zomb[i].x;
+        if (zomb[i].type == EN_ROBOT && zomb[i].active) return zomb[i].x;
     return -1;
 }
 int game_debug_plant_type(int row, int col) {
     if ((unsigned)row >= ROWS || (unsigned)col >= COLS) return PT_NONE;
     return grid[row][col].type;
+}
+int game_debug_seed_count(void) { return PT_COUNT; }
+int game_debug_first_enemy_type(void) {
+    for (int i = 0; i < ZMAX; i++) if (zomb[i].active) return zomb[i].type;
+    return -1;
 }
 int game_debug_mower_used(int row) {
     if ((unsigned)row >= ROWS) return 0;

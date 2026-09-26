@@ -13,16 +13,20 @@ import zlib
 ROOT = Path(__file__).resolve().parents[1]
 # These are the original filenames supplied with the game. Do not resample or
 # replace the artwork; the renderer scales it when needed.
+# Roles have been confirmed by the author. In particular, the white bird is
+# Khlebushek (NOT a zombie), the brown face is the walnut, the red art is a
+# lawnmower (NOT a cherry bomb), and the yellow duck is the only common enemy.
 IMAGES = [
-    ("BREAD", "Без названия685_20260926094527.png"),
+    ("KHLEBUSHEK", "Без названия680_20260926092924.png"),
     ("MASK", "Без названия681_20260926093006.png"),
-    ("GOOSE", "Без названия680_20260926092924.png"),
     ("KIRILL", "Без названия681_20260926093232.png"),
+    ("DUCK", "Без названия681_20260926093504.png"),
     ("ROBOT", "Без названия682_20260926094249.png"),
     ("PEA", "Без названия684_20260926094420.png"),
+    ("WALL", "Без названия685_20260926094527.png"),
     ("SNOW", "Без названия685_20260926094634.png"),
     ("MAP", "Без названия687_20260926095025.png"),
-    ("CHERRY", "Без названия688_20260926095109.png"),
+    ("MOWER", "Без названия688_20260926095109.png"),
 ]
 
 

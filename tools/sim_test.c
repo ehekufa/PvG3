@@ -7,7 +7,7 @@
 #include "game.h"
 
 static void seed_at(int type, int row, int col) {
-    game_input_press(250 + type * 122 + 55, 70);
+    game_input_press(285 + type * 205 + 85, 70);
     game_input_press(120 + col * 120 + 60, 150 + row * 108 + 54);
 }
 
@@ -25,11 +25,16 @@ int main(void) {
     game_input_press(640, 620);              /* Kirill -> first level */
     assert(game_phase() == GAME_PLAY && game_level() == 1);
 
+    assert(game_debug_seed_count() == 3);     /* pea, walnut, snow: no extras */
     assert(game_debug_plant_type(0, 0) == -1); /* cleared field is plantable */
-    seed_at(1, 0, 0);                         /* pea */
-    assert(game_debug_plant_type(0, 0) == 1);
-    seed_at(0, 0, 0);                         /* occupied cell stays occupied */
-    assert(game_debug_plant_type(0, 0) == 1);
+    seed_at(0, 0, 0);                         /* author's peashooter */
+    assert(game_debug_plant_type(0, 0) == 0);
+    seed_at(1, 0, 0);                         /* occupied cell stays occupied */
+    assert(game_debug_plant_type(0, 0) == 0);
+    seed_at(1, 1, 0);                         /* brown picture is the walnut */
+    assert(game_debug_plant_type(1, 0) == 1);
+    game_tick(11.0f, NULL);
+    assert(game_debug_first_enemy_type() == 0); /* new PNG duck, not Khlebushek */
 
     for (int n = 1; n <= 9; n++) {
         assert(game_level() == n && !game_debug_boss_alive());
@@ -48,13 +53,14 @@ int main(void) {
     game_debug_finish_wave();
     game_tick(0, NULL);
     assert(game_phase() == GAME_PLAY && game_debug_boss_alive());
+    assert(game_debug_first_enemy_type() == 1); /* boss is the only other enemy */
     float start_x = game_debug_boss_x();
-    seed_at(0, 1, 8);                         /* robot spans rows 1, 2 and 3 */
-    seed_at(2, 2, 8);
-    seed_at(5, 3, 8);
-    assert(game_debug_plant_type(1, 8) == 0);
-    assert(game_debug_plant_type(2, 8) == 2);
-    assert(game_debug_plant_type(3, 8) == 5);
+    seed_at(2, 1, 8);                         /* robot spans rows 1, 2 and 3 */
+    seed_at(1, 2, 8);
+    seed_at(0, 3, 8);
+    assert(game_debug_plant_type(1, 8) == 2); /* snow pea */
+    assert(game_debug_plant_type(2, 8) == 1); /* walnut */
+    assert(game_debug_plant_type(3, 8) == 0); /* peashooter */
     for (int i = 0; i < 200; i++) game_tick(0.05f, NULL);
     assert(game_debug_boss_x() < start_x - 95 && game_debug_boss_x() > start_x - 105);
     for (int i = 0; i < 400; i++) game_tick(0.05f, NULL);
