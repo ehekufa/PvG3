@@ -2,9 +2,10 @@
 
 Сайт работает без сборки: корневой `index.html` ведёт на `/online/`.
 Кнопка **ОНЛАЙН +** в Android APK сейчас открывает
-<https://raw.githack.com/ehekufa/PvG3/arena/01a0dc80-pvg3/online/index.html>.
-Это временное внешнее зеркало публичной ветки: в первый раз нужно нажать
-«Open the page» на странице предупреждения raw.githack.com. Постоянный
+<https://rawcdn.githack.com/ehekufa/PvG3/2109ba31bd7a9d96f47949f2de59bcc42a53031b/online/index.html>.
+Это временное внешнее зеркало **коммита `2109ba3`**: в первый раз нужно
+нажать «Open the page» на странице предупреждения rawcdn.githack.com.
+Пин по коммиту нужен, чтобы кеш ветки не показывал старую сломанную версию. Постоянный
 адрес <https://ehekufa.github.io/PvG3/online/> пока возвращает **404**:
 владелец должен один раз включить его в **Settings → Pages → Source:
 Deploy from a branch → `arena/01a0dc80-pvg3` → `/(root)` → Save**.
