@@ -1,4 +1,4 @@
-/* Desktop screenshots: menu, level 0, waves, Jumper, Zen Garden and robot.
+/* Desktop screenshots: menu, book, Zen Garden, canal/lily, waves and robot.
  * gcc -O2 -Wall -Wextra -Werror -Isrc src/game.c src/font.c \
  *     tools/host_test.c -o host_test -lm && ./host_test
  */
@@ -63,28 +63,33 @@ int main(void) {
     game_input_press(1130, 50);             /* back to menu */
 
     game_input_press(1080, 85);             /* САД ДЗЕН */
-    game_input_press(655, 70);              /* Kirill's blue coin sunflower */
+    game_input_press(580, 70);              /* Kirill's blue coin sunflower */
     game_input_press(421, 176);
-    game_input_press(335, 70);              /* peashooter */
+    game_input_press(320, 70);              /* peashooter */
     game_input_press(535, 400);
-    game_input_press(495, 70);              /* walnut */
+    game_input_press(450, 70);              /* walnut */
     game_input_press(763, 512);
-    game_input_press(815, 70);              /* illustrated Jumper Fighter */
+    game_input_press(710, 70);              /* illustrated Jumper Fighter */
     game_input_press(877, 512);
+    game_input_press(840, 70);              /* new two-eyed lily pad */
+    game_input_press(991, 288);
     game_tick(0, fb);
     assert(game_phase() == GAME_GARDEN);
     write_bmp("shots/garden.bmp", GAME_W, GAME_H, fb);
     game_input_press(985, 50);              /* book from garden */
-    game_input_press(320, 173 + 3 * 121 + 35); /* Jumper's page */
+    game_input_press(320, 160 + 3 * 99 + 44); /* Jumper's page */
     game_tick(0, fb);
     assert(game_phase() == GAME_BOOK);
     /* The index page is parchment; the selected plant's page is orange. */
     assert(fb[350 * GAME_W + 125] == 0xFFC8E9F6u);
     assert(fb[350 * GAME_W + 1155] == 0xFF4F8EDFu);
     write_bmp("shots/book.bmp", GAME_W, GAME_H, fb);
-    game_input_press(320, 173 + 2 * 121 + 35); /* sunflower's page */
+    game_input_press(320, 160 + 2 * 99 + 44); /* sunflower's page */
     game_tick(0, fb);
     write_bmp("shots/book_sunflower.bmp", GAME_W, GAME_H, fb);
+    game_input_press(320, 160 + 4 * 99 + 44); /* lily's page */
+    game_tick(0, fb);
+    write_bmp("shots/book_lily.bmp", GAME_W, GAME_H, fb);
     game_input_press(1130, 50);             /* garden */
     game_input_press(1160, 60);             /* menu */
 
@@ -103,7 +108,7 @@ int main(void) {
     /* The first playable row starts immediately below the top HUD. */
     assert(fb[125 * GAME_W + 960] != fb[90 * GAME_W + 960]);
     write_bmp("shots/level1.bmp", GAME_W, GAME_H, fb);
-    game_input_press(125, 467);             /* buy Kirill's sunflower (left rack) */
+    game_input_press(125, 401);             /* buy Kirill's sunflower (left rack) */
     game_input_press(421, 176);
     game_tick(6.3f, fb);                    /* first coin appears beside it */
     write_bmp("shots/coin.bmp", GAME_W, GAME_H, fb);
@@ -111,5 +116,21 @@ int main(void) {
     game_debug_snapshot();                 /* final level, queen in robot */
     for (int i = 0; i < 30; i++) game_tick(0.016f, fb);
     write_bmp("shots/play.bmp", GAME_W, GAME_H, fb);
+
+    game_init();
+    game_input_press(235, 100);            /* level selector */
+    game_input_press(1070, 270);           /* level 5: author's water map */
+    assert(game_phase() == GAME_PLAY && game_level() == 5);
+    game_tick(0, fb);
+    uint32_t water = fb[285 * GAME_W + 700];
+    uint32_t land = fb[175 * GAME_W + 700];
+    assert(((water >> 16) & 255u) > ((land >> 16) & 255u) + 20u);
+    write_bmp("shots/water_empty.bmp", GAME_W, GAME_H, fb);
+    game_input_press(125, 615);            /* lily packet */
+    game_input_press(535, 288);            /* water row 2, column 3 */
+    game_input_press(125, 187);            /* peashooter packet */
+    game_input_press(535, 288);            /* peashooter on lily */
+    game_tick(0, fb);
+    write_bmp("shots/water_planted.bmp", GAME_W, GAME_H, fb);
     return 0;
 }

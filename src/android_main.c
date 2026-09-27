@@ -162,8 +162,8 @@ static void on_app_cmd(struct android_app *app, int32_t cmd) {
     }
 }
 
-/* Garden plants survive a normal app restart. Only Kirill's three plant IDs
- * are saved; invalid/truncated files are ignored by game_garden_import. */
+/* Garden plants survive a normal app restart. Kirill's five plant IDs retain
+ * their stable byte values; invalid/truncated files are ignored. */
 static int garden_path(struct android_app *app, char path[PATH_MAX]) {
     const char *dir = app->activity ? app->activity->internalDataPath : NULL;
     if (!dir) return 0;
@@ -224,7 +224,9 @@ static void campaign_load(struct android_app *app) {
     size_t count = fread(bytes, 1, len, f);
     int extra = fgetc(f);
     fclose(f);
-    if (count != len || extra != EOF || !game_save_import(bytes, len))
+    /* Old V1-V4 saves are shorter than V5. Pass the actual file length to
+     * game_save_import, which validates size, version and checksum together. */
+    if (extra != EOF || !game_save_import(bytes, count))
         LOGE("campaign save rejected (incomplete or incompatible)");
     free(bytes);
 }
@@ -290,8 +292,8 @@ void android_main(struct android_app *app) {
     while (!app->destroyRequested) {
         int events;
         struct android_poll_source *src;
-        /* Block while paused, unfocused or without a window. A timed level
-         * must not keep running while the app is in the background. */
+        /* Block while paused, unfocused or without a window. Waves must not
+         * keep moving while the app is in the background. */
         while (ALooper_pollOnce(engine.ready && engine.resumed && engine.focused ?
                                 0 : -1, NULL, &events, (void **)&src) >= 0) {
             if (src) src->process(app, src);

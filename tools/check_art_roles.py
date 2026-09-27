@@ -9,17 +9,19 @@ sys.dont_write_bytecode = True
 from pack_sprites import IMAGES, ROOT, png_pixels
 
 EXPECTED = {
-    "KHLEBUSHEK": "Без названия680_20260926092924.png",
-    "MASK": "Без названия681_20260926093006.png",
-    "KIRILL": "Без названия681_20260926093232.png",
-    "DUCK": "Без названия681_20260926093504.png",
-    "ROBOT": "Без названия682_20260926094249.png",
-    "PEA": "Без названия684_20260926094420.png",
-    "WALL": "Без названия685_20260926094527.png",
-    "SUNFLOWER": "Без названия685_20260926094634.png",
-    "JUMPER": "Без названия684_20260926162008.png",
-    "MAP": "Без названия687_20260926095025.png",
-    "MOWER": "Без названия688_20260926095109.png",
+    "KHLEBUSHEK": "assets/art/khlebushek.png",
+    "MASK": "assets/art/dima-mask.png",
+    "KIRILL": "assets/art/kirill.png",
+    "DUCK": "assets/art/zombie-duck.png",
+    "ROBOT": "assets/art/queen-robot.png",
+    "PEA": "assets/art/peashooter.png",
+    "WALL": "assets/art/walnut.png",
+    "SUNFLOWER": "assets/art/coin-sunflower.png",
+    "JUMPER": "assets/art/jumper-fighter.png",
+    "LILY": "assets/art/lily-pad.png",
+    "MAP": "assets/art/lawn-map.png",
+    "WATER_MAP": "assets/art/water-map.png",
+    "MOWER": "assets/art/lawnmower.png",
 }
 
 assert len(IMAGES) == len(EXPECTED) == len(dict(IMAGES)), "Unexpected extra/missing sprite"
@@ -28,4 +30,4 @@ for name, filename in EXPECTED.items():
     w, h, pixels = png_pixels(ROOT / filename)
     assert w > 0 and h > 0 and any(p >> 24 for p in pixels), (name, filename)
 
-print("OK: eleven original drawings, including Kirill's jumper, coin sunflower and the duck")
+print("OK: thirteen named drawings, including updated Kirill/duck, canal and lily pad")

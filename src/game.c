@@ -207,17 +207,20 @@ _Static_assert(ROWS * COLS == GAME_GARDEN_CELLS, "garden save size mismatch");
 #define LAWN_Y 120
 #define CELL_W 114
 #define CELL_H 112
-#define CARD_X 260             /* horizontal packets in the Zen Garden */
-#define CARD_STEP 160
-#define CARD_W 150
+#define CARD_X 260             /* five horizontal packets in the Zen Garden */
+#define CARD_STEP 130
+#define CARD_W 120
 #define BATTLE_CARD_X 20
-#define BATTLE_CARD_Y 146
-#define BATTLE_CARD_STEP 132
+#define BATTLE_CARD_Y 137
+#define BATTLE_CARD_STEP 107
 #define BATTLE_CARD_W 210
-#define BATTLE_CARD_H 114
-#define BOOK_ENTRY_Y 173
-#define BOOK_ENTRY_STEP 121
-#define BOOK_ENTRY_H 112
+#define BATTLE_CARD_H 100
+#define BOOK_ENTRY_Y 160
+#define BOOK_ENTRY_STEP 99
+#define BOOK_ENTRY_H 91
+#define WATER_LEVEL 5
+#define WATER_FIRST_ROW 1
+#define WATER_LAST_ROW 2
 
 #define ZMAX 80
 #define PEAMAX 200
@@ -235,8 +238,10 @@ typedef enum { PH_MENU = GAME_MENU, PH_INTRO = GAME_INTRO, PH_PLAY = GAME_PLAY,
 
 /* Only plants the author drew are selectable, on the lawn and in the garden.
  * Keep existing IDs stable: they are stored in the legacy Zen Garden file. */
-enum { PT_NONE = -1, PT_PEA = 0, PT_WALL, PT_SUNFLOWER, PT_JUMPER, PT_COUNT };
-_Static_assert(PT_JUMPER == 3, "existing garden plant IDs must not change");
+enum { PT_NONE = -1, PT_PEA = 0, PT_WALL, PT_SUNFLOWER, PT_JUMPER,
+       PT_LILY, PT_COUNT };
+_Static_assert(PT_JUMPER == 3 && PT_LILY == 4,
+               "existing garden plant IDs must not change");
 enum { EN_DUCK = 0, EN_ROBOT };
 
 typedef struct {
@@ -262,6 +267,10 @@ static const PlantDef PDEF[PT_COUNT] = {
                     "ДЖАМПЕР-БОЕЦ", "ДЖАМПЕР",
                     "ПРИ УДАРЕ ИСЧЕЗАЕТ.",
                     "ОТБРАСЫВАЕТ УТКУ И РОБОТА НА 3 КЛЕТКИ." },
+    [PT_LILY] = { 25, 300, 7.5f, COL(80, 192, 23), SPR_LILY,
+                  "КУВШИНКА", "КУВШИНКА",
+                  "РАСТЁТ В ВОДЕ: ОСНОВА ДЛЯ ПОСАДКИ.",
+                  "ДРУГИЕ РАСТЕНИЯ СТАВЯТСЯ ПОВЕРХ НЕЁ." },
 };
 
 typedef struct { int type; float hp; float fire_t; float sway; } Plant;
@@ -298,11 +307,14 @@ static const char *banner_text;
 
 static const char *LEVEL_NAMES[10] = {
     "ПЕРВАЯ ЗАЩИТА", "НОВАЯ ВОЛНА", "У ЗАБОРА", "НА ПОДСТУПАХ",
-    "СЕРЕДИНА ПУТИ", "СЛОЖНЕЕ И СЛОЖНЕЕ", "ДЕРЖИ ОБОРОНУ",
+    "ВОДЯНОЙ УРОВЕНЬ", "СЛОЖНЕЕ И СЛОЖНЕЕ", "ДЕРЖИ ОБОРОНУ",
     "ПОСЛЕДНИЙ РУБЕЖ", "ПЕРЕД БУРЕЙ", "КОРОЛЕВА БЛИЗКО"
 };
 
 static Plant grid[ROWS][COLS];
+/* A lily supports another plant in the same water cell; it is a second layer,
+ * not an extra plant type in the old fixed-size Plant save record. */
+static uint8_t lily[ROWS][COLS];
 static Zombie zomb[ZMAX];
 static Pea peas[PEAMAX];
 static Coin coins[COINMAX];
@@ -311,6 +323,11 @@ static Mower mower[ROWS];
 
 #define CELL_CX(c) (LAWN_X + (c) * CELL_W + CELL_W / 2)
 #define CELL_CY(r) (LAWN_Y + (r) * CELL_H + CELL_H / 2)
+
+static int is_water_row(int row) {
+    return level == WATER_LEVEL && row >= WATER_FIRST_ROW &&
+           row <= WATER_LAST_ROW;
+}
 
 /* ------------------------------------------------------------------ */
 /* particles                                                          */
@@ -364,8 +381,15 @@ static void draw_coin_icon(int cx, int cy, int r) {
     draw_text_c(cx, cy - 7 * size / 2, size, COL(144, 85, 23), "М");
 }
 
+static void draw_lily(int cx, int cy) {
+    /* The author's flat, two-eyed green lily floats beneath its passenger. */
+    ellipse(cx, cy + 35, 43, 7, COL(24, 117, 131));
+    sprite_draw(SPR_LILY, cx - 51, cy - 1, 102, 54, 0);
+}
+
 static void draw_plant(int cx, int cy, int type, float sway) {
     if (type < 0 || type >= PT_COUNT) return;
+    if (type == PT_LILY) { draw_lily(cx, cy); return; }
     /* Each selectable plant is Kirill's own picture; no stand-ins. */
     ellipse(cx, cy + 32, 34, 7, COL(47, 112, 30));
     sprite_draw(PDEF[type].sprite, cx - 43, cy - 48 + (int)(sway * 2), 86, 86, 0);
@@ -458,6 +482,7 @@ static void start_level(int n) {
     resume_level = n;
     saved_battle = 1;
     boss_phase = 0;
+    memset(lily, 0, sizeof(lily));
     memset(grid, 0, sizeof(grid));
     for (int r = 0; r < ROWS; r++)
         for (int c = 0; c < COLS; c++) grid[r][c].type = PT_NONE;
@@ -475,7 +500,9 @@ static void start_level(int n) {
     spawn_t = 11.0f - n * 0.2f;
     banner_t = n == 1 ? 6 : 4;
     boss_spawned = 0;
-    banner_text = n == 1 ? "ПОДСОЛНУХ-НАРКОМАН ДАЁТ МОНЕТЫ" : LEVEL_NAMES[n - 1];
+    banner_text = n == 1 ? "ПОДСОЛНУХ-НАРКОМАН ДАЁТ МОНЕТЫ" :
+                  n == WATER_LEVEL ? "В ВОДЕ СНАЧАЛА ПОСАДИ КУВШИНКУ!" :
+                  LEVEL_NAMES[n - 1];
     phase = PH_PLAY;
 }
 
@@ -637,8 +664,10 @@ static void update_play(float dt) {
             for (int r = z->row - 1; r <= z->row + 1; r++) {
                 if (r < 0 || r >= ROWS) continue;
                 for (int c = 0; c < COLS; c++)
-                    if (grid[r][c].type >= 0 && fabsf(z->x - CELL_CX(c)) < 78) {
+                    if ((grid[r][c].type >= 0 || lily[r][c]) &&
+                        fabsf(z->x - CELL_CX(c)) < 78) {
                         grid[r][c].type = PT_NONE;
+                        lily[r][c] = 0; /* the robot crushes both layers */
                         burst(CELL_CX(c), CELL_CY(r), 16, COL(220, 70, 55), 140);
                     }
                 if (!mower[r].used && z->x <= LAWN_X + 75) {
@@ -673,6 +702,11 @@ static void update_play(float dt) {
         if (p->type >= 0 && z->x <= CELL_CX(col) + 28) {
             z->eating = 1;
             p->hp -= 100.0f * dt;
+        } else if (lily[z->row][col] && z->x <= CELL_CX(col) + 28) {
+            /* With nothing on top, a duck can knock the small pad away. */
+            lily[z->row][col] = 0;
+            burst(CELL_CX(col), CELL_CY(z->row), 8, PDEF[PT_LILY].body, 70);
+            z->eating = 0;
         } else {
             z->eating = 0;
             z->x -= spd * dt;
@@ -867,25 +901,35 @@ void game_input_press(int x, int y) {
     }
     if (collected) return;
 
-    /* The reference's four vertical illustrated seed packets. */
+    /* Five illustrated packets; the pad is useful only on the water level. */
     if (x >= BATTLE_CARD_X && x <= BATTLE_CARD_X + BATTLE_CARD_W) {
         for (int i = 0; i < PT_COUNT; i++) {
             int y0 = BATTLE_CARD_Y + i * BATTLE_CARD_STEP;
             if (y >= y0 && y <= y0 + BATTLE_CARD_H) {
-                selected = (coin_balance >= PDEF[i].cost && cooldown[i] <= 0) ? i : -1;
+                selected = (coin_balance >= PDEF[i].cost && cooldown[i] <= 0 &&
+                            (i != PT_LILY || level == WATER_LEVEL)) ? i : -1;
                 return;
             }
         }
     }
 
-    /* plant on the lawn */
+    /* Land accepts regular plants; water accepts a lily first, then a plant
+     * on top. A rejected placement never spends coins or starts a cooldown. */
     if (selected >= 0 && x >= LAWN_X && x < LAWN_X + COLS * CELL_W &&
         y >= LAWN_Y && y < LAWN_Y + ROWS * CELL_H) {
         int c = (x - LAWN_X) / CELL_W, r = (y - LAWN_Y) / CELL_H;
-        if (grid[r][c].type < 0 && coin_balance >= PDEF[selected].cost && cooldown[selected] <= 0) {
-            grid[r][c].type = selected;
-            grid[r][c].hp = (float)PDEF[selected].hp;
-            grid[r][c].fire_t = selected == PT_SUNFLOWER ? 5.0f : 0.4f;
+        int water = is_water_row(r);
+        if (grid[r][c].type < 0 && coin_balance >= PDEF[selected].cost &&
+            cooldown[selected] <= 0 &&
+            (selected == PT_LILY ? (water && !lily[r][c]) :
+                                   (!water || lily[r][c]))) {
+            if (selected == PT_LILY) {
+                lily[r][c] = 1;
+            } else {
+                grid[r][c].type = selected;
+                grid[r][c].hp = (float)PDEF[selected].hp;
+                grid[r][c].fire_t = selected == PT_SUNFLOWER ? 5.0f : 0.4f;
+            }
             coin_balance -= PDEF[selected].cost;
             cooldown[selected] = PDEF[selected].recharge;
             burst(CELL_CX(c), CELL_CY(r), 8, PDEF[selected].body, 90);
@@ -903,13 +947,26 @@ void game_input_release(int x, int y) { (void)x; (void)y; }
 /* ------------------------------------------------------------------ */
 
 static void draw_background(void) {
+    int water_scene = level == WATER_LEVEL &&
+        (phase == PH_PLAY || phase == PH_LEVEL_CLEAR ||
+         phase == PH_LOSE || phase == PH_WIN);
     rect(0, 0, GAME_W - 1, GAME_H - 1, COL(65, 105, 51));
     if (sprite_pixels[SPR_MAP]) {
-        /* Use the author's painted wooden path for the full-height packet
-         * rack, and the painted lawn for the same nine playable columns. */
+        /* Keep the author's wooden path as the packet rack. For level 5,
+         * crop the water map in three strips so the blue canal lines up
+         * EXACTLY with the two rows that require a lily. */
         sprite_crop(SPR_MAP, 0, 0, LAWN_X - 7, GAME_H, 0, 0, 246, 500, 0);
-        sprite_crop(SPR_MAP, LAWN_X, LAWN_Y, COLS * CELL_W, ROWS * CELL_H,
-                    274, 0, 226, 500, 0);
+        if (water_scene && sprite_pixels[SPR_WATER_MAP]) {
+            sprite_crop(SPR_WATER_MAP, LAWN_X, LAWN_Y, COLS * CELL_W, CELL_H,
+                        274, 0, 226, 100, 0);
+            sprite_crop(SPR_WATER_MAP, LAWN_X, LAWN_Y + CELL_H,
+                        COLS * CELL_W, 2 * CELL_H, 274, 128, 226, 132, 0);
+            sprite_crop(SPR_WATER_MAP, LAWN_X, LAWN_Y + 3 * CELL_H,
+                        COLS * CELL_W, 2 * CELL_H, 274, 290, 226, 210, 0);
+        } else {
+            sprite_crop(SPR_MAP, LAWN_X, LAWN_Y, COLS * CELL_W, ROWS * CELL_H,
+                        274, 0, 226, 500, 0);
+        }
         rect_blend(LAWN_X, LAWN_Y, GAME_W - 1, LAWN_Y + ROWS * CELL_H - 1,
                    COL(35, 82, 30), 55); /* preserve the drawing, soften neon */
     } else {
@@ -917,6 +974,9 @@ static void draw_background(void) {
         rect(LAWN_X, LAWN_Y, LAWN_X + COLS * CELL_W - 1,
              LAWN_Y + ROWS * CELL_H - 1, COL(108, 171, 73));
     }
+    if (water_scene && !sprite_pixels[SPR_WATER_MAP])
+        rect(LAWN_X, LAWN_Y + CELL_H, LAWN_X + COLS * CELL_W - 1,
+             LAWN_Y + 3 * CELL_H - 1, COL(26, 165, 193));
     rect(LAWN_X - 7, 0, LAWN_X - 1, GAME_H - 1, COL(48, 85, 39));
     /* Later levels keep their time-of-day tint without changing any cells. */
     if (level >= 4 && level <= 6)
@@ -971,19 +1031,20 @@ static void draw_seed_bar(void) {
     draw_int(101, 67, 5, COL(255, 252, 220), coin_balance);
     for (int i = 0; i < PT_COUNT; i++) {
         int x0 = BATTLE_CARD_X, y0 = BATTLE_CARD_Y + i * BATTLE_CARD_STEP;
-        int affordable = coin_balance >= PDEF[i].cost && cooldown[i] <= 0;
+        int affordable = coin_balance >= PDEF[i].cost && cooldown[i] <= 0 &&
+                         (i != PT_LILY || level == WATER_LEVEL);
         uint32_t border = selected == i ? COL(255, 225, 77) : COL(61, 43, 32);
         rect(x0 - 3, y0 - 3, x0 + BATTLE_CARD_W + 3,
              y0 + BATTLE_CARD_H + 3, border);
         rect(x0, y0, x0 + BATTLE_CARD_W, y0 + BATTLE_CARD_H, COL(235, 218, 170));
-        rect(x0 + 4, y0 + 4, x0 + BATTLE_CARD_W - 4, y0 + 75,
+        rect(x0 + 4, y0 + 4, x0 + BATTLE_CARD_W - 4, y0 + 58,
              COL(247, 235, 203));
-        rect(x0 + 4, y0 + 4, x0 + 9, y0 + 75, PDEF[i].body);
-        sprite_draw(PDEF[i].sprite, x0 + 71, y0 + 4, 68, 68, 0);
-        draw_text_c(x0 + BATTLE_CARD_W / 2, y0 + 73, 2,
+        rect(x0 + 4, y0 + 4, x0 + 9, y0 + 58, PDEF[i].body);
+        sprite_draw(PDEF[i].sprite, x0 + 78, y0 + 2, 55, 55, 0);
+        draw_text_c(x0 + BATTLE_CARD_W / 2, y0 + 59, 2,
                     COL(68, 44, 31), PDEF[i].short_name);
-        draw_coin_icon(x0 + 81, y0 + 103, 9);
-        draw_int(x0 + 102, y0 + 91, 2, COL(79, 49, 24), PDEF[i].cost);
+        draw_coin_icon(x0 + 81, y0 + 88, 8);
+        draw_int(x0 + 102, y0 + 77, 2, COL(79, 49, 24), PDEF[i].cost);
         if (!affordable) rect_blend(x0, y0, x0 + BATTLE_CARD_W,
                                      y0 + BATTLE_CARD_H, COL(21, 23, 30), 95);
         if (cooldown[i] > 0) {
@@ -1058,7 +1119,7 @@ static void draw_khlebushek(int cx, int feet_y, int size, int crying) {
 }
 
 static void draw_kirill(int cx, int feet_y, int size) {
-    /* This is Без названия681_20260926093232.png, identified by the author. */
+    /* The author's updated Kirill drawing, assets/art/kirill.png. */
     sprite_draw(SPR_KIRILL, cx - size / 2, feet_y - size, size, size, 0);
     draw_text_c(cx, feet_y + 8, 3, COL(255, 239, 197), "КИРИЛЛ");
 }
@@ -1125,6 +1186,12 @@ static void draw_level_select(void) {
         rect(x, y + 5, x + 180, y + 135, COL(15, 26, 30));
         rect(x, y, x + 180, y + 130, frame);
         rect(x + 5, y + 5, x + 175, y + 125, COL(65, 52, 50));
+        if (n == WATER_LEVEL && sprite_pixels[SPR_WATER_MAP]) {
+            sprite_crop(SPR_WATER_MAP, x + 5, y + 5, 171, 121,
+                        0, 0, 500, 500, 0);
+            rect_blend(x + 5, y + 5, x + 175, y + 125,
+                       COL(12, 31, 35), 177); /* legible title on the thumbnail */
+        }
         char label[32];
         snprintf(label, sizeof(label), "УРОВЕНЬ %d", n);
         draw_text_c(x + 90, y + 12, 3, COL(255, 239, 198), label);
@@ -1165,8 +1232,10 @@ static void draw_garden(void) {
         rect(x0 - 3, 9, x0 + CARD_W + 3, 115, border);
         rect(x0, 12, x0 + CARD_W, 112, COL(236, 224, 188));
         rect(x0, 12, x0 + CARD_W, 18, PDEF[i].body);
-        sprite_draw(PDEF[i].sprite, x0 + (CARD_W - 66) / 2, 19, 66, 66, 0);
-        draw_text_c(x0 + CARD_W / 2, 86, 2, COL(64, 42, 29), PDEF[i].short_name);
+        sprite_draw(PDEF[i].sprite, x0 + (CARD_W - 60) / 2, 19, 60, 60, 0);
+        int size = text_w(2, PDEF[i].short_name) <= CARD_W - 8 ? 2 : 1;
+        draw_text_c(x0 + CARD_W / 2, 84, size,
+                    COL(64, 42, 29), PDEF[i].short_name);
     }
     draw_button(915, 16, 1070, 58, "КНИГА", 2);
     draw_button(1080, 16, 1265, 58, "В МЕНЮ", 2);
@@ -1201,13 +1270,14 @@ static void draw_book(void) {
              book_selected == i ? COL(173, 93, 42) : COL(178, 147, 108));
         rect(165, y0 + 5, 535, y0 + BOOK_ENTRY_H - 5,
              book_selected == i ? COL(254, 209, 132) : COL(249, 233, 192));
-        sprite_draw(PDEF[i].sprite, 180, y0 + 14, 80, 80, 0);
-        draw_text(275, y0 + 13, 2, COL(75, 52, 33), PDEF[i].short_name);
-        draw_text(275, y0 + 44, 2, COL(100, 70, 39), "ЦЕНА:");
-        draw_int(362, y0 + 44, 2, COL(100, 70, 39), PDEF[i].cost);
-        draw_text(275, y0 + 78, 2, COL(111, 75, 42),
+        sprite_draw(PDEF[i].sprite, 183, y0 + 11, 67, 67, 0);
+        draw_text(265, y0 + 9, 2, COL(75, 52, 33), PDEF[i].short_name);
+        draw_text(265, y0 + 35, 2, COL(100, 70, 39), "ЦЕНА:");
+        draw_int(352, y0 + 35, 2, COL(100, 70, 39), PDEF[i].cost);
+        draw_text(265, y0 + 64, 2, COL(111, 75, 42),
                   i == PT_PEA ? "АТАКА" : i == PT_WALL ? "ЗАЩИТА" :
-                  i == PT_JUMPER ? "ОТБРОС" : "МОНЕТЫ");
+                  i == PT_JUMPER ? "ОТБРОС" :
+                  i == PT_LILY ? "ВОДА" : "МОНЕТЫ");
     }
 
     const PlantDef *p = &PDEF[book_selected];
@@ -1235,6 +1305,8 @@ static void draw_book(void) {
         draw_text(787, 495, 2, COL(88, 57, 36), "КАЖДЫЕ");
         draw_int(895, 495, 2, COL(126, 76, 26), (int)COIN_INTERVAL);
         draw_text(925, 495, 2, COL(88, 57, 36), "СЕК.");
+    } else if (book_selected == PT_LILY) {
+        draw_text(600, 495, 2, COL(65, 81, 43), "УРОВЕНЬ 5: ВОДА В ДВУХ СРЕДНИХ РЯДАХ");
     }
     rect(580, 524, 1150, 663, COL(147, 83, 45));
     rect(585, 529, 1145, 658, COL(249, 193, 121));
@@ -1278,8 +1350,9 @@ static void draw_play_scene(void) {
     for (int r = 0; r < ROWS; r++)
         for (int c = 0; c < COLS; c++) {
             Plant *p = &grid[r][c];
-            if (p->type < 0) continue;
-            draw_plant(CELL_CX(c), CELL_CY(r), p->type, p->sway);
+            if (lily[r][c]) draw_lily(CELL_CX(c), CELL_CY(r));
+            if (p->type >= 0)
+                draw_plant(CELL_CX(c), CELL_CY(r), p->type, p->sway);
         }
     for (int r = 0; r < ROWS; r++)
         for (int i = 0; i < ZMAX; i++)
@@ -1387,11 +1460,11 @@ int game_garden_import(const uint8_t cells[GAME_GARDEN_CELLS]) {
     return 1;
 }
 
-/* The garden remains in pvg3-garden.v1. Campaign V4 keeps the EXACT SAME
- * layout as V1-V3: the fourth cooldown reuses the old boss countdown field.
- * V4 marks the new field geometry; V1-V3 world positions are projected onto
- * it on import. Grid cells and IDs themselves are unchanged. No pointers or
- * random bytes persist; integers/floats are 32-bit on supported Android ABIs. */
+/* The garden remains in pvg3-garden.v1. Campaign V1-V4 had the exact same
+ * binary layout; V5 appends water-pad flags and their packet cooldown without
+ * altering any old fields. Thus old in-progress battles can still be read.
+ * No pointers or random bytes persist; integers/floats are 32-bit on the
+ * supported little-endian Android ABIs. */
 _Static_assert(sizeof(int) == 4 && sizeof(float) == 4, "save needs 32-bit fields");
 typedef struct {
     uint32_t magic, version;
@@ -1412,9 +1485,19 @@ typedef struct {
 _Static_assert(sizeof(SaveState) == 9988 &&
                offsetof(SaveState, checksum) == sizeof(SaveState) - 4,
                "Keep the campaign V1-V4 save layout readable on both Android ABIs");
+typedef struct {
+    SaveState base;                  /* the unchanged V1-V4 prefix */
+    uint8_t lily[GAME_GARDEN_CELLS]; /* row-major, 0 or 1 */
+    uint8_t reserved[3];            /* zero-filled, keep float aligned */
+    float lily_cooldown;
+    uint32_t checksum;              /* covers the prefix AND water state */
+} SaveStateV5;
+_Static_assert(sizeof(SaveStateV5) == 10044 &&
+               offsetof(SaveStateV5, checksum) == sizeof(SaveStateV5) - 4,
+               "Keep the campaign V5 save layout readable on both Android ABIs");
 
 #define SAVE_MAGIC 0x33477650u /* little-endian bytes 'P', 'v', 'G', '3' */
-#define SAVE_VERSION 4u
+#define SAVE_VERSION 5u
 
 /* Campaigns saved before the vertical-card UI used the lawn at (120,150)
  * with 120x108 cells. Preserve each entity's position within its cell when
@@ -1426,57 +1509,96 @@ static float saved_world_y(float y) {
     return LAWN_Y + (y - 150.0f) * (float)CELL_H / 108.0f;
 }
 
-static uint32_t save_checksum(const SaveState *s) {
-    const uint8_t *p = (const uint8_t *)s;
+static uint32_t save_hash_bytes(const void *bytes, size_t length) {
+    const uint8_t *p = (const uint8_t *)bytes;
     uint32_t h = 2166136261u;
-    for (size_t i = 0; i < offsetof(SaveState, checksum); i++)
-        h = (h ^ p[i]) * 16777619u;
+    for (size_t i = 0; i < length; i++) h = (h ^ p[i]) * 16777619u;
     return h;
 }
 
-size_t game_save_size(void) { return sizeof(SaveState); }
+static uint32_t save_checksum(const SaveState *s) {
+    return save_hash_bytes(s, offsetof(SaveState, checksum));
+}
+
+static uint32_t save_checksum_v5(const SaveStateV5 *s) {
+    return save_hash_bytes(s, offsetof(SaveStateV5, checksum));
+}
+
+size_t game_save_size(void) { return sizeof(SaveStateV5); }
 
 int game_save_export(void *dst, size_t capacity) {
-    if (!dst || capacity < sizeof(SaveState)) return 0;
-    SaveState s;
-    memset(&s, 0, sizeof(s));
-    s.magic = SAVE_MAGIC;
-    s.version = SAVE_VERSION;
-    s.completed = (int)completed_mask;
-    s.resume = resume_level;
-    s.active = saved_battle;
-    s.level = level;
-    if (s.active) {
-        s.jumper_cooldown = cooldown[PT_JUMPER];
-        s.boss_phase = boss_phase;
-        s.boss_spawned = boss_spawned;
-        s.coin_balance = coin_balance;
-        s.selected = selected;
-        s.to_spawn = to_spawn;
-        s.total_zombies = total_zombies;
-        s.spawn_t = spawn_t;
-        s.global_t = global_t;
-        s.banner_t = banner_t;
-        s.rng = RNG;
-        memcpy(s.cooldown, cooldown, sizeof(s.cooldown));
-        memcpy(s.grid, grid, sizeof(grid));
-        memcpy(s.zomb, zomb, sizeof(zomb));
-        memcpy(s.peas, peas, sizeof(peas));
-        memcpy(s.coins, coins, sizeof(coins));
-        memcpy(s.mower, mower, sizeof(mower));
+    if (!dst || capacity < sizeof(SaveStateV5)) return 0;
+    SaveStateV5 out;
+    memset(&out, 0, sizeof(out));
+    SaveState *s = &out.base;
+    s->magic = SAVE_MAGIC;
+    s->version = SAVE_VERSION;
+    s->completed = (int)completed_mask;
+    s->resume = resume_level;
+    s->active = saved_battle;
+    s->level = level;
+    if (s->active) {
+        s->jumper_cooldown = cooldown[PT_JUMPER];
+        out.lily_cooldown = cooldown[PT_LILY];
+        s->boss_phase = boss_phase;
+        s->boss_spawned = boss_spawned;
+        s->coin_balance = coin_balance;
+        s->selected = selected;
+        s->to_spawn = to_spawn;
+        s->total_zombies = total_zombies;
+        s->spawn_t = spawn_t;
+        s->global_t = global_t;
+        s->banner_t = banner_t;
+        s->rng = RNG;
+        memcpy(s->cooldown, cooldown, sizeof(s->cooldown));
+        memcpy(s->grid, grid, sizeof(grid));
+        memcpy(s->zomb, zomb, sizeof(zomb));
+        memcpy(s->peas, peas, sizeof(peas));
+        memcpy(s->coins, coins, sizeof(coins));
+        memcpy(s->mower, mower, sizeof(mower));
+        for (int r = 0; r < ROWS; r++)
+            for (int c = 0; c < COLS; c++)
+                out.lily[r * COLS + c] = lily[r][c];
     }
-    s.checksum = save_checksum(&s);
-    memcpy(dst, &s, sizeof(s));
+    s->checksum = save_checksum(s);
+    out.checksum = save_checksum_v5(&out);
+    memcpy(dst, &out, sizeof(out));
     return 1;
 }
 
 int game_save_import(const void *src, size_t length) {
-    if (!src || length != sizeof(SaveState)) return 0;
+    if (!src) return 0;
     SaveState s;
-    memcpy(&s, src, sizeof(s)); /* src need not be suitably aligned */
+    uint8_t imported_lily[ROWS][COLS] = {{0}};
+    float imported_lily_cooldown = 0;
+    if (length == sizeof(SaveStateV5)) {
+        SaveStateV5 v5;
+        memcpy(&v5, src, sizeof(v5)); /* src need not be aligned */
+        if (v5.base.version != SAVE_VERSION ||
+            v5.checksum != save_checksum_v5(&v5) ||
+            v5.base.checksum != save_checksum(&v5.base) ||
+            v5.reserved[0] || v5.reserved[1] || v5.reserved[2] ||
+            !isfinite(v5.lily_cooldown) ||
+            v5.lily_cooldown > PDEF[PT_LILY].recharge + 1)
+            return 0;
+        for (int r = 0; r < ROWS; r++)
+            for (int c = 0; c < COLS; c++) {
+                int value = v5.lily[r * COLS + c];
+                if (value > 1 ||
+                    (value && (v5.base.active != 1 || v5.base.level != WATER_LEVEL ||
+                               r < WATER_FIRST_ROW || r > WATER_LAST_ROW ||
+                               v5.base.grid[r][c].type == PT_LILY))) return 0;
+                imported_lily[r][c] = (uint8_t)value;
+            }
+        memcpy(&s, &v5.base, sizeof(s));
+        imported_lily_cooldown = v5.lily_cooldown;
+    } else if (length == sizeof(SaveState)) {
+        memcpy(&s, src, sizeof(s)); /* legacy V1-V4 file */
+        if (s.version >= SAVE_VERSION) return 0;
+    } else return 0;
     if (s.magic != SAVE_MAGIC ||
         (s.version != 1u && s.version != 2u && s.version != 3u &&
-         s.version != SAVE_VERSION) ||
+         s.version != 4u && s.version != SAVE_VERSION) ||
         s.checksum != save_checksum(&s) ||
         s.completed < 0 ||
         (s.version == 1u && s.completed > MAX_LEVEL) ||
@@ -1497,7 +1619,8 @@ int game_save_import(const void *src, size_t length) {
              (!isfinite(s.jumper_cooldown) ||
               s.jumper_cooldown > PDEF[PT_JUMPER].recharge + 1)) ||
             s.coin_balance < 0 || s.coin_balance > 1000000 ||
-            s.selected < -1 || s.selected >= PT_COUNT ||
+            s.selected < -1 ||
+            s.selected >= (s.version < SAVE_VERSION ? PT_LILY : PT_COUNT) ||
             s.total_zombies != 5 + s.level * 3 ||
             s.to_spawn < 0 || s.to_spawn > s.total_zombies ||
             !isfinite(s.spawn_t) || !isfinite(s.global_t) || !isfinite(s.banner_t))
@@ -1511,9 +1634,12 @@ int game_save_import(const void *src, size_t length) {
                 !isfinite(s.mower[r].x)) return 0;
             for (int c = 0; c < COLS; c++) {
                 const Plant *p = &s.grid[r][c];
-                if (p->type < PT_NONE || p->type >= PT_COUNT ||
+                if (p->type < PT_NONE || p->type >= PT_LILY ||
                     (p->type != PT_NONE && (!isfinite(p->hp) ||
-                      !isfinite(p->fire_t) || !isfinite(p->sway)))) return 0;
+                      !isfinite(p->fire_t) || !isfinite(p->sway))) ||
+                    (s.version == SAVE_VERSION && s.level == WATER_LEVEL &&
+                     r >= WATER_FIRST_ROW && r <= WATER_LAST_ROW &&
+                     p->type != PT_NONE && !imported_lily[r][c])) return 0;
             }
         }
         for (int i = 0; i < ZMAX; i++) {
@@ -1537,7 +1663,7 @@ int game_save_import(const void *src, size_t length) {
                 !isfinite(c->target_y) || !isfinite(c->life) ||
                 !isfinite(c->bob) || !isfinite(c->vy))) return 0;
         }
-        if (s.version < SAVE_VERSION) {
+        if (s.version < 4u) {
             for (int r = 0; r < ROWS; r++) {
                 /* An unused mower follows the new lawn edge; a sweeping
                  * mower must keep its in-progress position. */
@@ -1562,11 +1688,19 @@ int game_save_import(const void *src, size_t length) {
                     !isfinite(s.coins[i].target_y)) return 0;
             }
         }
+        if (s.version < SAVE_VERSION && s.level == WATER_LEVEL) {
+            /* Level 5 used to be land. Do not drown plants on a saved V1-V4
+             * board: give each occupied water cell a free supporting pad. */
+            for (int r = WATER_FIRST_ROW; r <= WATER_LAST_ROW; r++)
+                for (int c = 0; c < COLS; c++)
+                    if (s.grid[r][c].type != PT_NONE) imported_lily[r][c] = 1;
+        }
     }
     completed_mask = s.version == 1u ? (1u << s.completed) - 1u : (unsigned)s.completed;
     resume_level = s.resume;
     saved_battle = s.active;
     level = s.active ? s.level : s.resume;
+    memset(lily, 0, sizeof(lily));
     if (s.active) {
         boss_phase = s.boss_phase;
         boss_spawned = s.boss_spawned;
@@ -1580,13 +1714,17 @@ int game_save_import(const void *src, size_t length) {
         RNG = s.rng;
         memcpy(cooldown, s.cooldown, sizeof(s.cooldown));
         cooldown[PT_JUMPER] = s.version >= 3u ? s.jumper_cooldown : 0;
+        cooldown[PT_LILY] = imported_lily_cooldown;
+        memcpy(lily, imported_lily, sizeof(lily));
         memcpy(grid, s.grid, sizeof(grid));
         memcpy(zomb, s.zomb, sizeof(zomb));
         memcpy(peas, s.peas, sizeof(peas));
         memcpy(coins, s.coins, sizeof(coins));
         memcpy(mower, s.mower, sizeof(mower));
         memset(parts, 0, sizeof(parts)); /* cosmetic particles do not persist */
-        banner_text = boss_phase ? "КОРОЛЕВА В РОБОТЕ!" : LEVEL_NAMES[level - 1];
+        banner_text = boss_phase ? "КОРОЛЕВА В РОБОТЕ!" :
+                      level == WATER_LEVEL ? "В ВОДЕ СНАЧАЛА ПОСАДИ КУВШИНКУ!" :
+                      LEVEL_NAMES[level - 1];
     }
     book_return = PH_MENU;
     phase = PH_MENU;
@@ -1661,6 +1799,10 @@ float game_debug_mower_x(int row) {
 int game_debug_plant_type(int row, int col) {
     if ((unsigned)row >= ROWS || (unsigned)col >= COLS) return PT_NONE;
     return grid[row][col].type;
+}
+int game_debug_lily_at(int row, int col) {
+    if ((unsigned)row >= ROWS || (unsigned)col >= COLS) return 0;
+    return lily[row][col];
 }
 int game_debug_seed_count(void) { return PT_COUNT; }
 int game_debug_first_enemy_type(void) {

@@ -12,10 +12,12 @@
 #include "font.h"
 
 /* Match the battle sidebar, the garden header and the 9x5 lawn. */
-static int garden_card_x(int type) { return 260 + type * 160 + 75; }
-static int battle_card_y(int type) { return 146 + type * 132 + 57; }
+static int garden_card_x(int type) { return 260 + type * 130 + 60; }
+static int battle_card_y(int type) { return 137 + type * 107 + 50; }
+static int book_row_y(int type) { return 160 + type * 99 + 44; }
 static int cell_x(int col) { return 250 + col * 114 + 57; }
 static int cell_y(int row) { return 120 + row * 112 + 56; }
+#define LEGACY_SAVE_LEN 9988u /* V1-V4 prefix in the V5 export */
 static float migrated_x(float x) { return 250 + (x - 120) * 114 / 120; }
 static float migrated_y(float y) { return 120 + (y - 150) * 112 / 108; }
 
@@ -37,23 +39,25 @@ static void advance(float seconds) {
     }
 }
 
-/* All campaign versions share the exact same layout. V1/V2 used the two
- * floats as timers; V3 had a Jumper cooldown; V4 changes world coordinates.
- * This tests validation, old completion semantics and coordinate migration. */
+/* V1-V4 shared a 9988-byte layout. V5 appends a second checksummed section.
+ * These fixtures simulate the old binary prefix, including its old checksum. */
+static void rehash(uint8_t *bytes, size_t length) {
+    uint32_t hash = 2166136261u;
+    for (size_t i = 0; i < length - 4; i++)
+        hash = (hash ^ bytes[i]) * 16777619u;
+    memcpy(bytes + length - 4, &hash, 4);
+}
 static void make_legacy_save(uint8_t *bytes, size_t length,
                              uint32_t version, uint32_t completed) {
     float old_level_left = 30.0f, old_boss_left = 90.0f;
-    uint32_t hash = 2166136261u;
-    assert(version >= 1 && version <= 3);
+    assert(length == LEGACY_SAVE_LEN && version >= 1 && version <= 4);
     memcpy(bytes + 4, &version, 4);
     memcpy(bytes + 8, &completed, 4);
     if (version <= 2) {
         memcpy(bytes + 24, &old_level_left, 4);
         memcpy(bytes + 28, &old_boss_left, 4);
     }
-    for (size_t i = 0; i < length - 4; i++)
-        hash = (hash ^ bytes[i]) * 16777619u;
-    memcpy(bytes + length - 4, &hash, 4);
+    rehash(bytes, length);
 }
 
 int main(void) {
@@ -89,14 +93,16 @@ int main(void) {
     game_input_press(1130, 50);
     assert(game_phase() == GAME_MENU);
 
-    /* All FOUR illustrated plants appear in the Garden and interactive book. */
-    assert(game_debug_coin_balance() == 250 && game_debug_seed_count() == 4);
+    /* All FIVE illustrated plants appear in the Garden and interactive book. */
+    assert(game_debug_coin_balance() == 250 && game_debug_seed_count() == 5);
     game_input_press(1080, 85);              /* garden */
     assert(game_phase() == GAME_GARDEN);
     garden_at(2, 0, 1);                       /* Kirill's coin sunflower */
     garden_at(0, 2, 2);                       /* peashooter */
     garden_at(1, 3, 4);                       /* walnut */
-    garden_at(3, 4, 5);                       /* NEW author's Jumper Fighter */
+    garden_at(3, 4, 5);                       /* author's Jumper Fighter */
+    garden_at(4, 1, 7);                       /* author's new lily pad */
+    assert(game_debug_garden_plant_type(1, 7) == 4);
     assert(game_debug_garden_plant_type(0, 1) == 2);
     assert(game_debug_garden_plant_type(2, 2) == 0);
     assert(game_debug_garden_plant_type(3, 4) == 1);
@@ -108,8 +114,10 @@ int main(void) {
     garden_at(0, 2, 2);
     game_input_press(985, 50);               /* garden -> book */
     assert(game_phase() == GAME_BOOK);
-    game_input_press(320, 173 + 3 * 121 + 34);
+    game_input_press(320, book_row_y(3));
     assert(game_debug_book_plant() == 3);    /* Jumper's picture and 250 coins */
+    game_input_press(320, book_row_y(4));
+    assert(game_debug_book_plant() == 4);    /* lily's picture and 25 coins */
     game_input_press(1130, 50);
     assert(game_phase() == GAME_GARDEN);
     game_input_press(1160, 60);
@@ -118,17 +126,19 @@ int main(void) {
     /* Preserve the same legacy 45-cell garden file, including plant ID 4. */
     uint8_t garden[GAME_GARDEN_CELLS], bad_garden[GAME_GARDEN_CELLS];
     game_garden_export(garden);
+    assert(garden[1 * 9 + 7] == 5 && garden[4 * 9 + 5] == 4);
     game_init();
     assert(game_debug_garden_plant_type(4, 5) == -1);
     assert(game_garden_import(garden));
     assert(game_debug_garden_plant_type(4, 5) == 3);
+    assert(game_debug_garden_plant_type(1, 7) == 4);
     memcpy(bad_garden, garden, sizeof garden);
     bad_garden[0] = 255;
     assert(!game_garden_import(bad_garden));
     assert(game_debug_garden_plant_type(4, 5) == 3);
     game_input_press(245, 610);              /* menu -> book -> menu */
     assert(game_phase() == GAME_BOOK);
-    game_input_press(320, 173 + 121 + 34);
+    game_input_press(320, book_row_y(1));
     assert(game_debug_book_plant() == 1);
     game_input_press(1130, 50);
 
@@ -149,6 +159,8 @@ int main(void) {
     game_input_press(1130, 50);
     game_tick(9.0f, NULL);
     assert(game_debug_coin_count() == 0 && game_debug_coin_balance() == 250);
+    seed_at(4, 0, 2);                       /* lily packet disabled on dry levels */
+    assert(game_debug_coin_balance() == 250 && !game_debug_lily_at(0, 2));
     game_input_press(655, 70);              /* old horizontal packet is now HUD */
     game_input_press(cell_x(1), cell_y(0));
     assert(game_debug_plant_type(0, 1) == -1);
@@ -171,7 +183,7 @@ int main(void) {
     /* Invalid campaign saves do not mutate state; a real restart restores
      * enemies, coins, plants and the unfinished wave (plus Garden separately). */
     size_t len = game_save_size();
-    assert(len > 100 && len < 65536);
+    assert(len == 10044 && len > LEGACY_SAVE_LEN);
     uint8_t *saved = (uint8_t *)malloc(len), *bad = (uint8_t *)malloc(len);
     assert(saved && bad);
     assert(!game_save_export(saved, len - 1));
@@ -204,9 +216,9 @@ int main(void) {
     /* Real V2 in-progress layout is still accepted; time no longer decides
      * victory, but previously saved plants/ducks do not disappear on upgrade. */
     memcpy(bad, saved, len);
-    make_legacy_save(bad, len, 2, 0);
+    make_legacy_save(bad, LEGACY_SAVE_LEN, 2, 0);
     game_init();
-    assert(game_save_import(bad, len));
+    assert(game_save_import(bad, LEGACY_SAVE_LEN));
     game_input_press(640, 600);
     assert(game_phase() == GAME_PLAY && game_wave_remaining() == wave_saved);
     assert(game_debug_plant_type(0, 1) == 2 && game_debug_coin_balance() == 75);
@@ -285,14 +297,14 @@ int main(void) {
     game_input_press(640, 520);
     assert(game_phase() == GAME_MENU && game_save_export(saved, len));
     memcpy(bad, saved, len);
-    make_legacy_save(bad, len, 1, 10);
+    make_legacy_save(bad, LEGACY_SAVE_LEN, 1, 10);
     game_init();
-    assert(game_save_import(bad, len) && game_completed_level() == 10);
+    assert(game_save_import(bad, LEGACY_SAVE_LEN) && game_completed_level() == 10);
     for (int n = 1; n <= 10; n++) assert(game_debug_level_completed(n));
     memcpy(bad, saved, len);
-    make_legacy_save(bad, len, 2, 1023);
+    make_legacy_save(bad, LEGACY_SAVE_LEN, 2, 1023);
     game_init();
-    assert(game_save_import(bad, len) && game_completed_level() == 10);
+    assert(game_save_import(bad, LEGACY_SAVE_LEN) && game_completed_level() == 10);
 
     /* A fresh install can pick level 10 directly: only that level is marked. */
     game_init();
@@ -342,9 +354,9 @@ int main(void) {
     float old_sweeping_mower = game_debug_mower_x(1);
     assert(game_save_export(saved, len));
     memcpy(bad, saved, len);
-    make_legacy_save(bad, len, 3, 0);
+    make_legacy_save(bad, LEGACY_SAVE_LEN, 3, 0);
     game_init();
-    assert(game_save_import(bad, len));
+    assert(game_save_import(bad, LEGACY_SAVE_LEN));
     game_input_press(640, 600);
     assert(game_debug_mower_used(1));
     assert(fabsf(game_debug_mower_x(1) - migrated_x(old_sweeping_mower)) < 0.01f);
@@ -374,8 +386,8 @@ int main(void) {
     game_tick(0.05f, NULL);
     assert(game_debug_duck_x(2) < duck_x && game_debug_duck_x(2) > duck_x - 2);
 
-    /* V3 snapshots keep the binary layout but use the ORIGINAL lawn geometry.
-     * Migrate every world-space object, then re-export V4: it must not move
+    /* V3 snapshots keep the old prefix but use the ORIGINAL lawn geometry.
+     * Migrate every world-space object, then re-export V5: it must not move
      * again the next time the player resumes the same battle. */
     game_debug_snapshot();
     float old_boss_x = game_debug_boss_x();
@@ -389,9 +401,9 @@ int main(void) {
     assert(old_pea_x > 0 && old_coin_x > 0 && old_duck_x > 0);
     assert(game_save_export(saved, len));
     memcpy(bad, saved, len);
-    make_legacy_save(bad, len, 3, 0);
+    make_legacy_save(bad, LEGACY_SAVE_LEN, 3, 0);
     game_init();
-    assert(game_save_import(bad, len));
+    assert(game_save_import(bad, LEGACY_SAVE_LEN));
     game_input_press(640, 600);
     assert(game_phase() == GAME_PLAY && game_level() == 10);
     assert(fabsf(game_debug_boss_x() - migrated_x(old_boss_x)) < 0.01f);
@@ -407,12 +419,79 @@ int main(void) {
     assert(game_save_export(saved, len));
     uint32_t version;
     memcpy(&version, saved + 4, sizeof version);
-    assert(version == 4);
+    assert(version == 5);
     game_init();
     assert(game_save_import(saved, len));
     game_input_press(640, 600);
     assert(fabsf(game_debug_boss_x() - migrated_x(old_boss_x)) < 0.01f);
     assert(fabsf(game_debug_first_coin_x() - migrated_x(old_coin_x)) < 0.01f);
+
+    /* Level 5 uses the author's canal map: rows 2 and 3 (zero-based 1,2)
+     * need a lily BEFORE any normal plant. Land still accepts normal plants. */
+    game_init();
+    game_input_press(235, 100);
+    game_input_press(1070, 270);             /* choose level 5 */
+    assert(game_phase() == GAME_PLAY && game_level() == 5);
+    assert(game_debug_coin_balance() == 370);
+    seed_at(0, 1, 2);                         /* bare water refuses pea */
+    assert(game_debug_plant_type(1, 2) == -1 && !game_debug_lily_at(1, 2));
+    assert(game_debug_coin_balance() == 370 && game_debug_cooldown(0) <= 0);
+    seed_at(4, 0, 2);                         /* lily refuses dry land */
+    assert(!game_debug_lily_at(0, 2) && game_debug_coin_balance() == 370);
+    seed_at(4, 1, 2);                         /* 25-coin support */
+    assert(game_debug_lily_at(1, 2) && game_debug_plant_type(1, 2) == -1);
+    assert(game_debug_coin_balance() == 345 && game_debug_cooldown(4) > 0);
+    seed_at(0, 1, 2);                         /* plant ON the lily */
+    assert(game_debug_lily_at(1, 2) && game_debug_plant_type(1, 2) == 0);
+    assert(game_debug_coin_balance() == 245);
+    seed_at(0, 2, 1);                         /* next water row still bare */
+    assert(game_debug_plant_type(2, 1) == -1 && game_debug_coin_balance() == 245);
+    seed_at(2, 3, 1);                         /* ordinary grass lane */
+    assert(game_debug_plant_type(3, 1) == 2 && game_debug_coin_balance() == 195);
+    game_tick(7.6f, NULL);                    /* lily packet becomes ready again */
+    seed_at(4, 2, 5);                         /* another lily, with nobody on it */
+    assert(game_debug_lily_at(2, 5) && game_debug_plant_type(2, 5) == -1);
+    assert(game_debug_coin_balance() == 170 && game_debug_cooldown(4) > 0);
+    game_debug_spawn_duck(0, 900);
+    assert(game_save_export(saved, len));
+    game_init();
+    assert(game_save_import(saved, len));
+    game_input_press(640, 600);              /* V5 keeps BOTH water layers */
+    assert(game_level() == 5 && game_debug_lily_at(1, 2) && game_debug_lily_at(2, 5));
+    assert(game_debug_plant_type(1, 2) == 0 && game_debug_plant_type(3, 1) == 2);
+    assert(game_debug_cooldown(4) > 0 && game_debug_coin_balance() == 170);
+    assert(fabsf(game_debug_duck_x(0) - 900) < 0.01f);
+    memcpy(bad, saved, len);
+    bad[LEGACY_SAVE_LEN + 2 * 9 + 5] = 2;   /* checksummed but illegal pad flag */
+    rehash(bad, len);
+    assert(!game_save_import(bad, len));
+    assert(game_debug_lily_at(2, 5) && game_debug_coin_balance() == 170);
+
+    /* An old V4 level-5 game used to be all grass: retain its placed plants
+     * and position, granting occupied canal cells supporting pads for free. */
+    memcpy(bad, saved, len);
+    make_legacy_save(bad, LEGACY_SAVE_LEN, 4, 0);
+    game_init();
+    assert(game_save_import(bad, LEGACY_SAVE_LEN));
+    game_input_press(640, 600);
+    assert(game_level() == 5 && game_debug_lily_at(1, 2));
+    assert(game_debug_plant_type(1, 2) == 0 && !game_debug_lily_at(2, 5));
+    assert(fabsf(game_debug_duck_x(0) - 900) < 0.01f); /* no V4 reprojection */
+
+    game_init();
+    assert(game_save_import(saved, len));
+    game_input_press(640, 600);
+    game_debug_spawn_duck(2, (float)cell_x(5) + 20);
+    game_tick(0.05f, NULL);                  /* exposed lily can be knocked away */
+    assert(!game_debug_lily_at(2, 5) && game_debug_plant_type(1, 2) == 0);
+    game_debug_finish_wave(); game_tick(0, NULL);
+    assert(game_phase() == GAME_LEVEL_CLEAR && game_level() == 5);
+    game_input_press(640, 510);
+    assert(game_phase() == GAME_PLAY && game_level() == 6);
+    seed_at(4, 1, 2);                         /* lily only works on level 5 */
+    assert(!game_debug_lily_at(1, 2));
+    seed_at(0, 1, 2);                         /* water becomes ordinary grass */
+    assert(game_debug_plant_type(1, 2) == 0);
     free(saved);
     free(bad);
 
@@ -421,6 +500,6 @@ int main(void) {
     for (int i = 0; i < 12 * 60; i++) game_tick(1.0f / 60, NULL);
     assert(game_phase() == GAME_PLAY && game_level() == 1);
 
-    puts("OK: jumper knockback, kill-completed waves, replayable level 0, saves, art and font");
+    puts("OK: water level and lilies, five drawn plants, V1-V5 saves, waves, boss and Cyrillic font");
     return 0;
 }

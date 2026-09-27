@@ -11,24 +11,24 @@ import struct
 import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
-# These are the original filenames supplied with the game. Do not resample or
-# replace the artwork; the renderer scales it when needed.
-# Roles have been confirmed by the author. In particular, the white bird is
-# Khlebushek (NOT a zombie), the brown face is the walnut, the red art is a
-# lawnmower (NOT a cherry bomb), the yellow duck is the only common enemy,
-# and the blue flower is Kirill's coin-making sunflower (NOT a snow pea).
+# Descriptive, stable names for the author's drawings. The latest Kirill and
+# duck replace their earlier versions. The two-eyed green pad and the canal
+# map are the new water-level assets. PNG pixels remain the author's own;
+# the renderer scales them when needed.
 IMAGES = [
-    ("KHLEBUSHEK", "Без названия680_20260926092924.png"),
-    ("MASK", "Без названия681_20260926093006.png"),
-    ("KIRILL", "Без названия681_20260926093232.png"),
-    ("DUCK", "Без названия681_20260926093504.png"),
-    ("ROBOT", "Без названия682_20260926094249.png"),
-    ("PEA", "Без названия684_20260926094420.png"),
-    ("WALL", "Без названия685_20260926094527.png"),
-    ("SUNFLOWER", "Без названия685_20260926094634.png"),
-    ("JUMPER", "Без названия684_20260926162008.png"),
-    ("MAP", "Без названия687_20260926095025.png"),
-    ("MOWER", "Без названия688_20260926095109.png"),
+    ("KHLEBUSHEK", "assets/art/khlebushek.png"),
+    ("MASK", "assets/art/dima-mask.png"),
+    ("KIRILL", "assets/art/kirill.png"),
+    ("DUCK", "assets/art/zombie-duck.png"),
+    ("ROBOT", "assets/art/queen-robot.png"),
+    ("PEA", "assets/art/peashooter.png"),
+    ("WALL", "assets/art/walnut.png"),
+    ("SUNFLOWER", "assets/art/coin-sunflower.png"),
+    ("JUMPER", "assets/art/jumper-fighter.png"),
+    ("LILY", "assets/art/lily-pad.png"),
+    ("MAP", "assets/art/lawn-map.png"),
+    ("WATER_MAP", "assets/art/water-map.png"),
+    ("MOWER", "assets/art/lawnmower.png"),
 ]
 
 

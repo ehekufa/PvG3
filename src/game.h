@@ -28,7 +28,8 @@ int game_wave_total(void);
 /* Versioned, checksummed campaign snapshot. Includes the board, wave,
  * coins, enemies and unlocked progress; load returns to the menu, where Play
  * resumes an in-progress battle. The separately saved Zen Garden is excluded.
- * Import validates the entire snapshot before changing any game state. */
+ * Import validates the entire snapshot before changing any game state and
+ * also accepts the shorter V1-V4 files from earlier APKs. */
 size_t game_save_size(void);
 int game_save_export(void *dst, size_t capacity);
 int game_save_import(const void *src, size_t length);
@@ -45,7 +46,7 @@ void game_tick(float dt, uint32_t *fb);
 void game_debug_snapshot(void);
 
 /* Zen Garden layout is stored by the Android host in the app's private data.
- * 0 = empty plot, 1..4 = one of Kirill's four drawn plants. */
+ * 0 = empty plot, 1..5 = one of Kirill's five drawn plants. Old IDs 1..4 stay. */
 #define GAME_GARDEN_CELLS 45
 void game_garden_export(uint8_t cells[GAME_GARDEN_CELLS]);
 int game_garden_import(const uint8_t cells[GAME_GARDEN_CELLS]);
@@ -69,6 +70,7 @@ float game_debug_first_coin_y(void);
 float game_debug_first_coin_target_y(void);
 float game_debug_mower_x(int row);
 int game_debug_plant_type(int row, int col);
+int game_debug_lily_at(int row, int col);
 int game_debug_seed_count(void);
 int game_debug_first_enemy_type(void);
 int game_debug_mower_used(int row);
