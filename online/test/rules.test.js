@@ -46,7 +46,9 @@ test('coins are collected, not sky income; wave ends only after all ducks die', 
   for (let i=0;i<101;i++) stepMatch(s,.05);
   assert.equal(s.plantCash,200);
   assert.equal(s.coins.length,1);
-  assert(applyCommand(s,'plants',{kind:'coin',id:s.coins[0].id}));
+  // Guest's `id` is the player identifier; the coin number uses coinId.
+  assert(applyCommand(s,'plants',{kind:'coin',id:'b'.repeat(32),
+                                  coinId:s.coins[0].id}));
   assert.equal(s.plantCash,225);
   assert.equal(s.coins.length,0);
   assert(applyCommand(s,'zombies',{kind:'spawn',type:0,row:4}));

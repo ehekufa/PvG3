@@ -1726,6 +1726,8 @@ static void draw_online_rooms(void) {
     int page = online_page;
     if (page * 8 >= count) page = 0;
     if (online_view.busy) draw_text(350, 273, 2, COL(116, 76, 36), "ПОДКЛЮЧАЕМСЯ...");
+    else if (!online_view.connected && !online_view.notice[0])
+        draw_text(350, 273, 2, COL(116, 76, 36), "ЗАГРУЖАЕМ КОМНАТЫ...");
     else if (online_view.notice[0]) {
         int size = text_w(2, online_view.notice) < 730 ? 2 : 1;
         draw_text(362, 276, size, COL(160, 62, 43), online_view.notice);
