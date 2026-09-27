@@ -120,8 +120,10 @@ jobs:
           name: PvG3-Android-arm64-arm32
           path: PvG3.apk
 
-      # Never touch the real database on ordinary pushes. A manual run with
-      # firebase_smoke=true checks browser CORS and cleans up its own room.
-      - name: Probe live Firebase (manual only)
-        if: github.event_name == 'workflow_dispatch' && inputs.firebase_smoke
+      # Never touch the real database on ordinary pushes. A manually opted-in
+      # run (or the one-off [firebase-smoke] push) creates and removes only its
+      # own random test room. Run AFTER uploading the APK so failures don't
+      # prevent downloading the build.
+      - name: Probe live Firebase (explicit opt-in only)
+        if: (github.event_name == 'workflow_dispatch' && inputs.firebase_smoke) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[firebase-smoke]'))
         run: node online/test/live-smoke.mjs --write
