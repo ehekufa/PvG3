@@ -201,13 +201,20 @@ static float rndf(void) { return (float)(rnd() & 0xFFFFFF) / (float)0x1000000; }
 #define ROWS 5
 #define COLS 9
 _Static_assert(ROWS * COLS == GAME_GARDEN_CELLS, "garden save size mismatch");
-#define LAWN_X 120
-#define LAWN_Y 150
-#define CELL_W 120
-#define CELL_H 108
-#define CARD_X 260
+/* The lawn leaves room for the reference's vertical packet rack at left.
+ * Cell counts stay 9x5; older saves are converted when they are imported. */
+#define LAWN_X 250
+#define LAWN_Y 120
+#define CELL_W 114
+#define CELL_H 112
+#define CARD_X 260             /* horizontal packets in the Zen Garden */
 #define CARD_STEP 160
 #define CARD_W 150
+#define BATTLE_CARD_X 20
+#define BATTLE_CARD_Y 146
+#define BATTLE_CARD_STEP 132
+#define BATTLE_CARD_W 210
+#define BATTLE_CARD_H 114
 #define BOOK_ENTRY_Y 173
 #define BOOK_ENTRY_STEP 121
 #define BOOK_ENTRY_H 112
@@ -409,7 +416,7 @@ static int spawn_boss(void) {
             Zombie *z = &zomb[i];
             z->active = 1;
             z->row = 2;
-            z->x = GAME_W - 140; /* visible at the right edge for the final fight */
+            z->x = CELL_CX(COLS - 1); /* visible at the right edge, aligned with the last cell */
             z->type = EN_ROBOT;
             z->hp = z->maxhp = 5500;
             z->speed = 10;             /* much slower than the ordinary ducks */
@@ -458,7 +465,7 @@ static void start_level(int n) {
     memset(peas, 0, sizeof(peas));
     memset(coins, 0, sizeof(coins));
     memset(parts, 0, sizeof(parts));
-    for (int r = 0; r < ROWS; r++) { mower[r].used = 0; mower[r].running = 0; mower[r].x = LAWN_X - 30; }
+    for (int r = 0; r < ROWS; r++) { mower[r].used = 0; mower[r].running = 0; mower[r].x = LAWN_X + 30; }
     for (int i = 0; i < PT_COUNT; i++) cooldown[i] = 0;
     /* Starter coins buy the first sunflower; after that it makes the income. */
     coin_balance = 250 + (n - 1) * 30;
@@ -644,7 +651,7 @@ static void update_play(float dt) {
             continue;
         }
 
-        if (z->x <= LAWN_X) { /* reached the lawn edge -> mower / lose */
+        if (z->x <= LAWN_X + 70) { /* reached the mower by the lawn edge */
             if (!mower[z->row].used) {
                 mower[z->row].used = 1; mower[z->row].running = 1;
             } else if (z->x < LAWN_X - 25) {
@@ -766,17 +773,18 @@ static void open_book(void) {
 void game_input_press(int x, int y) {
     if (x < 0 || x >= GAME_W || y < 0 || y >= GAME_H) return;
     if (phase == PH_MENU) {
-        if (inside(x, y, 440, 490, 840, 600)) {
+        if (inside(x, y, 440, 548, 840, 680)) {
             if (saved_battle) phase = PH_PLAY;
             else if (completed_mask == 0 && resume_level == 1) {
                 start_intro(0);
             } else start_level(resume_level);
-        } else if (inside(x, y, 175, 606, 475, 672)) {
-            phase = PH_SELECT;
-        } else if (inside(x, y, 490, 606, 790, 672)) {
+        } else if (inside(x, y, 90, 30, 375, 172) ||
+                   inside(x, y, 475, 38, 785, 132)) {
+            phase = PH_SELECT; /* painted map tile and levels button */
+        } else if (inside(x, y, 850, 38, 1240, 132)) {
             garden_selected = -1;
             phase = PH_GARDEN;
-        } else if (inside(x, y, 805, 606, 1105, 672)) open_book();
+        } else if (inside(x, y, 98, 568, 392, 670)) open_book();
         return;
     }
     if (phase == PH_SELECT) {
@@ -808,10 +816,10 @@ void game_input_press(int x, int y) {
         return;
     }
     if (phase == PH_GARDEN) {
-        if (inside(x, y, 915, 40, 1070, 87)) { open_book(); return; }
-        if (inside(x, y, 1080, 40, 1265, 87)) { phase = PH_MENU; return; }
-        if (inside(x, y, 915, 97, 1265, 137)) { garden_selected = PT_COUNT; return; }
-        if (y >= 46 && y <= 132)
+        if (inside(x, y, 915, 16, 1070, 63)) { open_book(); return; }
+        if (inside(x, y, 1080, 16, 1265, 63)) { phase = PH_MENU; return; }
+        if (inside(x, y, 915, 73, 1265, 116)) { garden_selected = PT_COUNT; return; }
+        if (y >= 12 && y <= 112)
             for (int i = 0; i < PT_COUNT; i++) {
                 int x0 = CARD_X + i * CARD_STEP;
                 if (x >= x0 && x <= x0 + CARD_W) {
@@ -841,8 +849,8 @@ void game_input_press(int x, int y) {
         else if (inside(x, y, 660, 460, 975, 570)) phase = PH_MENU;
         return;
     }
-    if (inside(x, y, 1140, 95, 1270, 140)) { phase = PH_MENU; return; }
-    if (inside(x, y, 900, 95, 1030, 140)) { open_book(); return; }
+    if (inside(x, y, 1100, 28, 1260, 93)) { phase = PH_MENU; return; }
+    if (inside(x, y, 925, 28, 1080, 93)) { open_book(); return; }
 
     /* Tapping a pile of sunflower coins collects all the overlapping tokens. */
     int collected = 0;
@@ -859,11 +867,11 @@ void game_input_press(int x, int y) {
     }
     if (collected) return;
 
-    /* Only packets backed by the author's drawings can be selected. */
-    if (y >= 16 && y <= 132) {
+    /* The reference's four vertical illustrated seed packets. */
+    if (x >= BATTLE_CARD_X && x <= BATTLE_CARD_X + BATTLE_CARD_W) {
         for (int i = 0; i < PT_COUNT; i++) {
-            int x0 = CARD_X + i * CARD_STEP;
-            if (x >= x0 && x <= x0 + CARD_W) {
+            int y0 = BATTLE_CARD_Y + i * BATTLE_CARD_STEP;
+            if (y >= y0 && y <= y0 + BATTLE_CARD_H) {
                 selected = (coin_balance >= PDEF[i].cost && cooldown[i] <= 0) ? i : -1;
                 return;
             }
@@ -895,27 +903,27 @@ void game_input_release(int x, int y) { (void)x; (void)y; }
 /* ------------------------------------------------------------------ */
 
 static void draw_background(void) {
-    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(37, 68, 42));
+    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(65, 105, 51));
     if (sprite_pixels[SPR_MAP]) {
-        /* The uploaded map has wood on its left and lawn on its right. Crop
-         * those separately so its path lines up with the game's nine cells. */
-        sprite_crop(SPR_MAP, 0, LAWN_Y, LAWN_X, ROWS * CELL_H,
-                    0, 0, 246, 500, 0);
+        /* Use the author's painted wooden path for the full-height packet
+         * rack, and the painted lawn for the same nine playable columns. */
+        sprite_crop(SPR_MAP, 0, 0, LAWN_X - 7, GAME_H, 0, 0, 246, 500, 0);
         sprite_crop(SPR_MAP, LAWN_X, LAWN_Y, COLS * CELL_W, ROWS * CELL_H,
                     274, 0, 226, 500, 0);
         rect_blend(LAWN_X, LAWN_Y, GAME_W - 1, LAWN_Y + ROWS * CELL_H - 1,
                    COL(35, 82, 30), 55); /* preserve the drawing, soften neon */
     } else {
-        rect(LAWN_X, LAWN_Y, GAME_W - 1, LAWN_Y + ROWS * CELL_H - 1, COL(108, 171, 73));
-        rect(0, LAWN_Y, LAWN_X - 1, LAWN_Y + ROWS * CELL_H - 1, COL(139, 84, 39));
+        rect(0, 0, LAWN_X - 8, GAME_H - 1, COL(139, 84, 39));
+        rect(LAWN_X, LAWN_Y, LAWN_X + COLS * CELL_W - 1,
+             LAWN_Y + ROWS * CELL_H - 1, COL(108, 171, 73));
     }
-    /* The same new map gets a different time-of-day tint as the levels grow. */
+    rect(LAWN_X - 7, 0, LAWN_X - 1, GAME_H - 1, COL(48, 85, 39));
+    /* Later levels keep their time-of-day tint without changing any cells. */
     if (level >= 4 && level <= 6)
         rect_blend(0, LAWN_Y, GAME_W - 1, LAWN_Y + ROWS * CELL_H - 1, COL(156, 94, 31), 32);
     if (level >= 7)
         rect_blend(0, LAWN_Y, GAME_W - 1, LAWN_Y + ROWS * CELL_H - 1,
                    COL(27, 44, 90), level == 10 ? 75 : 42);
-    /* Subtle checker and cell borders so planting on the painted map is clear. */
     for (int r = 0; r < ROWS; r++)
         for (int c = 0; c < COLS; c++) {
             int x = LAWN_X + c * CELL_W, y = LAWN_Y + r * CELL_H;
@@ -943,63 +951,80 @@ int game_wave_remaining(void) {
 
 int game_wave_total(void) { return total_zombies; }
 
+/* Shared button style is defined below; the battle header uses it too. */
+static void draw_button(int x0, int y0, int x1, int y1, const char *label, int size);
+
 static void draw_seed_bar(void) {
+    /* Mask the mowers and enemies at the edge: they belong to the lawn, not
+     * on top of the author's painted wooden packet rack. */
     if (sprite_pixels[SPR_MAP])
-        sprite_crop(SPR_MAP, 0, 0, GAME_W, 140, 0, 0, 242, 135, 0);
-    else rect(0, 0, GAME_W - 1, 140, COL(96, 64, 40));
-    rect_blend(0, 0, GAME_W - 1, 140, COL(31, 25, 30), 105);
-    rect(0, 140, GAME_W - 1, 146, COL(70, 46, 28));
-    draw_coin_icon(64, 70, 26);
-    draw_text(105, 25, 2, COL(255, 223, 131), "МОНЕТЫ");
-    draw_int(105, 53, 5, COL(250, 250, 250), coin_balance);
-    /* Four illustrated packets; the blue sunflower still makes coins. */
+        sprite_crop(SPR_MAP, 0, 0, LAWN_X - 7, GAME_H, 0, 0, 246, 500, 0);
+    else rect(0, 0, LAWN_X - 8, GAME_H - 1, COL(139, 84, 39));
+    rect(LAWN_X - 7, 0, LAWN_X - 1, GAME_H - 1, COL(48, 85, 39));
+    /* Coins and seed packets live on the left of the lawn, as in the sketch;
+     * nothing in this HUD covers the first row of playable cells. */
+    rect_blend(0, 0, LAWN_X - 8, 130, COL(53, 35, 27), 165);
+    rect(12, 12, LAWN_X - 19, 131, COL(56, 38, 29));
+    rect(17, 17, LAWN_X - 24, 126, COL(120, 89, 56));
+    draw_coin_icon(60, 71, 26);
+    draw_text(101, 37, 2, COL(255, 226, 147), "МОНЕТЫ");
+    draw_int(101, 67, 5, COL(255, 252, 220), coin_balance);
     for (int i = 0; i < PT_COUNT; i++) {
-        int x0 = CARD_X + i * CARD_STEP;
+        int x0 = BATTLE_CARD_X, y0 = BATTLE_CARD_Y + i * BATTLE_CARD_STEP;
         int affordable = coin_balance >= PDEF[i].cost && cooldown[i] <= 0;
-        uint32_t border = selected == i ? COL(255, 234, 70) : COL(65, 44, 31);
-        rect(x0 - 3, 15, x0 + CARD_W + 3, 135, border);
-        rect(x0, 18, x0 + CARD_W, 132, COL(236, 224, 188));
-        rect(x0, 18, x0 + CARD_W, 24, PDEF[i].body);
-        sprite_draw(PDEF[i].sprite, x0 + (CARD_W - 68) / 2, 26, 68, 68, 0);
-        draw_text_c(x0 + CARD_W / 2, 95, 2, COL(64, 42, 29), PDEF[i].short_name);
-        draw_int(x0 + CARD_W / 2 - 13, 115, 2, COL(64, 42, 29), PDEF[i].cost);
-        if (!affordable) rect_blend(x0, 18, x0 + CARD_W, 132, COL(10, 10, 25), 115);
+        uint32_t border = selected == i ? COL(255, 225, 77) : COL(61, 43, 32);
+        rect(x0 - 3, y0 - 3, x0 + BATTLE_CARD_W + 3,
+             y0 + BATTLE_CARD_H + 3, border);
+        rect(x0, y0, x0 + BATTLE_CARD_W, y0 + BATTLE_CARD_H, COL(235, 218, 170));
+        rect(x0 + 4, y0 + 4, x0 + BATTLE_CARD_W - 4, y0 + 75,
+             COL(247, 235, 203));
+        rect(x0 + 4, y0 + 4, x0 + 9, y0 + 75, PDEF[i].body);
+        sprite_draw(PDEF[i].sprite, x0 + 71, y0 + 4, 68, 68, 0);
+        draw_text_c(x0 + BATTLE_CARD_W / 2, y0 + 73, 2,
+                    COL(68, 44, 31), PDEF[i].short_name);
+        draw_coin_icon(x0 + 81, y0 + 103, 9);
+        draw_int(x0 + 102, y0 + 91, 2, COL(79, 49, 24), PDEF[i].cost);
+        if (!affordable) rect_blend(x0, y0, x0 + BATTLE_CARD_W,
+                                     y0 + BATTLE_CARD_H, COL(21, 23, 30), 95);
         if (cooldown[i] > 0) {
             float frac = cooldown[i] / PDEF[i].recharge;
-            rect_blend(x0, 18, x0 + CARD_W, 18 + (int)(114 * frac), COL(10, 10, 20), 115);
+            rect_blend(x0, y0, x0 + BATTLE_CARD_W,
+                       y0 + (int)(BATTLE_CARD_H * frac), COL(20, 20, 28), 95);
         }
     }
-    /* The book pauses play without losing the current level. */
-    rect(900, 95, 1030, 139, COL(92, 66, 44));
-    rect(903, 98, 1027, 136, COL(176, 133, 82));
-    draw_text_c(965, 107, 3, COL(255, 247, 217), "КНИГА");
-    /* Defeated opponents advance the wave, not the clock. Robot health
-     * replaces wave progress only after all of level ten's ducks are gone. */
+
+    if (sprite_pixels[SPR_MAP])
+        sprite_crop(SPR_MAP, LAWN_X, 0, GAME_W - LAWN_X, LAWN_Y,
+                    0, 0, 242, 135, 0);
+    else rect(LAWN_X, 0, GAME_W - 1, LAWN_Y - 1, COL(98, 64, 39));
+    rect_blend(LAWN_X, 0, GAME_W - 1, LAWN_Y - 1, COL(29, 27, 31), 143);
+    rect(LAWN_X, LAWN_Y - 5, GAME_W - 1, LAWN_Y - 1, COL(77, 54, 32));
+    /* Defeated enemies fill the wave meter; then the boss meter shows HP. */
     int defeated = total_zombies - game_wave_remaining();
     if (defeated < 0) defeated = 0;
     if (defeated > total_zombies) defeated = total_zombies;
-    int bar = total_zombies ? defeated * 188 / total_zombies : 0;
+    int bar = total_zombies ? defeated * 300 / total_zombies : 0;
     char progress[24];
     snprintf(progress, sizeof(progress), "%d/%d", defeated, total_zombies);
     if (boss_phase) {
         for (int i = 0; i < ZMAX; i++)
             if (zomb[i].active && zomb[i].type == EN_ROBOT) {
                 float health = fmaxf(0, fminf(1, zomb[i].hp / zomb[i].maxhp));
-                bar = (int)(188 * health);
+                bar = (int)(300 * health);
                 snprintf(progress, sizeof(progress), "%d%%", (int)ceilf(100 * health));
                 break;
             }
     }
-    draw_text(1055, 9, 3, COL(255, 230, 175), boss_phase ? "РОБОТ" : "ВОЛНА");
-    draw_text(1190, 12, 2, COL(255, 245, 165), progress);
-    rect(1055, 43, 1245, 58, COL(42, 29, 25));
-    if (bar > 0) rect(1056, 44, 1056 + bar, 57,
-                      boss_phase ? COL(210, 72, 76) : COL(244, 139, 62));
-    draw_text(1055, 70, 3, COL(245, 240, 211), "УРОВЕНЬ");
-    draw_int(1210, 70, 3, COL(255, 245, 165), level);
-    rect(1140, 99, 1265, 137, COL(55, 49, 58));
-    rect(1143, 102, 1262, 134, COL(108, 84, 64));
-    draw_text_c(1202, 108, 3, COL(255, 242, 210), "МЕНЮ");
+    draw_text(282, 20, 3, COL(255, 232, 181), boss_phase ? "РОБОТ" : "ВОЛНА");
+    draw_text(462, 24, 2, COL(255, 247, 207), progress);
+    rect(281, 65, 585, 89, COL(33, 28, 29));
+    if (bar > 0) rect(283, 67, 283 + bar, 87,
+                      boss_phase ? COL(220, 74, 75) : COL(238, 149, 61));
+    draw_text(638, 20, 3, COL(255, 238, 195), "УРОВЕНЬ");
+    draw_int(829, 20, 3, COL(255, 238, 164), level);
+    draw_text(641, 69, 2, COL(250, 223, 172), LEVEL_NAMES[level - 1]);
+    draw_button(925, 28, 1080, 88, "КНИГА", 3);
+    draw_button(1100, 28, 1260, 88, "МЕНЮ", 3);
 }
 
 /* UI: all buttons have real hit rectangles handled in game_input_press. */
@@ -1038,32 +1063,48 @@ static void draw_kirill(int cx, int feet_y, int size) {
     draw_text_c(cx, feet_y + 8, 3, COL(255, 239, 197), "КИРИЛЛ");
 }
 
-static void draw_menu(void) {
-    draw_background();
-    rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(14, 23, 31), 105);
-    rect_blend(36, 35, 1244, 211, COL(18, 25, 36), 217);
-    draw_text_c(640, 60, 7, COL(255, 229, 157), "РАСТЕНИЯ ПРОТИВ ГУСЕЙ");
-    draw_text_c(640, 146, 4, COL(239, 240, 224), "ИСТОРИЯ ХЛЕБУШКА - 10 УРОВНЕЙ");
+static void draw_menu_hero(int image, int cx, int feet_y, int size,
+                           const char *name) {
+    ellipse(cx, feet_y - 2, size / 2 - 20, 13, COL(111, 111, 107));
+    sprite_draw(image, cx - size / 2, feet_y - size, size, size, 0);
+    draw_text_c(cx, feet_y + 8, 3, COL(45, 46, 44), name);
+}
 
-    draw_khlebushek(160, 466, 170, 0);
-    draw_dima(345, 460, 190);
-    draw_kirill(939, 463, 190);
-    ellipse(1091, 473, 116, 13, COL(29, 53, 35));
-    sprite_draw(SPR_ROBOT, 980, 226, 240, 240, 0);
-    draw_text_c(1100, 473, 3, COL(255, 220, 168), "КОРОЛЕВА");
-    if (saved_battle || completed_mask != 0) {
-        char status[96];
-        snprintf(status, sizeof(status), "ПРОЙДЕНО %d / 10. ИГРАТЬ: УРОВЕНЬ %d",
-                 game_completed_level(), resume_level);
-        rect_blend(430, 445, 850, 482, COL(17, 26, 34), 220);
-        draw_text_c(640, 450, 2, COL(255, 231, 170), status);
-    }
-    draw_button(440, 490, 840, 600, "ИГРАТЬ", 8);
-    draw_button(175, 606, 475, 672, "УРОВНИ", 4);
-    draw_button(490, 606, 790, 672, "САД ДЗЕН", 4);
-    draw_button(805, 606, 1105, 672, "КНИГА", 4);
-    draw_text_c(640, 689, 2, COL(255, 242, 204),
-                "АВТОСОХРАНЕНИЕ. ВСЕ РАСТЕНИЯ СОЗДАЛ КИРИЛЛ.");
+static void draw_menu(void) {
+    /* Match the gray title sketch: just the three author's heroes. The
+     * Queen's robot is revealed in the FINAL level, not on this screen. */
+    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(173, 176, 173));
+    rect(0, 508, GAME_W - 1, GAME_H - 1, COL(151, 155, 150));
+    rect(0, 508, GAME_W - 1, 511, COL(123, 128, 121));
+    rect(83, 25, 389, 171, COL(64, 65, 57));
+    rect(88, 30, 384, 166, COL(240, 221, 179));
+    sprite_crop(SPR_MAP, 94, 36, 284, 94, 0, 0, 500, 500, 0);
+    rect_blend(94, 112, 378, 130, COL(44, 39, 28), 170);
+    draw_text_c(235, 137, 3, COL(67, 50, 37), "КАРТА УРОВНЕЙ");
+    draw_button(475, 38, 785, 127, "УРОВНИ 1-10", 4);
+    rect(846, 34, 1244, 137, COL(56, 74, 46));
+    rect(852, 40, 1238, 131, COL(151, 180, 118));
+    rect(858, 46, 1232, 125, COL(190, 210, 155));
+    sprite_draw(SPR_SUNFLOWER, 871, 45, 78, 78, 0);
+    draw_text_c(1093, 65, 5, COL(43, 66, 39), "САД ДЗЕН");
+
+    draw_text_c(640, 177, 6, COL(52, 53, 49), "РАСТЕНИЯ ПРОТИВ ГУСЕЙ");
+    draw_text_c(640, 231, 3, COL(68, 69, 64), "ИСТОРИЯ ХЛЕБУШКА");
+    draw_menu_hero(SPR_KHLEBUSHEK, 256, 491, 212, "ХЛЕБУШЕК");
+    draw_menu_hero(SPR_MASK, 640, 491, 235, "ДИМА");
+    draw_menu_hero(SPR_KIRILL, 1012, 491, 225, "КИРИЛЛ");
+
+    draw_button(98, 568, 392, 665, "КНИГА", 5);
+    draw_button(440, 548, 840, 674, "СТАРТ", 8);
+    rect(887, 563, 1229, 667, COL(104, 106, 99));
+    rect(893, 569, 1223, 661, COL(210, 211, 199));
+    char status[60];
+    snprintf(status, sizeof(status), "ПРОЙДЕНО: %d / 10", game_completed_level());
+    draw_text_c(1058, 583, 3, COL(62, 67, 56), status);
+    snprintf(status, sizeof(status), "СТАРТ: УРОВЕНЬ %d", resume_level);
+    draw_text_c(1058, 621, 2, COL(67, 69, 60), status);
+    draw_text_c(640, 689, 2, COL(44, 46, 42),
+                "АВТОСОХРАНЕНИЕ. РАСТЕНИЯ СОЗДАЛ КИРИЛЛ.");
 }
 
 /* Level 0 replays the story; any of the ten waves can also be replayed.
@@ -1110,28 +1151,29 @@ static void draw_garden(void) {
                            sinf(global_t * 2 + r + c));
 
     if (sprite_pixels[SPR_MAP])
-        sprite_crop(SPR_MAP, 0, 0, GAME_W, 140, 0, 0, 242, 135, 0);
-    else rect(0, 0, GAME_W - 1, 140, COL(96, 64, 40));
-    rect_blend(0, 0, GAME_W - 1, 140, COL(31, 25, 30), 105);
-    rect(0, 140, GAME_W - 1, 146, COL(70, 46, 28));
-    draw_text(28, 12, 4, COL(255, 229, 157), "САД ДЗЕН");
-    draw_text(28, 71, 2, COL(255, 241, 193), "СОЗДАНИЯ КИРИЛЛА");
+        sprite_crop(SPR_MAP, LAWN_X, 0, GAME_W - LAWN_X, LAWN_Y,
+                    0, 0, 242, 135, 0);
+    else rect(LAWN_X, 0, GAME_W - 1, LAWN_Y - 1, COL(96, 64, 40));
+    rect_blend(0, 0, GAME_W - 1, LAWN_Y - 1, COL(31, 25, 30), 148);
+    rect(LAWN_X, LAWN_Y - 5, GAME_W - 1, LAWN_Y - 1, COL(70, 46, 28));
+    draw_text(28, 13, 4, COL(255, 229, 157), "САД ДЗЕН");
+    draw_text(28, 68, 2, COL(255, 241, 193), "СОЗДАНИЯ КИРИЛЛА");
 
     for (int i = 0; i < PT_COUNT; i++) {
         int x0 = CARD_X + i * CARD_STEP;
         uint32_t border = garden_selected == i ? COL(255, 225, 82) : COL(65, 44, 31);
-        rect(x0 - 3, 43, x0 + CARD_W + 3, 135, border);
-        rect(x0, 46, x0 + CARD_W, 132, COL(236, 224, 188));
-        rect(x0, 46, x0 + CARD_W, 51, PDEF[i].body);
-        sprite_draw(PDEF[i].sprite, x0 + (CARD_W - 62) / 2, 51, 62, 62, 0);
-        draw_text_c(x0 + CARD_W / 2, 113, 2, COL(64, 42, 29), PDEF[i].short_name);
+        rect(x0 - 3, 9, x0 + CARD_W + 3, 115, border);
+        rect(x0, 12, x0 + CARD_W, 112, COL(236, 224, 188));
+        rect(x0, 12, x0 + CARD_W, 18, PDEF[i].body);
+        sprite_draw(PDEF[i].sprite, x0 + (CARD_W - 66) / 2, 19, 66, 66, 0);
+        draw_text_c(x0 + CARD_W / 2, 86, 2, COL(64, 42, 29), PDEF[i].short_name);
     }
-    draw_button(915, 40, 1070, 87, "КНИГА", 3);
-    draw_button(1080, 40, 1265, 87, "В МЕНЮ", 2);
-    rect(915, 97, 1265, 137, garden_selected == PT_COUNT ?
+    draw_button(915, 16, 1070, 58, "КНИГА", 2);
+    draw_button(1080, 16, 1265, 58, "В МЕНЮ", 2);
+    rect(915, 73, 1265, 116, garden_selected == PT_COUNT ?
          COL(255, 225, 82) : COL(66, 44, 31));
-    rect(918, 100, 1262, 134, COL(158, 113, 66));
-    draw_text_c(1090, 105, 3, COL(255, 240, 198), "УБРАТЬ");
+    rect(918, 76, 1262, 113, COL(158, 113, 66));
+    draw_text_c(1090, 82, 3, COL(255, 240, 198), "УБРАТЬ");
     rect_blend(95, 679, 1185, 717, COL(13, 29, 22), 220);
     draw_text_c(640, 691, 2, COL(255, 244, 205),
                 "ВЫБЕРИ РАСТЕНИЕ И КЛЕТКУ. В САДУ ВСЁ БЕСПЛАТНО.");
@@ -1140,22 +1182,25 @@ static void draw_garden(void) {
 /* Interactive plant book: the list and details come from the SAME plant
  * definitions as the packets and Zen Garden, so it cannot list fake plants. */
 static void draw_book(void) {
-    draw_background();
-    rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(13, 23, 34), 170);
-    draw_text_c(620, 28, 5, COL(255, 224, 151), "УМНАЯ КНИГА КИРИЛЛА");
+    /* Open spread like the sketch: parchment index, orange description page. */
+    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(98, 77, 62));
+    rect(0, 0, GAME_W - 1, 105, COL(132, 106, 80));
+    draw_text_c(565, 28, 5, COL(255, 232, 188), "УМНАЯ КНИГА КИРИЛЛА");
     draw_button(1045, 18, 1265, 85, "НАЗАД", 4);
-    rect(91, 114, 1189, 687, COL(53, 38, 38));
-    rect(99, 121, 1181, 680, COL(223, 199, 151));
-    rect(108, 129, 1172, 671, COL(246, 232, 195));
-    rect(550, 128, 560, 671, COL(144, 103, 75));
+    rect(76, 121, 1209, 697, COL(54, 39, 34));
+    rect(84, 115, 1201, 686, COL(99, 62, 44));
+    rect(92, 122, 557, 677, COL(246, 233, 200));
+    rect(567, 122, 1192, 677, COL(223, 142, 79));
+    rect(550, 122, 568, 677, COL(150, 91, 56));
+    rect(554, 131, 564, 667, COL(190, 124, 77));
     draw_text(160, 135, 3, COL(93, 57, 39), "РАСТЕНИЯ КИРИЛЛА");
 
     for (int i = 0; i < PT_COUNT; i++) {
         int y0 = BOOK_ENTRY_Y + i * BOOK_ENTRY_STEP;
         rect(160, y0, 540, y0 + BOOK_ENTRY_H,
-             book_selected == i ? COL(184, 119, 56) : COL(166, 143, 111));
+             book_selected == i ? COL(173, 93, 42) : COL(178, 147, 108));
         rect(165, y0 + 5, 535, y0 + BOOK_ENTRY_H - 5,
-             book_selected == i ? COL(255, 233, 160) : COL(240, 222, 181));
+             book_selected == i ? COL(254, 209, 132) : COL(249, 233, 192));
         sprite_draw(PDEF[i].sprite, 180, y0 + 14, 80, 80, 0);
         draw_text(275, y0 + 13, 2, COL(75, 52, 33), PDEF[i].short_name);
         draw_text(275, y0 + 44, 2, COL(100, 70, 39), "ЦЕНА:");
@@ -1191,7 +1236,8 @@ static void draw_book(void) {
         draw_int(895, 495, 2, COL(126, 76, 26), (int)COIN_INTERVAL);
         draw_text(925, 495, 2, COL(88, 57, 36), "СЕК.");
     }
-    rect(580, 524, 1150, 663, COL(218, 194, 150));
+    rect(580, 524, 1150, 663, COL(147, 83, 45));
+    rect(585, 529, 1145, 658, COL(249, 193, 121));
     draw_text(598, 541, 2, COL(78, 52, 33), p->description);
     draw_text(598, 573, 2, COL(78, 52, 33), p->detail);
     draw_text(598, 618, 3, COL(116, 65, 36), "СОЗДАТЕЛЬ: КИРИЛЛ");
@@ -1341,12 +1387,11 @@ int game_garden_import(const uint8_t cells[GAME_GARDEN_CELLS]) {
     return 1;
 }
 
-/* The garden remains in pvg3-garden.v1. Campaign V3 intentionally has the
- * EXACT SAME byte layout as V1/V2: fourth seed cooldown reuses the former
- * boss countdown field; the first three cooldown slots stay in place. This
- * keeps old in-progress boards and completion data readable when we switch
- * from a timer to a kill-completed wave. No pointers or random bytes persist.
- * All fields are 32-bit integers/floats on the supported little-endian ABIs. */
+/* The garden remains in pvg3-garden.v1. Campaign V4 keeps the EXACT SAME
+ * layout as V1-V3: the fourth cooldown reuses the old boss countdown field.
+ * V4 marks the new field geometry; V1-V3 world positions are projected onto
+ * it on import. Grid cells and IDs themselves are unchanged. No pointers or
+ * random bytes persist; integers/floats are 32-bit on supported Android ABIs. */
 _Static_assert(sizeof(int) == 4 && sizeof(float) == 4, "save needs 32-bit fields");
 typedef struct {
     uint32_t magic, version;
@@ -1366,10 +1411,20 @@ typedef struct {
 } SaveState;
 _Static_assert(sizeof(SaveState) == 9988 &&
                offsetof(SaveState, checksum) == sizeof(SaveState) - 4,
-               "Keep the campaign V1/V2 save layout readable on both Android ABIs");
+               "Keep the campaign V1-V4 save layout readable on both Android ABIs");
 
 #define SAVE_MAGIC 0x33477650u /* little-endian bytes 'P', 'v', 'G', '3' */
-#define SAVE_VERSION 3u
+#define SAVE_VERSION 4u
+
+/* Campaigns saved before the vertical-card UI used the lawn at (120,150)
+ * with 120x108 cells. Preserve each entity's position within its cell when
+ * loading: otherwise ducks, projectiles, coins and mowers would teleport. */
+static float saved_world_x(float x) {
+    return LAWN_X + (x - 120.0f) * (float)CELL_W / 120.0f;
+}
+static float saved_world_y(float y) {
+    return LAWN_Y + (y - 150.0f) * (float)CELL_H / 108.0f;
+}
 
 static uint32_t save_checksum(const SaveState *s) {
     const uint8_t *p = (const uint8_t *)s;
@@ -1420,7 +1475,8 @@ int game_save_import(const void *src, size_t length) {
     SaveState s;
     memcpy(&s, src, sizeof(s)); /* src need not be suitably aligned */
     if (s.magic != SAVE_MAGIC ||
-        (s.version != 1u && s.version != 2u && s.version != SAVE_VERSION) ||
+        (s.version != 1u && s.version != 2u && s.version != 3u &&
+         s.version != SAVE_VERSION) ||
         s.checksum != save_checksum(&s) ||
         s.completed < 0 ||
         (s.version == 1u && s.completed > MAX_LEVEL) ||
@@ -1432,12 +1488,12 @@ int game_save_import(const void *src, size_t length) {
         if (s.level != s.resume || (s.boss_phase != 0 && s.boss_phase != 1) ||
             (s.boss_spawned != 0 && s.boss_spawned != 1) ||
             (s.boss_phase && (s.level != MAX_LEVEL || !s.boss_spawned)) ||
-            (s.version < SAVE_VERSION &&
+            (s.version <= 2u &&
              (!isfinite(s.old_level_left) || s.old_level_left < 0 ||
               s.old_level_left > 45 + s.level * 5 ||
               !isfinite(s.jumper_cooldown) || s.jumper_cooldown < 0 ||
               s.jumper_cooldown > 100)) ||
-            (s.version == SAVE_VERSION &&
+            (s.version >= 3u &&
              (!isfinite(s.jumper_cooldown) ||
               s.jumper_cooldown > PDEF[PT_JUMPER].recharge + 1)) ||
             s.coin_balance < 0 || s.coin_balance > 1000000 ||
@@ -1481,6 +1537,31 @@ int game_save_import(const void *src, size_t length) {
                 !isfinite(c->target_y) || !isfinite(c->life) ||
                 !isfinite(c->bob) || !isfinite(c->vy))) return 0;
         }
+        if (s.version < SAVE_VERSION) {
+            for (int r = 0; r < ROWS; r++) {
+                /* An unused mower follows the new lawn edge; a sweeping
+                 * mower must keep its in-progress position. */
+                s.mower[r].x = !s.mower[r].used && !s.mower[r].running ?
+                    LAWN_X + 30 : saved_world_x(s.mower[r].x);
+                if (!isfinite(s.mower[r].x)) return 0;
+            }
+            for (int i = 0; i < ZMAX; i++) if (s.zomb[i].active) {
+                s.zomb[i].x = saved_world_x(s.zomb[i].x);
+                if (!isfinite(s.zomb[i].x)) return 0;
+            }
+            for (int i = 0; i < PEAMAX; i++) if (s.peas[i].active) {
+                s.peas[i].x = saved_world_x(s.peas[i].x);
+                s.peas[i].y = saved_world_y(s.peas[i].y);
+                if (!isfinite(s.peas[i].x) || !isfinite(s.peas[i].y)) return 0;
+            }
+            for (int i = 0; i < COINMAX; i++) if (s.coins[i].active) {
+                s.coins[i].x = saved_world_x(s.coins[i].x);
+                s.coins[i].y = saved_world_y(s.coins[i].y);
+                s.coins[i].target_y = saved_world_y(s.coins[i].target_y);
+                if (!isfinite(s.coins[i].x) || !isfinite(s.coins[i].y) ||
+                    !isfinite(s.coins[i].target_y)) return 0;
+            }
+        }
     }
     completed_mask = s.version == 1u ? (1u << s.completed) - 1u : (unsigned)s.completed;
     resume_level = s.resume;
@@ -1498,7 +1579,7 @@ int game_save_import(const void *src, size_t length) {
         banner_t = s.banner_t;
         RNG = s.rng;
         memcpy(cooldown, s.cooldown, sizeof(s.cooldown));
-        cooldown[PT_JUMPER] = s.version == SAVE_VERSION ? s.jumper_cooldown : 0;
+        cooldown[PT_JUMPER] = s.version >= 3u ? s.jumper_cooldown : 0;
         memcpy(grid, s.grid, sizeof(grid));
         memcpy(zomb, s.zomb, sizeof(zomb));
         memcpy(peas, s.peas, sizeof(peas));
@@ -1553,6 +1634,29 @@ float game_debug_boss_x(void) {
 void game_debug_boss_set_x(float x) {
     for (int i = 0; i < ZMAX; i++)
         if (zomb[i].type == EN_ROBOT && zomb[i].active) zomb[i].x = x;
+}
+float game_debug_first_pea_x(void) {
+    for (int i = 0; i < PEAMAX; i++) if (peas[i].active) return peas[i].x;
+    return -1;
+}
+float game_debug_first_pea_y(void) {
+    for (int i = 0; i < PEAMAX; i++) if (peas[i].active) return peas[i].y;
+    return -1;
+}
+float game_debug_first_coin_x(void) {
+    for (int i = 0; i < COINMAX; i++) if (coins[i].active) return coins[i].x;
+    return -1;
+}
+float game_debug_first_coin_y(void) {
+    for (int i = 0; i < COINMAX; i++) if (coins[i].active) return coins[i].y;
+    return -1;
+}
+float game_debug_first_coin_target_y(void) {
+    for (int i = 0; i < COINMAX; i++) if (coins[i].active) return coins[i].target_y;
+    return -1;
+}
+float game_debug_mower_x(int row) {
+    return (unsigned)row < ROWS ? mower[row].x : -1;
 }
 int game_debug_plant_type(int row, int col) {
     if ((unsigned)row >= ROWS || (unsigned)col >= COLS) return PT_NONE;

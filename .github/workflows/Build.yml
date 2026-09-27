@@ -20,7 +20,7 @@ jobs:
           test -d "$ANDROID_NDK_ROOT"
           echo "SDK=$ANDROID_HOME NDK=$ANDROID_NDK_ROOT"
 
-      - name: Verify artwork, licensed font, waves, jumper and save/resume
+      - name: Verify artwork, licensed font, UI, saves and gameplay
         run: |
           python3 tools/pack_sprites.py
           python3 tools/pack_font.py
@@ -31,6 +31,9 @@ jobs:
           gcc -std=c11 -O2 -Wall -Wextra -Werror -DGAME_TEST -Isrc \
             src/game.c src/font.c tools/sim_test.c -o sim_test -lm
           ./sim_test
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -Isrc \
+            src/game.c src/font.c tools/host_test.c -o host_test -lm
+          ./host_test
 
       - name: Build native library (both ABIs)
         run: |

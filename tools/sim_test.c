@@ -11,18 +11,21 @@
 #include "game.h"
 #include "font.h"
 
-/* These must match the four battle/garden card hit boxes in game.c. */
-static int card_x(int type) { return 260 + type * 160 + 75; }
-static int cell_x(int col) { return 120 + col * 120 + 60; }
-static int cell_y(int row) { return 150 + row * 108 + 54; }
+/* Match the battle sidebar, the garden header and the 9x5 lawn. */
+static int garden_card_x(int type) { return 260 + type * 160 + 75; }
+static int battle_card_y(int type) { return 146 + type * 132 + 57; }
+static int cell_x(int col) { return 250 + col * 114 + 57; }
+static int cell_y(int row) { return 120 + row * 112 + 56; }
+static float migrated_x(float x) { return 250 + (x - 120) * 114 / 120; }
+static float migrated_y(float y) { return 120 + (y - 150) * 112 / 108; }
 
 static void seed_at(int type, int row, int col) {
-    game_input_press(card_x(type), 70);
+    game_input_press(125, battle_card_y(type));
     game_input_press(cell_x(col), cell_y(row));
 }
 
 static void garden_at(int type, int row, int col) {
-    game_input_press(card_x(type), 70);
+    game_input_press(garden_card_x(type), 70);
     game_input_press(cell_x(col), cell_y(row));
 }
 
@@ -34,17 +37,20 @@ static void advance(float seconds) {
     }
 }
 
-/* V1/V2 campaign files had the same byte layout, with two timer floats where
- * V3 now stores reserved space and Jumper cooldown. Rewrite hash for tests. */
+/* All campaign versions share the exact same layout. V1/V2 used the two
+ * floats as timers; V3 had a Jumper cooldown; V4 changes world coordinates.
+ * This tests validation, old completion semantics and coordinate migration. */
 static void make_legacy_save(uint8_t *bytes, size_t length,
                              uint32_t version, uint32_t completed) {
     float old_level_left = 30.0f, old_boss_left = 90.0f;
     uint32_t hash = 2166136261u;
-    assert(version == 1 || version == 2);
+    assert(version >= 1 && version <= 3);
     memcpy(bytes + 4, &version, 4);
     memcpy(bytes + 8, &completed, 4);
-    memcpy(bytes + 24, &old_level_left, 4);
-    memcpy(bytes + 28, &old_boss_left, 4);
+    if (version <= 2) {
+        memcpy(bytes + 24, &old_level_left, 4);
+        memcpy(bytes + 28, &old_boss_left, 4);
+    }
     for (size_t i = 0; i < length - 4; i++)
         hash = (hash ^ bytes[i]) * 16777619u;
     memcpy(bytes + length - 4, &hash, 4);
@@ -68,9 +74,13 @@ int main(void) {
     assert(game_wave_remaining() == 8 && game_wave_total() == 8);
     game_input_press(5, 5);
     assert(game_phase() == GAME_MENU);
+    game_input_press(630, 80);               /* labeled levels button */
+    assert(game_phase() == GAME_SELECT);
+    game_input_press(1130, 50);
+    assert(game_phase() == GAME_MENU);
 
-    /* Level zero can be replayed/escaped without starting or erasing a wave. */
-    game_input_press(325, 640);              /* level selector */
+    /* The painted map also opens the selector and level 0 remains replayable. */
+    game_input_press(235, 100);              /* painted map tile */
     assert(game_phase() == GAME_SELECT);
     game_input_press(640, 600);              /* LEVEL 0: cutscene */
     assert(game_phase() == GAME_INTRO && game_level() == 0);
@@ -81,7 +91,7 @@ int main(void) {
 
     /* All FOUR illustrated plants appear in the Garden and interactive book. */
     assert(game_debug_coin_balance() == 250 && game_debug_seed_count() == 4);
-    game_input_press(625, 640);              /* garden */
+    game_input_press(1080, 85);              /* garden */
     assert(game_phase() == GAME_GARDEN);
     garden_at(2, 0, 1);                       /* Kirill's coin sunflower */
     garden_at(0, 2, 2);                       /* peashooter */
@@ -96,7 +106,7 @@ int main(void) {
     game_input_press(cell_x(2), cell_y(2));
     assert(game_debug_garden_plant_type(2, 2) == -1);
     garden_at(0, 2, 2);
-    game_input_press(985, 63);               /* garden -> book */
+    game_input_press(985, 50);               /* garden -> book */
     assert(game_phase() == GAME_BOOK);
     game_input_press(320, 173 + 3 * 121 + 34);
     assert(game_debug_book_plant() == 3);    /* Jumper's picture and 250 coins */
@@ -116,14 +126,14 @@ int main(void) {
     bad_garden[0] = 255;
     assert(!game_garden_import(bad_garden));
     assert(game_debug_garden_plant_type(4, 5) == 3);
-    game_input_press(950, 640);              /* menu -> book -> menu */
+    game_input_press(245, 610);              /* menu -> book -> menu */
     assert(game_phase() == GAME_BOOK);
     game_input_press(320, 173 + 121 + 34);
     assert(game_debug_book_plant() == 1);
     game_input_press(1130, 50);
 
     /* First Play enters the story (level 0), then Kirill leads into level 1. */
-    game_input_press(640, 540);
+    game_input_press(640, 600);
     assert(game_phase() == GAME_INTRO && game_level() == 0);
     game_tick(3.6f, NULL);                   /* first scene advances automatically */
     game_input_press(640, 620);              /* Dima -> Kirill */
@@ -132,13 +142,16 @@ int main(void) {
 
     /* Book pauses the wave. Sunflower coins are picked up, not sky income. */
     assert(game_debug_coin_balance() == 250 && game_debug_coin_count() == 0);
-    game_input_press(970, 115);
+    game_input_press(985, 55);
     game_tick(30.0f, NULL);
     assert(game_phase() == GAME_BOOK && game_wave_remaining() == 8);
     assert(game_debug_first_enemy_type() == -1);
     game_input_press(1130, 50);
     game_tick(9.0f, NULL);
     assert(game_debug_coin_count() == 0 && game_debug_coin_balance() == 250);
+    game_input_press(655, 70);              /* old horizontal packet is now HUD */
+    game_input_press(cell_x(1), cell_y(0));
+    assert(game_debug_plant_type(0, 1) == -1);
     seed_at(2, 0, 1);
     assert(game_debug_plant_type(0, 1) == 2 && game_debug_coin_balance() == 200);
     game_tick(4.9f, NULL);
@@ -171,20 +184,20 @@ int main(void) {
     assert(game_garden_import(garden));
     assert(game_save_import(saved, len));
     assert(game_phase() == GAME_MENU && game_resume_level() == 1);
-    game_input_press(640, 540);              /* continue, no replay/reset */
+    game_input_press(640, 600);              /* continue, no replay/reset */
     assert(game_phase() == GAME_PLAY && game_wave_remaining() == wave_saved);
     assert(game_debug_coin_balance() == 75 && game_debug_plant_type(0, 1) == 2);
     assert(game_debug_first_enemy_type() == 0);
 
     /* Rewatching level 0 from the selector cannot erase that saved battle. */
-    game_input_press(1200, 115);             /* battle -> menu */
-    game_input_press(325, 640);
+    game_input_press(1180, 55);             /* battle -> menu */
+    game_input_press(235, 100);
     game_input_press(640, 600);
     assert(game_phase() == GAME_INTRO && game_level() == 0);
     for (int i = 0; i < 3; i++) game_input_press(640, 620);
     assert(game_phase() == GAME_SELECT && game_completed_level() == 0);
     game_input_press(1130, 50);
-    game_input_press(640, 540);
+    game_input_press(640, 600);
     assert(game_phase() == GAME_PLAY && game_level() == 1);
     assert(game_wave_remaining() == wave_saved && game_debug_plant_type(1, 0) == 1);
 
@@ -194,7 +207,7 @@ int main(void) {
     make_legacy_save(bad, len, 2, 0);
     game_init();
     assert(game_save_import(bad, len));
-    game_input_press(640, 540);
+    game_input_press(640, 600);
     assert(game_phase() == GAME_PLAY && game_wave_remaining() == wave_saved);
     assert(game_debug_plant_type(0, 1) == 2 && game_debug_coin_balance() == 75);
 
@@ -206,7 +219,7 @@ int main(void) {
     assert(game_save_export(saved, len));
     game_init();
     assert(game_save_import(saved, len));
-    game_input_press(640, 540);
+    game_input_press(640, 600);
     assert(game_phase() == GAME_PLAY && game_level() == 2);
     assert(game_wave_total() == 11 && game_wave_remaining() == 11);
     assert(game_debug_plant_type(0, 0) == -1);
@@ -238,7 +251,7 @@ int main(void) {
     assert(game_debug_plant_type(1, 8) == 3);
     game_tick(0.05f, NULL);
     assert(game_debug_plant_type(1, 8) == -1 && game_debug_boss_alive());
-    assert(game_debug_boss_x() > start_x + 350); /* three planting cells */
+    assert(game_debug_boss_x() > start_x + 340); /* three 114px cells */
     float pushed_x = game_debug_boss_x();
     advance(10.0f);
     assert(game_phase() == GAME_PLAY && game_debug_boss_alive());
@@ -249,7 +262,7 @@ int main(void) {
     float x_saved = game_debug_boss_x();
     game_init();
     assert(game_save_import(saved, len));
-    game_input_press(640, 540);
+    game_input_press(640, 600);
     assert(game_phase() == GAME_PLAY && game_debug_boss_alive());
     assert(fabsf(game_debug_boss_x() - x_saved) < 0.001f);
     game_debug_boss_set_x(86);
@@ -283,7 +296,7 @@ int main(void) {
 
     /* A fresh install can pick level 10 directly: only that level is marked. */
     game_init();
-    game_input_press(325, 640);
+    game_input_press(235, 100);
     game_input_press(1070, 470);
     assert(game_phase() == GAME_PLAY && game_level() == 10);
     game_debug_finish_wave(); game_tick(0, NULL);
@@ -299,7 +312,7 @@ int main(void) {
     /* One early duck kill is NOT a victory while seven more still need to
      * spawn. Peashooters actually kill; killing the final duck clears at once. */
     game_init();
-    game_input_press(325, 640); game_input_press(190, 270);
+    game_input_press(235, 100); game_input_press(190, 270);
     seed_at(0, 2, 0);
     game_debug_spawn_duck(2, 500);
     advance(10.0f);
@@ -310,7 +323,7 @@ int main(void) {
 
     /* Even with spawning finished, level 10's boss waits for the LAST duck. */
     game_init();
-    game_input_press(325, 640); game_input_press(1070, 470);
+    game_input_press(235, 100); game_input_press(1070, 470);
     game_debug_finish_wave();
     game_debug_spawn_duck(2, 900);
     game_tick(0, NULL);
@@ -318,10 +331,28 @@ int main(void) {
     game_debug_finish_wave(); game_tick(0, NULL);
     assert(game_phase() == GAME_PLAY && game_debug_boss_alive());
 
+    /* A mower still sweeps the first lawn cell after the sidebar moves. */
+    game_init();
+    game_input_press(235, 100);
+    game_input_press(190, 270);
+    game_debug_spawn_duck(1, 310);
+    game_tick(0.05f, NULL);
+    assert(game_debug_mower_used(1) && game_debug_duck_x(1) == -1);
+    assert(game_phase() == GAME_PLAY && game_wave_remaining() == 7);
+    float old_sweeping_mower = game_debug_mower_x(1);
+    assert(game_save_export(saved, len));
+    memcpy(bad, saved, len);
+    make_legacy_save(bad, len, 3, 0);
+    game_init();
+    assert(game_save_import(bad, len));
+    game_input_press(640, 600);
+    assert(game_debug_mower_used(1));
+    assert(fabsf(game_debug_mower_x(1) - migrated_x(old_sweeping_mower)) < 0.01f);
+
     /* The 250-coin Jumper works against a single drawn duck. It vanishes on
      * impact and knocks that duck back exactly three cells, without a kill. */
     game_init();
-    game_input_press(325, 640);
+    game_input_press(235, 100);
     game_input_press(190, 270);              /* choose level 1, no intro */
     assert(game_phase() == GAME_PLAY && game_debug_coin_balance() == 250);
     seed_at(3, 2, 5);
@@ -330,23 +361,63 @@ int main(void) {
     assert(game_save_export(saved, len));
     game_init();
     assert(game_save_import(saved, len));
-    game_input_press(640, 540);
+    game_input_press(640, 600);
     assert(game_debug_plant_type(2, 5) == 3 && game_debug_coin_balance() == 0);
     assert(game_debug_cooldown(3) > 0);
     game_debug_spawn_duck(2, (float)cell_x(5) + 24);
     assert(game_wave_remaining() == 8);
     game_tick(0.05f, NULL);
     assert(game_debug_plant_type(2, 5) == -1);
-    assert(game_debug_duck_x(2) > cell_x(5) + 350);
+    assert(game_debug_duck_x(2) > cell_x(5) + 340);
     assert(game_wave_remaining() == 8 && game_phase() == GAME_PLAY);
     float duck_x = game_debug_duck_x(2);
     game_tick(0.05f, NULL);
     assert(game_debug_duck_x(2) < duck_x && game_debug_duck_x(2) > duck_x - 2);
+
+    /* V3 snapshots keep the binary layout but use the ORIGINAL lawn geometry.
+     * Migrate every world-space object, then re-export V4: it must not move
+     * again the next time the player resumes the same battle. */
+    game_debug_snapshot();
+    float old_boss_x = game_debug_boss_x();
+    float old_duck_x = game_debug_duck_x(4);
+    float old_pea_x = game_debug_first_pea_x();
+    float old_pea_y = game_debug_first_pea_y();
+    float old_coin_x = game_debug_first_coin_x();
+    float old_coin_y = game_debug_first_coin_y();
+    float old_coin_target = game_debug_first_coin_target_y();
+    float old_mower_x = game_debug_mower_x(0);
+    assert(old_pea_x > 0 && old_coin_x > 0 && old_duck_x > 0);
+    assert(game_save_export(saved, len));
+    memcpy(bad, saved, len);
+    make_legacy_save(bad, len, 3, 0);
+    game_init();
+    assert(game_save_import(bad, len));
+    game_input_press(640, 600);
+    assert(game_phase() == GAME_PLAY && game_level() == 10);
+    assert(fabsf(game_debug_boss_x() - migrated_x(old_boss_x)) < 0.01f);
+    assert(fabsf(game_debug_duck_x(4) - migrated_x(old_duck_x)) < 0.01f);
+    assert(fabsf(game_debug_first_pea_x() - migrated_x(old_pea_x)) < 0.01f);
+    assert(fabsf(game_debug_first_pea_y() - migrated_y(old_pea_y)) < 0.01f);
+    assert(fabsf(game_debug_first_coin_x() - migrated_x(old_coin_x)) < 0.01f);
+    assert(fabsf(game_debug_first_coin_y() - migrated_y(old_coin_y)) < 0.01f);
+    assert(fabsf(game_debug_first_coin_target_y() - migrated_y(old_coin_target)) < 0.01f);
+    assert(old_mower_x == 280); /* unused mower now follows the new edge */
+    assert(fabsf(game_debug_mower_x(0) - old_mower_x) < 0.01f);
+    assert(game_debug_plant_type(2, 1) == 0 && game_debug_coin_balance() == 420);
+    assert(game_save_export(saved, len));
+    uint32_t version;
+    memcpy(&version, saved + 4, sizeof version);
+    assert(version == 4);
+    game_init();
+    assert(game_save_import(saved, len));
+    game_input_press(640, 600);
+    assert(fabsf(game_debug_boss_x() - migrated_x(old_boss_x)) < 0.01f);
+    assert(fabsf(game_debug_first_coin_x() - migrated_x(old_coin_x)) < 0.01f);
     free(saved);
     free(bad);
 
     game_init();                             /* untouched cutscene auto-plays */
-    game_input_press(640, 540);
+    game_input_press(640, 600);
     for (int i = 0; i < 12 * 60; i++) game_tick(1.0f / 60, NULL);
     assert(game_phase() == GAME_PLAY && game_level() == 1);
 

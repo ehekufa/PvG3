@@ -2,6 +2,7 @@
  * gcc -O2 -Wall -Wextra -Werror -Isrc src/game.c src/font.c \
  *     tools/host_test.c -o host_test -lm && ./host_test
  */
+#include <assert.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -48,8 +49,11 @@ int main(void) {
     static uint32_t fb[GAME_W * GAME_H];
     game_init();
     game_tick(0.016f, fb);
+    assert(game_phase() == GAME_MENU);
+    /* A neutral gray background replaces the old menu's Queen robot. */
+    assert(fb[365 * GAME_W + 1165] == 0xFFADB0ADu);
     write_bmp("shots/menu.bmp", GAME_W, GAME_H, fb);
-    game_input_press(325, 640);             /* УРОВНИ */
+    game_input_press(235, 100);             /* УРОВНИ */
     game_tick(0, fb);
     write_bmp("shots/select.bmp", GAME_W, GAME_H, fb);
     game_input_press(640, 600);             /* level 0: replayable story */
@@ -58,20 +62,25 @@ int main(void) {
     game_input_press(1150, 50);             /* skip -> selector */
     game_input_press(1130, 50);             /* back to menu */
 
-    game_input_press(625, 640);             /* САД ДЗЕН */
+    game_input_press(1080, 85);             /* САД ДЗЕН */
     game_input_press(655, 70);              /* Kirill's blue coin sunflower */
-    game_input_press(300, 204);
+    game_input_press(421, 176);
     game_input_press(335, 70);              /* peashooter */
-    game_input_press(420, 420);
+    game_input_press(535, 400);
     game_input_press(495, 70);              /* walnut */
-    game_input_press(660, 528);
+    game_input_press(763, 512);
     game_input_press(815, 70);              /* illustrated Jumper Fighter */
-    game_input_press(780, 528);
+    game_input_press(877, 512);
     game_tick(0, fb);
+    assert(game_phase() == GAME_GARDEN);
     write_bmp("shots/garden.bmp", GAME_W, GAME_H, fb);
-    game_input_press(985, 63);              /* book from garden */
+    game_input_press(985, 50);              /* book from garden */
     game_input_press(320, 173 + 3 * 121 + 35); /* Jumper's page */
     game_tick(0, fb);
+    assert(game_phase() == GAME_BOOK);
+    /* The index page is parchment; the selected plant's page is orange. */
+    assert(fb[350 * GAME_W + 125] == 0xFFC8E9F6u);
+    assert(fb[350 * GAME_W + 1155] == 0xFF4F8EDFu);
     write_bmp("shots/book.bmp", GAME_W, GAME_H, fb);
     game_input_press(320, 173 + 2 * 121 + 35); /* sunflower's page */
     game_tick(0, fb);
@@ -79,20 +88,23 @@ int main(void) {
     game_input_press(1130, 50);             /* garden */
     game_input_press(1160, 60);             /* menu */
 
-    game_input_press(640, 540);             /* ИГРАТЬ -> intro */
+    game_input_press(640, 600);             /* СТАРТ -> intro */
     game_tick(1.5f, fb);
     write_bmp("shots/intro.bmp", GAME_W, GAME_H, fb);
-    game_input_press(640, 540);             /* Dima's line */
+    game_input_press(640, 600);             /* Dima's line */
     game_tick(0, fb);
     write_bmp("shots/dima.bmp", GAME_W, GAME_H, fb);
-    game_input_press(640, 540);             /* Kirill's line */
+    game_input_press(640, 600);             /* Kirill's line */
     game_tick(0, fb);
     write_bmp("shots/kirill.bmp", GAME_W, GAME_H, fb);
-    game_input_press(640, 540);             /* first level */
+    game_input_press(640, 600);             /* first level */
     game_tick(0, fb);
+    assert(game_phase() == GAME_PLAY);
+    /* The first playable row starts immediately below the top HUD. */
+    assert(fb[125 * GAME_W + 960] != fb[90 * GAME_W + 960]);
     write_bmp("shots/level1.bmp", GAME_W, GAME_H, fb);
-    game_input_press(655, 70);              /* buy Kirill's sunflower */
-    game_input_press(300, 204);
+    game_input_press(125, 467);             /* buy Kirill's sunflower (left rack) */
+    game_input_press(421, 176);
     game_tick(6.3f, fb);                    /* first coin appears beside it */
     write_bmp("shots/coin.bmp", GAME_W, GAME_H, fb);
 
