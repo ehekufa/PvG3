@@ -71,7 +71,7 @@ export function applyCommand(s, role, cmd) {
   if (!validMatch(s) || s.winner || !cmd || typeof cmd !== 'object') return false;
   if (role === 'plants') {
     if (cmd.kind === 'coin') {
-      const index = s.coins.findIndex(c => c.id === cmd.id);
+      const index = s.coins.findIndex(c => c.id === (cmd.coinId ?? cmd.id));
       if (index < 0) return false;
       s.coins.splice(index, 1);
       s.plantCash += coinValue;

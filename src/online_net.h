@@ -1,0 +1,42 @@
+#ifndef PVG3_ONLINE_NET_H
+#define PVG3_ONLINE_NET_H
+
+#include "online_protocol.h"
+
+#include <stddef.h>
+
+/* Firebase RTDB REST lives on a background pthread; game_tick and touch never
+ * block on HTTPS. The Android transport below uses HttpURLConnection via JNI.
+ * Host tests replace it with an in-memory fake. Only /rooms is touched. */
+int on_http_request(const char *path, const char *method, const char *body,
+                    const char *if_match, char *response, size_t response_cap);
+
+enum { ON_NET_CLOSED, ON_NET_ROOMS, ON_NET_LOBBY };
+enum { ON_SLOT_NONE, ON_SLOT_HOST, ON_SLOT_GUEST };
+typedef struct {
+    int mode, slot, busy, connected, pending;
+    char room_id[ON_ROOM_ID_SIZE];
+    char guest_id[ON_PLAYER_ID_SIZE];
+    char notice[144];
+    int map, host_role, guest_role;
+    OnRoomSummary rooms[ON_ROOM_LIST_CAP]; int room_count;
+    int has_state, has_command;
+    OnMatch state;
+    OnCommand command;
+} OnNetView;
+
+void on_net_open(void);
+void on_net_close(void); /* return to menu without waiting for in-flight HTTPS */
+void on_net_shutdown(void); /* app exit: join thread, release response buffer */
+void on_net_view(OnNetView *out);
+void on_net_refresh(void);
+void on_net_create(int map);
+void on_net_join(const char *id);
+void on_net_choose(int role);
+void on_net_leave(void);
+void on_net_publish(const OnMatch *match); /* host: newest authoritative frame */
+int on_net_send(OnCommand command);       /* guest: one command until ACK */
+/* Only host tests call this directly; Android calls it from the worker. */
+void on_net_pump_once(void);
+
+#endif

@@ -10,6 +10,7 @@
 #include <string.h>
 #include "game.h"
 #include "font.h"
+#include "online_net.h"
 
 /* Match the battle sidebar, the garden header and the 9x5 lawn. */
 static int garden_card_x(int type) { return 260 + type * 130 + 60; }
@@ -78,9 +79,23 @@ int main(void) {
     assert(game_wave_remaining() == 8 && game_wave_total() == 8);
     game_input_press(5, 5);
     assert(game_phase() == GAME_MENU);
-    game_input_press(1058, 615);             /* ONLINE opens the companion game */
-    assert(game_take_online_request() && !game_take_online_request());
-    assert(game_phase() == GAME_MENU);       /* no campaign changes */
+    size_t save_len = game_save_size();
+    uint8_t *offline_before = malloc(save_len), *offline_after = malloc(save_len);
+    assert(offline_before && offline_after && game_save_export(offline_before, save_len));
+    game_input_press(1058, 615);             /* native online, no browser */
+    assert(game_phase() == GAME_ONLINE_ROOMS);
+    on_net_pump_once();                      /* fake Firebase: empty rooms */
+    game_tick(0, NULL);
+    OnNetView network = {0};on_net_view(&network);
+    assert(network.mode == ON_NET_ROOMS && network.room_count == 0);
+    game_input_press(785, 177);              /* square search, not create */
+    game_input_press(326, 300);              /* on-screen A key */
+    game_input_press(950, 133);              /* close search */
+    game_input_press(1140, 50);              /* back to menu */
+    assert(game_phase() == GAME_MENU);
+    assert(game_save_export(offline_after, save_len));
+    assert(!memcmp(offline_before, offline_after, save_len));
+    free(offline_before);free(offline_after);
     game_input_press(630, 80);               /* labeled levels button */
     assert(game_phase() == GAME_SELECT);
     game_input_press(1130, 50);
@@ -193,6 +208,23 @@ int main(void) {
     seed_at(1, 1, 0);
     assert(game_debug_plant_type(1, 0) == 1 && game_debug_coin_balance() == 75);
     assert(game_debug_first_enemy_type() == 0); /* author's yellow duck */
+    /* Entering native online must not mutate a paused, IN-PROGRESS wave —
+     * even its stored animation clock and exact checksummed board. */
+    game_input_press(1150, 51);             /* pause offline battle in menu */
+    uint8_t *paused_before = malloc(game_save_size());
+    uint8_t *paused_after = malloc(game_save_size());
+    assert(paused_before && paused_after &&
+           game_save_export(paused_before, game_save_size()));
+    game_input_press(1058, 615);
+    on_net_pump_once();
+    for (int i = 0; i < 120; i++) game_tick(.05f, NULL);
+    game_input_press(1140, 50);
+    assert(game_phase() == GAME_MENU &&
+           game_save_export(paused_after, game_save_size()));
+    assert(!memcmp(paused_before, paused_after, game_save_size()));
+    free(paused_before);free(paused_after);
+    game_input_press(640, 600);            /* resume EXACT same wave */
+    assert(game_phase() == GAME_PLAY && game_debug_coin_balance() == 75);
 
     /* Invalid campaign saves do not mutate state; a real restart restores
      * enemies, coins, plants and the unfinished wave (plus Garden separately). */

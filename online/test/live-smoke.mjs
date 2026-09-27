@@ -8,7 +8,7 @@ import {chooseRole, getRoom, writeCommand, writeState} from '../firebase.js';
 import {newMatch, applyCommand, validMatch} from '../rules.js';
 
 const origins = ['https://ehekufa.github.io', 'https://rawcdn.githack.com'];
-const origin = origins.at(-1); // The APK's pinned temporary browser host.
+const origin = origins.at(-1); // Optional HTML client; the APK uses native HTTPS.
 const base = 'https://pvg3-ae824-default-rtdb.firebaseio.com/rooms';
 const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const id = 'Q' + Array.from(randomBytes(5), n => alphabet[n & 31]).join('');

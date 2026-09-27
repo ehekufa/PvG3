@@ -39,11 +39,29 @@ jobs:
           test -s online/index.html && test -s online/style.css
           test -s assets/fonts/OFL.txt
           test -s assets/licenses/stb_truetype-MIT.txt
-          gcc -std=c11 -O2 -Wall -Wextra -Werror -DGAME_TEST -Isrc \
-            src/game.c src/font.c tools/sim_test.c -o sim_test -lm
-          ./sim_test
+          node tools/emit_online_fixture.mjs > /tmp/pvg3-browser-state.json
           gcc -std=c11 -O2 -Wall -Wextra -Werror -Isrc \
-            src/game.c src/font.c tools/host_test.c -o host_test -lm
+            src/online_rules.c src/online_protocol.c tools/native_online_test.c \
+            -o native_online_test -lm
+          ./native_online_test /tmp/pvg3-browser-state.json
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -DGAME_TEST -DON_NET_MANUAL -Isrc \
+            src/game.c src/font.c src/online_rules.c src/online_protocol.c \
+            src/online_net.c tools/fake_online_http.c tools/sim_test.c \
+            -o sim_test -lm -pthread
+          ./sim_test
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -DON_NET_MANUAL -Isrc \
+            src/game.c src/font.c src/online_rules.c src/online_protocol.c \
+            src/online_net.c tools/native_online_integration_test.c \
+            -o native_online_integration_test -lm -pthread
+          ./native_online_integration_test
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -Isrc \
+            src/online_rules.c src/online_protocol.c src/online_net.c \
+            tools/native_online_thread_test.c -o native_online_thread_test -lm -pthread
+          ./native_online_thread_test
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -DON_NET_MANUAL -Isrc \
+            src/game.c src/font.c src/online_rules.c src/online_protocol.c \
+            src/online_net.c tools/fake_online_http.c tools/host_test.c \
+            -o host_test -lm -pthread
           ./host_test
 
       - name: Build native library (both ABIs)
@@ -70,9 +88,13 @@ jobs:
 
           TC="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
           mkdir -p staging/lib/arm64-v8a staging/lib/armeabi-v7a
-          SRC="src/game.c src/font.c src/music_wav.c src/android_music.c src/android_main.c $GLUE_SRC"
-          CFLAGS="-O3 -s -fPIC -Isrc -I$GLUE_INC"
+          SRC="src/game.c src/font.c src/music_wav.c src/android_music.c src/android_main.c src/online_rules.c src/online_protocol.c src/online_net.c src/android_online_http.c $GLUE_SRC"
+          CFLAGS="-O3 -s -fPIC -pthread -Isrc -I$GLUE_INC"
           LIBS="-landroid -laaudio -llog -lEGL -lGLESv2 -lm"
+
+          echo ":: Checking native Android HTTPS/JNI with strict warnings"
+          "$TC/aarch64-linux-android29-clang" -std=c11 -Wall -Wextra -Werror \
+            -Isrc -c src/android_online_http.c -o /tmp/pvg3-android-online-http.o
 
           echo ":: Compiling arm64-v8a (64-bit)"
           "$TC/aarch64-linux-android29-clang" $CFLAGS -shared $SRC $LIBS \
@@ -109,6 +131,7 @@ jobs:
           "$BT/apksigner" sign --ks pvg3.keystore --ks-pass pass:android \
             --out PvG3.apk aligned.apk
           "$BT/apksigner" verify --verbose PvG3.apk
+          "$BT/aapt" dump permissions PvG3.apk | grep 'android.permission.INTERNET'
           unzip -l PvG3.apk | grep 'lib/arm64-v8a/libpvg3.so'
           unzip -l PvG3.apk | grep 'lib/armeabi-v7a/libpvg3.so'
           unzip -l PvG3.apk | grep 'assets/licenses/PT_Sans-OFL.txt'

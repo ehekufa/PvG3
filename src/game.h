@@ -11,7 +11,8 @@
 
 /* Public phases (use these names rather than assuming integer values). */
 enum { GAME_MENU, GAME_INTRO, GAME_PLAY, GAME_LEVEL_CLEAR, GAME_WIN, GAME_LOSE,
-       GAME_GARDEN, GAME_BOOK, GAME_SELECT };
+       GAME_GARDEN, GAME_BOOK, GAME_SELECT,
+       GAME_ONLINE_ROOMS, GAME_ONLINE_LOBBY, GAME_ONLINE_MATCH };
 
 /* Reset the game back to the title screen. */
 void game_init(void);
@@ -37,9 +38,8 @@ int game_save_import(const void *src, size_t length);
 /* Pointer events in virtual coordinates (0..GAME_W, 0..GAME_H). */
 void game_input_press(int x, int y);
 void game_input_release(int x, int y);
-/* Menu ONLINE button requests the separately hosted multiplayer page. The
- * Android host consumes this once and opens the HTTPS page in a browser. */
-int game_take_online_request(void);
+/* The menu's ONLINE button enters native rooms inside this game; networking
+ * runs on a separate thread. The campaign and garden save formats exclude it. */
 
 /* Advance by dt seconds. If fb is non-NULL, render to GAME_W*GAME_H pixels
  * in RGBA8 byte order. Pass NULL to simulate without drawing (tests). */

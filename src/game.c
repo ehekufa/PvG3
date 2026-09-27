@@ -7,6 +7,7 @@
 
 #include "game.h"
 #include "font.h"
+#include "online_net.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -234,7 +235,10 @@ _Static_assert(ROWS * COLS == GAME_GARDEN_CELLS, "garden save size mismatch");
 typedef enum { PH_MENU = GAME_MENU, PH_INTRO = GAME_INTRO, PH_PLAY = GAME_PLAY,
                PH_LEVEL_CLEAR = GAME_LEVEL_CLEAR, PH_WIN = GAME_WIN,
                PH_LOSE = GAME_LOSE, PH_GARDEN = GAME_GARDEN,
-               PH_BOOK = GAME_BOOK, PH_SELECT = GAME_SELECT } Phase;
+               PH_BOOK = GAME_BOOK, PH_SELECT = GAME_SELECT,
+               PH_ONLINE_ROOMS = GAME_ONLINE_ROOMS,
+               PH_ONLINE_LOBBY = GAME_ONLINE_LOBBY,
+               PH_ONLINE_MATCH = GAME_ONLINE_MATCH } Phase;
 
 /* Only plants the author drew are selectable, on the lawn and in the garden.
  * Keep existing IDs stable: they are stored in the legacy Zen Garden file. */
@@ -307,7 +311,14 @@ static int garden_selected;            /* -1 nothing, PT_COUNT eraser */
 static int book_selected;
 static int book_enemy_selected;         /* 0..3 in BOOK_ENEMIES */
 static int book_enemy_tab;              /* the five plants or illustrated foes */
-static int open_online_requested;
+/* Online lives outside the campaign save; snapshots below never touch it. */
+static OnMatch online_match;
+static OnNetView online_view;
+static int online_has_match;
+static int online_selected, online_map, online_search, online_page;
+static char online_code[ON_ROOM_ID_SIZE];
+static char online_hint[110];
+static float online_hint_time;
 static Phase book_return;
 static float spawn_t;
 static int to_spawn;
@@ -572,7 +583,16 @@ void game_init(void) {
     book_selected = PT_PEA;
     book_enemy_selected = 0;
     book_enemy_tab = 0;
-    open_online_requested = 0;
+    on_net_shutdown(); /* safe even when no room was ever opened */
+    memset(&online_match, 0, sizeof(online_match));
+    memset(&online_view, 0, sizeof(online_view));
+    online_has_match = 0;
+    online_selected = -1;
+    online_map = 1;
+    online_search = 0;
+    online_page = 0;
+    online_code[0] = online_hint[0] = 0;
+    online_hint_time = 0;
     book_return = PH_MENU;
     phase = PH_MENU;
 }
@@ -863,8 +883,162 @@ static void open_book(void) {
     phase = PH_BOOK; /* the level is paused while Kirill's book is open */
 }
 
+static void online_say(const char *text) {
+    snprintf(online_hint, sizeof online_hint, "%s", text);
+    online_hint_time = 3;
+}
+static int online_role(void) {
+    return online_view.slot == ON_SLOT_HOST ? online_view.host_role :
+           online_view.slot == ON_SLOT_GUEST ? online_view.guest_role : ON_NO_ROLE;
+}
+/* Indexes into the live room list; no extra connections or Firebase reads. */
+static int online_filtered(int indexes[ON_ROOM_LIST_CAP]) {
+    int n = 0, prefix = (int)strlen(online_code);
+    for (int i = 0; i < online_view.room_count; i++)
+        if (!prefix || !strncmp(online_view.rooms[i].id, online_code, (size_t)prefix))
+            indexes[n++] = i;
+    return n;
+}
+static void online_input(int x, int y) {
+    if (phase == PH_ONLINE_ROOMS) {
+        if (online_search) {
+            if (inside(x, y, 902, 109, 1009, 159)) { online_search = 0;return; }
+            if (inside(x, y, 847, 171, 993, 236)) {
+                size_t len = strlen(online_code);
+                if (len) online_code[len - 1] = 0;
+                online_page = 0;return;
+            }
+            if (inside(x, y, 395, 568, 880, 644)) {
+                if (strlen(online_code) == 6) {
+                    on_net_join(online_code);
+                    online_search = 0;
+                } else online_say("ВВЕДИ ВСЕ ШЕСТЬ СИМВОЛОВ КОДА");
+                return;
+            }
+            const char *keys = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+            int col = (x - 291) / 78, row = (y - 270) / 70;
+            int ix = row * 9 + col;
+            if (x >= 291 && y >= 270 && col >= 0 && col < 9 && row >= 0 &&
+                row < 4 && x - 291 - col * 78 < 68 &&
+                y - 270 - row * 70 < 58 && ix < 32 && keys[ix]) {
+                size_t len = strlen(online_code);
+                if (len < 6) {online_code[len] = keys[ix];online_code[len + 1] = 0;}
+                online_page = 0;
+            }
+            return;
+        }
+        if (inside(x, y, 1070, 17, 1255, 87)) {
+            on_net_close();phase = PH_MENU;return;
+        }
+        if (inside(x, y, 720, 144, 884, 222)) {online_search = 1;return;}
+        if (inside(x, y, 904, 144, 1065, 222)) {on_net_create(online_map);return;}
+        if (inside(x, y, 70, 144, 303, 222)) {online_map = 1;return;}
+        if (inside(x, y, 313, 144, 550, 222)) {online_map = 5;return;}
+        if (inside(x, y, 1019, 248, 1225, 308)) {on_net_refresh();return;}
+        int indexes[ON_ROOM_LIST_CAP];
+        int count = online_filtered(indexes);
+        if (online_page * 8 >= count) online_page = 0;
+        if (inside(x, y, 873, 654, 1220, 705)) {
+            if ((online_page + 1) * 8 < count) online_page++;
+            else online_page = 0;
+            return;
+        }
+        if (inside(x, y, 62, 654, 374, 705)) {
+            if (online_page > 0) online_page--;
+            return;
+        }
+        for (int i = 0; i < 8; i++) {
+            int col = i % 2, row = i / 2, x0 = 69 + col * 582;
+            int y0 = 321 + row * 80, pos = online_page * 8 + i;
+            if (pos < count && inside(x, y, x0, y0, x0 + 557, y0 + 70)) {
+                on_net_join(online_view.rooms[indexes[pos]].id);
+                return;
+            }
+        }
+        return;
+    }
+    if (inside(x, y, 1093, 17, 1265, 91) ||
+        (phase == PH_ONLINE_MATCH && online_match.winner &&
+         inside(x, y, 411, 459, 869, 560))) {
+        on_net_leave();online_has_match = 0;
+        online_selected = -1;online_code[0] = 0;online_page = 0;
+        phase = PH_ONLINE_ROOMS;return;
+    }
+    if (phase == PH_ONLINE_LOBBY) {
+        if (inside(x, y, 160, 243, 611, 575)) on_net_choose(ON_ROLE_PLANTS);
+        else if (inside(x, y, 663, 243, 1119, 575)) on_net_choose(ON_ROLE_ZOMBIES);
+        return;
+    }
+    if (phase != PH_ONLINE_MATCH || !online_has_match) return;
+    if (inside(x, y, 917, 20, 1088, 91)) {open_book();return;}
+    if (online_match.winner) return;
+    int role = online_role(), got = 0;
+    OnCommand cmd = {0};
+    if (role == ON_ROLE_PLANTS) {
+        for (int i = online_match.coin_count - 1; i >= 0; i--) {
+            const OnCoin *coin = &online_match.coins[i];
+            int dx = x - (int)coin->x, dy = y - (int)coin->y;
+            if (dx * dx + dy * dy < 40 * 40) {
+                cmd.kind = ON_CMD_COIN;cmd.id = coin->id;got = 1;break;
+            }
+        }
+        if (!got && x < ON_BOARD_X)
+            for (int i = 0; i < PT_COUNT; i++) {
+                int top = 125 + i * 104;
+                if (inside(x, y, 12, top, 235, top + 98)) {
+                    online_selected = online_match.plant_cash >= on_plant_cost[i] &&
+                        online_match.plant_cooldown[i] <= 0 &&
+                        (i != ON_LILY || online_match.map == 5) ? i : -1;
+                    if (online_selected == -1) online_say("МОНЕТ ИЛИ ПЕРЕЗАРЯДКИ НЕ ХВАТАЕТ");
+                    return;
+                }
+            }
+        if (!got && online_selected >= 0 &&
+            inside(x, y, ON_BOARD_X, ON_BOARD_Y,
+                   ON_BOARD_X + ON_COLS * ON_CELL_W - 1,
+                   ON_BOARD_Y + ON_ROWS * ON_CELL_H - 1)) {
+            cmd.kind = ON_CMD_PLANT;cmd.type = online_selected;
+            cmd.col = (x - ON_BOARD_X) / ON_CELL_W;
+            cmd.row = (y - ON_BOARD_Y) / ON_CELL_H;
+            got = 1;online_selected = -1;
+        }
+    } else if (role == ON_ROLE_ZOMBIES) {
+        if (inside(x, y, 15, 615, 232, 702)) {
+            cmd.kind = ON_CMD_FINISH;got = 1;
+        } else if (x < ON_BOARD_X) {
+            for (int i = 0; i < 3; i++) {
+                int top = 151 + i * 113;
+                if (inside(x, y, 12, top, 235, top + 98)) {
+                    online_selected = online_match.zombie_cash >= on_duck_cost[i] &&
+                        online_match.duck_cooldown[i] <= 0 && online_match.left > 0 ? i : -1;
+                    if (online_selected == -1) online_say("МОНЕТ ИЛИ УТОК НЕ ХВАТАЕТ");
+                    return;
+                }
+            }
+        } else if (online_selected >= 0 &&
+                   y >= ON_BOARD_Y && y < ON_BOARD_Y + ON_ROWS * ON_CELL_H) {
+            cmd.kind = ON_CMD_SPAWN;cmd.type = on_duck_type[online_selected];
+            cmd.row = (y - ON_BOARD_Y) / ON_CELL_H;
+            got = 1;online_selected = -1;
+        }
+    }
+    if (!got) return;
+    /* Validate on a scratch copy: an invalid gesture costs neither coins nor
+     * a network write. The host alone applies authoritative commands. */
+    OnMatch test = online_match;
+    if (!on_match_apply(&test, role, &cmd)) {
+        online_say("НЕВОЗМОЖНЫЙ ХОД: ПРОВЕРЬ КЛЕТКУ И МОНЕТЫ");return;
+    }
+    if (online_view.slot == ON_SLOT_HOST) {
+        online_match = test;
+        on_net_publish(&online_match);
+    } else if (!on_net_send(cmd)) online_say("ДОЖДИСЬ ПОДТВЕРЖДЕНИЯ ПРЕДЫДУЩЕГО ХОДА");
+}
+
 void game_input_press(int x, int y) {
     if (x < 0 || x >= GAME_W || y < 0 || y >= GAME_H) return;
+    if (phase == PH_ONLINE_ROOMS || phase == PH_ONLINE_LOBBY ||
+        phase == PH_ONLINE_MATCH) {online_input(x, y);return;}
     if (phase == PH_MENU) {
         if (inside(x, y, 440, 548, 840, 680)) {
             if (saved_battle) phase = PH_PLAY;
@@ -878,7 +1052,11 @@ void game_input_press(int x, int y) {
             garden_selected = -1;
             phase = PH_GARDEN;
         } else if (inside(x, y, 98, 568, 392, 670)) open_book();
-        else if (inside(x, y, 887, 563, 1229, 667)) open_online_requested = 1;
+        else if (inside(x, y, 887, 563, 1229, 667)) {
+            online_code[0] = 0;online_page = online_search = 0;
+            online_has_match = 0;online_selected = -1;
+            on_net_open();phase = PH_ONLINE_ROOMS;
+        }
         return;
     }
     if (phase == PH_SELECT) {
@@ -1005,20 +1183,17 @@ void game_input_press(int x, int y) {
 }
 
 void game_input_release(int x, int y) { (void)x; (void)y; }
-int game_take_online_request(void) {
-    int requested = open_online_requested;
-    open_online_requested = 0;
-    return requested;
-}
 
 /* ------------------------------------------------------------------ */
 /* render                                                             */
 /* ------------------------------------------------------------------ */
 
 static void draw_background(void) {
-    int water_scene = level == WATER_LEVEL &&
+    int scene_level = phase == PH_ONLINE_MATCH && online_has_match ?
+                      online_match.map : level;
+    int water_scene = scene_level == WATER_LEVEL &&
         (phase == PH_PLAY || phase == PH_LEVEL_CLEAR ||
-         phase == PH_LOSE || phase == PH_WIN);
+         phase == PH_LOSE || phase == PH_WIN || phase == PH_ONLINE_MATCH);
     rect(0, 0, GAME_W - 1, GAME_H - 1, COL(65, 105, 51));
     if (sprite_pixels[SPR_MAP]) {
         /* Keep the author's wooden path as the packet rack. For level 5,
@@ -1048,11 +1223,11 @@ static void draw_background(void) {
              LAWN_Y + 3 * CELL_H - 1, COL(26, 165, 193));
     rect(LAWN_X - 7, 0, LAWN_X - 1, GAME_H - 1, COL(48, 85, 39));
     /* Later levels keep their time-of-day tint without changing any cells. */
-    if (level >= 4 && level <= 6)
+    if (scene_level >= 4 && scene_level <= 6)
         rect_blend(0, LAWN_Y, GAME_W - 1, LAWN_Y + ROWS * CELL_H - 1, COL(156, 94, 31), 32);
-    if (level >= 7)
+    if (scene_level >= 7)
         rect_blend(0, LAWN_Y, GAME_W - 1, LAWN_Y + ROWS * CELL_H - 1,
-                   COL(27, 44, 90), level == 10 ? 75 : 42);
+                   COL(27, 44, 90), scene_level == 10 ? 75 : 42);
     for (int r = 0; r < ROWS; r++)
         for (int c = 0; c < COLS; c++) {
             int x = LAWN_X + c * CELL_W, y = LAWN_Y + r * CELL_H;
@@ -1521,7 +1696,211 @@ static void draw_result(void) {
     }
 }
 
+/* Native rooms and fight — same framebuffer, touch input and author's art as
+ * the offline game. A square opens search; only '+' creates a room. */
+static void draw_online_rooms(void) {
+    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(105, 131, 106));
+    rect(0, 0, GAME_W - 1, 124, COL(42, 56, 52));
+    sprite_draw(SPR_KHLEBUSHEK, 32, 10, 106, 104, 0);
+    draw_text(168, 22, 5, COL(255, 230, 158), "ОНЛАЙН");
+    draw_text(170, 78, 2, COL(220, 229, 208), "ИГРАЙ ЗА РАСТЕНИЯ ИЛИ УТОК");
+    draw_button(1070, 17, 1255, 87, "МЕНЮ", 3);
+    rect(48, 134, 1231, 231, COL(52, 71, 55));
+    rect(55, 140, 1224, 224, COL(191, 208, 162));
+    draw_button(70, 144, 303, 222, "ГАЗОН", 3);
+    draw_button(313, 144, 550, 222, "ВОДА", 3);
+    rect(online_map == 5 ? 319 : 76, 216,
+         online_map == 5 ? 544 : 297, 220, COL(255, 235, 104));
+    /* The search affordance is visibly a SQUARE, not the create button. */
+    draw_button(720, 144, 884, 222, "", 2);
+    rect(754, 166, 796, 202, COL(255, 242, 196));
+    rect(759, 171, 791, 197, COL(113, 67, 42));
+    draw_text(806, 171, 2, COL(255, 240, 201), "ПОИСК");
+    draw_button(904, 144, 1065, 222, "+", 7);
+    draw_text_c(1133, 171, 2, COL(50, 57, 41), "СОЗДАТЬ");
+    rect(45, 239, 1234, 711, COL(41, 61, 48));
+    rect(52, 245, 1227, 704, COL(231, 226, 191));
+    draw_text(70, 260, 4, COL(63, 64, 50), "КОМНАТЫ");
+    draw_button(1019, 248, 1225, 308, "ОБНОВИТЬ", 2);
+    int indexes[ON_ROOM_LIST_CAP], count = online_filtered(indexes);
+    int page = online_page;
+    if (page * 8 >= count) page = 0;
+    if (online_view.busy) draw_text(350, 273, 2, COL(116, 76, 36), "ПОДКЛЮЧАЕМСЯ...");
+    else if (online_view.notice[0]) {
+        int size = text_w(2, online_view.notice) < 730 ? 2 : 1;
+        draw_text(362, 276, size, COL(160, 62, 43), online_view.notice);
+    } else {
+        char label[50];snprintf(label, sizeof label, "НАЙДЕНО: %d", count);
+        draw_text(366, 275, 2, COL(102, 89, 68), label);
+    }
+    if (!count) draw_text_c(640, 459, 4, COL(121, 106, 82),
+                           "ПОКА НЕТ СВОБОДНЫХ КОМНАТ");
+    for (int i = 0; i < 8; i++) {
+        int pos = page * 8 + i;
+        if (pos >= count) break;
+        const OnRoomSummary *room = &online_view.rooms[indexes[pos]];
+        int col = i % 2, row = i / 2, x = 69 + col * 582, y = 321 + row * 80;
+        rect(x, y + 4, x + 557, y + 74, COL(66, 74, 60));
+        rect(x + 3, y + 2, x + 554, y + 69, COL(253, 247, 212));
+        rect(x + 3, y + 2, x + 12, y + 69,
+             room->map == 5 ? COL(56, 163, 197) : COL(101, 177, 71));
+        draw_text(x + 28, y + 13, 4, COL(68, 57, 48), room->id);
+        draw_text(x + 236, y + 17, 2, COL(107, 94, 68),
+                  room->map == 5 ? "ВОДА" : "ГАЗОН");
+        draw_text(x + 362, y + 17, 2, COL(75, 129, 66), "ВОЙТИ >");
+    }
+    if (count > 8) {
+        draw_button(62, 654, 374, 704, "НАЗАД", 2);
+        draw_button(873, 654, 1220, 704, "ДАЛЬШЕ", 2);
+        char page_text[48];
+        snprintf(page_text, sizeof page_text, "%d / %d", page + 1, (count + 7) / 8);
+        draw_text_c(640, 670, 2, COL(71, 61, 43), page_text);
+    } else draw_text_c(640, 674, 2, COL(87, 76, 58),
+                       "КОСНИСЬ КОМНАТЫ ИЛИ СОЗДАЙ СВОЮ КНОПКОЙ +");
+    if (online_search) {
+        rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(11, 17, 24), 193);
+        rect(222, 92, 1058, 667, COL(44, 45, 42));
+        rect(229, 99, 1051, 660, COL(241, 223, 180));
+        draw_text_c(640, 116, 5, COL(69, 58, 48), "ПОИСК КОМНАТЫ");
+        draw_button(902, 109, 1009, 159, "X", 3);
+        rect(301, 171, 837, 237, COL(91, 79, 65));
+        rect(309, 179, 829, 229, COL(255, 253, 225));
+        if (online_code[0]) draw_text_c(569, 184, 4, COL(64, 56, 47), online_code);
+        else draw_text_c(569, 185, 3, COL(131, 122, 105), "КОД ИЗ 6 СИМВОЛОВ");
+        draw_button(847, 171, 993, 236, "СТЕРЕТЬ", 2);
+        const char *keys = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+        for (int i = 0; i < 32; i++) {
+            char letter[2] = {keys[i], 0};
+            int kx = 291 + (i % 9) * 78, ky = 270 + (i / 9) * 70;
+            draw_button(kx, ky, kx + 68, ky + 58, letter, 3);
+        }
+        char matches[80];snprintf(matches, sizeof matches, "ПОДХОДЯЩИХ КОМНАТ: %d", count);
+        draw_text_c(640, 542, 2, COL(84, 77, 59), matches);
+        draw_button(395, 568, 880, 644, "ВОЙТИ ПО КОДУ", 4);
+        if (online_hint_time > 0) draw_text_c(640, 654, 2, COL(169, 52, 48), online_hint);
+    }
+}
+
+static void draw_online_lobby(void) {
+    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(62, 103, 74));
+    rect(0, 0, GAME_W - 1, 115, COL(36, 51, 47));
+    char heading[72];snprintf(heading, sizeof heading, "КОМНАТА %s", online_view.room_id);
+    draw_text(60, 26, 5, COL(255, 227, 155), heading);
+    draw_button(1093, 17, 1265, 91, "ВЫЙТИ", 3);
+    draw_text_c(640, 145, 3, COL(255, 238, 189),
+                online_view.map == 5 ? "КАРТА: ВОДА" : "КАРТА: ГАЗОН");
+    rect(148, 229, 1132, 592, COL(36, 48, 42));
+    rect(156, 237, 1124, 585, COL(230, 219, 179));
+    int mine = online_role(), other = online_view.slot == ON_SLOT_HOST ?
+                                 online_view.guest_role : online_view.host_role;
+    for (int side = ON_ROLE_PLANTS; side <= ON_ROLE_ZOMBIES; side++) {
+        int x = side == ON_ROLE_PLANTS ? 160 : 663;
+        rect(x, 243, x + 451, 574, mine == side ? COL(255, 211, 74) : COL(62, 75, 55));
+        rect(x + 6, 249, x + 445, 568,
+             side == ON_ROLE_PLANTS ? COL(166, 202, 126) : COL(191, 159, 114));
+        sprite_draw(side == ON_ROLE_PLANTS ? SPR_PEA : SPR_DUCK,
+                    x + 125, 268, 185, 188, side == ON_ROLE_ZOMBIES);
+        draw_text_c(x + 225, 478, 4, COL(49, 52, 40),
+                    side == ON_ROLE_PLANTS ? "РАСТЕНИЯ" : "ЗОМБИ");
+        draw_text_c(x + 225, 525, 2, COL(69, 66, 50),
+                    mine == side ? "ТВОЯ СТОРОНА" :
+                    other == side ? "СТОРОНА СОПЕРНИКА" : "ВЫБРАТЬ СТОРОНУ");
+    }
+    if (!online_view.guest_id[0])
+        draw_text_c(640, 611, 3, COL(255, 236, 184), "ЖДЁМ ВТОРОГО ИГРОКА...");
+    else if (!mine || !other)
+        draw_text_c(640, 611, 3, COL(255, 236, 184), "ВЫБЕРИТЕ РАЗНЫЕ СТОРОНЫ");
+    else if (online_view.slot == ON_SLOT_GUEST && !online_view.has_state)
+        draw_text_c(640, 611, 3, COL(255, 236, 184), "ХОЗЯИН ЗАПУСКАЕТ БОЙ...");
+    if (online_view.notice[0])
+        draw_text_c(640, 665, 2, COL(255, 171, 156), online_view.notice);
+    else draw_text_c(640, 665, 2, COL(226, 228, 192),
+                     "ХОЗЯИН И ГОСТЬ МОГУТ ИГРАТЬ ЗА ЛЮБУЮ СТОРОНУ");
+}
+
+static void draw_online_match(void) {
+    if (!online_has_match) {draw_online_lobby();return;}
+    const OnMatch *s = &online_match;
+    draw_background();
+    for (int r = 0; r < ON_ROWS; r++) {
+        const OnMower *m = &s->mowers[r];
+        if (!m->used || m->running)
+            sprite_draw(SPR_MOWER, (int)m->x - 44, CELL_CY(r) - 25, 88, 86, 0);
+        for (int c = 0; c < ON_COLS; c++) {
+            int pos = r * ON_COLS + c, x = CELL_CX(c), y = CELL_CY(r);
+            if (s->lilies[pos]) draw_lily(x, y);
+            if (s->plants[pos].type >= 0)
+                draw_plant(x, y, s->plants[pos].type, sinf(s->time * 2 + r + c));
+        }
+    }
+    for (int i = 0; i < s->duck_count; i++) {
+        Zombie z = {0};
+        z.row = s->ducks[i].row;z.x = s->ducks[i].x;
+        z.type = s->ducks[i].type;z.anim = s->ducks[i].anim;
+        draw_enemy(&z);
+    }
+    for (int i = 0; i < s->pea_count; i++)
+        disc((int)s->peas[i].x, (int)s->peas[i].y, 9, COL(120, 210, 90));
+    for (int i = 0; i < s->coin_count; i++)
+        draw_coin_icon((int)s->coins[i].x, (int)s->coins[i].y, 22);
+    rect_blend(0, 0, GAME_W - 1, 119, COL(22, 27, 31), 220);
+    int role = online_role(), plants = role == ON_ROLE_PLANTS;
+    draw_text(21, 18, 3, COL(255, 230, 170), plants ? "РАСТЕНИЯ" : "ЗОМБИ");
+    draw_coin_icon(46, 82, 21);
+    draw_int(80, 69, 4, COL(255, 242, 198),
+             plants ? s->plant_cash : s->zombie_cash);
+    char title[98];
+    snprintf(title, sizeof title, "КОМНАТА %s    УТОК ОСТАЛОСЬ: %d",
+             online_view.room_id, s->left + s->duck_count);
+    draw_text(269, 22, 3, COL(255, 235, 188), title);
+    draw_text(277, 76, 2, COL(217, 230, 206),
+              s->map == 5 ? "ВОДА: СНАЧАЛА КУВШИНКА" :
+                            "ВЫБЕРИ КАРТОЧКУ, ЗАТЕМ КЛЕТКУ ИЛИ РЯД");
+    draw_button(917, 20, 1088, 91, "КНИГА", 3);
+    draw_button(1093, 17, 1265, 91, "ВЫЙТИ", 3);
+    int n = plants ? PT_COUNT : 3;
+    for (int i = 0; i < n; i++) {
+        int y = plants ? 125 + i * 104 : 151 + i * 113;
+        int cost = plants ? on_plant_cost[i] : on_duck_cost[i];
+        float delay = plants ? s->plant_cooldown[i] : s->duck_cooldown[i];
+        int affordable = (plants ? s->plant_cash : s->zombie_cash) >= cost &&
+                         delay <= 0 && (plants ? (i != ON_LILY || s->map == 5) : s->left > 0);
+        rect(12, y, 235, y + 98, online_selected == i ?
+             COL(255, 220, 78) : COL(48, 45, 39));
+        rect(17, y + 4, 230, y + 93, COL(241, 219, 171));
+        if (plants) sprite_draw(PDEF[i].sprite, 27, y + 8, 67, 65, 0);
+        else draw_duck_variant(26, y + 9, 64, on_duck_type[i], 1);
+        draw_text(99, y + 16, 2, COL(58, 48, 36),
+                  plants ? PDEF[i].short_name : EN_NAMES[on_duck_type[i]]);
+        draw_coin_icon(113, y + 67, 12);
+        draw_int(136, y + 57, 3, COL(86, 61, 29), cost);
+        if (!affordable) rect_blend(17, y + 4, 230, y + 93, COL(30, 35, 39), 105);
+    }
+    if (!plants) {
+        draw_button(15, 615, 232, 702, "ЗАКОНЧИТЬ", 2);
+        draw_text(17, 523, 2, COL(255, 235, 176), "ВЫБЕРИ УТКУ И РЯД");
+    }
+    rect_blend(250, 681, 1279, 719, COL(14, 22, 28), 218);
+    if (online_hint_time > 0) draw_text_c(760, 690, 2, COL(255, 188, 130), online_hint);
+    else if (online_view.notice[0]) draw_text_c(760, 690, 2, COL(255, 159, 131), online_view.notice);
+    else if (online_view.pending) draw_text_c(760, 690, 2, COL(255, 234, 179),
+                                              "ОЖИДАЕМ ПОДТВЕРЖДЕНИЯ ХОДА...");
+    else if (!online_view.guest_id[0]) draw_text_c(760, 690, 2, COL(255, 234, 179),
+                                                   "СОПЕРНИК ВЫШЕЛ. БОЙ ПРИОСТАНОВЛЕН.");
+    if (s->winner) {
+        rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(14, 18, 30), 198);
+        draw_text_c(640, 246, 6, COL(255, 227, 145),
+                    s->winner == role ? "ПОБЕДА!" : "ПОБЕДИЛ СОПЕРНИК");
+        draw_text_c(640, 336, 3, COL(255, 240, 194),
+                    s->winner == ON_WIN_PLANTS ? "РАСТЕНИЯ ПОБЕДИЛИ" : "УТКИ ПОБЕДИЛИ");
+        draw_button(411, 459, 869, 560, "В КОМНАТЫ", 5);
+    }
+}
+
 static void render(void) {
+    if (phase == PH_ONLINE_ROOMS) {draw_online_rooms();return;}
+    if (phase == PH_ONLINE_LOBBY) {draw_online_lobby();return;}
+    if (phase == PH_ONLINE_MATCH) {draw_online_match();return;}
     if (phase == PH_MENU) { draw_menu(); return; }
     if (phase == PH_SELECT) { draw_level_select(); return; }
     if (phase == PH_INTRO) { draw_intro(); return; }
@@ -1531,11 +1910,77 @@ static void render(void) {
     if (phase != PH_PLAY) draw_result();
 }
 
+static void update_online(float dt) {
+    on_net_view(&online_view); /* locked snapshot; renderer never reads worker memory */
+    if (phase == PH_ONLINE_ROOMS) {
+        if (online_view.mode == ON_NET_LOBBY) {
+            online_has_match = 0;online_selected = -1;
+            phase = PH_ONLINE_LOBBY;
+        }
+        return;
+    }
+    if (online_view.mode != ON_NET_LOBBY || !online_view.slot) {
+        phase = PH_ONLINE_ROOMS;
+        online_has_match = 0;online_selected = -1;
+        online_code[0] = 0;online_page = online_search = 0;
+        return;
+    }
+    int mine = online_role(), other = online_view.slot == ON_SLOT_HOST ?
+                                 online_view.guest_role : online_view.host_role;
+    if (phase == PH_ONLINE_LOBBY) {
+        if (!mine || !other || mine == other || !online_view.guest_id[0]) return;
+        if (online_view.slot == ON_SLOT_HOST) {
+            on_match_new(&online_match, online_view.map);
+            on_net_publish(&online_match);
+        } else {
+            if (!online_view.has_state ||
+                !on_match_valid(&online_view.state)) return;
+            online_match = online_view.state;
+        }
+        online_has_match = 1;online_selected = -1;
+        phase = PH_ONLINE_MATCH;
+        return;
+    }
+    if (phase != PH_ONLINE_MATCH || !online_has_match) return;
+    if (online_view.slot == ON_SLOT_GUEST) {
+        if (online_view.has_state && on_match_valid(&online_view.state) &&
+            (online_view.state.time >= online_match.time || online_view.state.winner))
+            online_match = online_view.state;
+    } else {
+        int changed = 0;
+        if (online_view.has_command &&
+            online_view.command.seq > online_match.ack_guest &&
+            online_view.command.seq < 2000000000) {
+            /* Even rejected moves are acknowledged; otherwise the guest's
+             * single-command mailbox could become permanently blocked. */
+            (void)on_match_apply(&online_match, online_view.guest_role,
+                                 &online_view.command);
+            online_match.ack_guest = online_view.command.seq;
+            changed = 1;
+        }
+        if (!online_match.winner && online_view.guest_id[0] &&
+            mine && other && mine != other) {
+            on_match_step(&online_match, dt);
+            changed = 1;
+        }
+        if (changed) on_net_publish(&online_match);
+    }
+}
+
 void game_tick(float dt, uint32_t *fb) {
     if (dt < 0) dt = 0;
+    int in_online = phase == PH_ONLINE_ROOMS || phase == PH_ONLINE_LOBBY ||
+                    phase == PH_ONLINE_MATCH;
+    if (in_online) {
+        update_online(dt > 0.05f ? 0.05f : dt);
+        if (online_hint_time > 0) online_hint_time -= dt;
+    }
     if (phase == PH_PLAY) update_play(dt);
     else {
-        global_t += dt;
+        /* The online match must not change even the elapsed time of a
+         * separately saved, paused offline battle. */
+        if (!in_online && !(phase == PH_BOOK && book_return == PH_ONLINE_MATCH))
+            global_t += dt;
         if (phase == PH_INTRO) {
             intro_t += dt;
             const float length[3] = { 3.5f, 4.2f, 4.2f };

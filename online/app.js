@@ -225,7 +225,8 @@ async function send(cmd) {
   } else {
     if (pendingSeq) {notice('Подожди, предыдущий ход ещё передаётся.');return;}
     pendingSeq = ++seq;
-    try {await writeCommand(roomId, {...cmd, id: playerId, seq: pendingSeq});}
+    const payload = cmd.kind === 'coin' ? {kind:'coin',coinId:cmd.id} : cmd;
+    try {await writeCommand(roomId, {...payload, id: playerId, seq: pendingSeq});}
     catch (e) {pendingSeq = 0;notice(e.message, 6500);}
   }
 }

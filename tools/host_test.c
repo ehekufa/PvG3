@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include <sys/stat.h>
 #include "game.h"
+#include "online_net.h"
 
 static void write_bmp(const char *path, int w, int h, const uint32_t *rgba) {
     FILE *f = fopen(path, "wb");
@@ -53,6 +54,16 @@ int main(void) {
     /* A neutral gray background replaces the old menu's Queen robot. */
     assert(fb[365 * GAME_W + 1165] == 0xFFADB0ADu);
     write_bmp("shots/menu.bmp", GAME_W, GAME_H, fb);
+    game_input_press(1058, 615);            /* native room browser */
+    on_net_pump_once();                      /* desktop fake: no rooms */
+    game_tick(0, fb);
+    assert(game_phase() == GAME_ONLINE_ROOMS);
+    write_bmp("shots/online_rooms.bmp", GAME_W, GAME_H, fb);
+    game_input_press(785, 180);             /* square opens search */
+    game_tick(0, fb);
+    write_bmp("shots/online_search.bmp", GAME_W, GAME_H, fb);
+    game_input_press(950, 133);
+    game_input_press(1140, 55);             /* back to offline menu */
     game_input_press(235, 100);             /* УРОВНИ */
     game_tick(0, fb);
     write_bmp("shots/select.bmp", GAME_W, GAME_H, fb);
