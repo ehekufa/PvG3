@@ -25,7 +25,11 @@ jobs:
           python3 tools/pack_sprites.py
           python3 tools/pack_font.py
           python3 tools/check_art_roles.py
+          python3 tools/compose_music.py --check
           git diff --exit-code -- src/sprites_data.h src/font_data.h
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -Isrc \
+            src/music_wav.c tools/music_test.c -o music_test -lm
+          ./music_test
           test -s assets/fonts/OFL.txt
           test -s assets/licenses/stb_truetype-MIT.txt
           gcc -std=c11 -O2 -Wall -Wextra -Werror -DGAME_TEST -Isrc \
@@ -59,9 +63,9 @@ jobs:
 
           TC="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
           mkdir -p staging/lib/arm64-v8a staging/lib/armeabi-v7a
-          SRC="src/game.c src/font.c src/android_main.c $GLUE_SRC"
+          SRC="src/game.c src/font.c src/music_wav.c src/android_music.c src/android_main.c $GLUE_SRC"
           CFLAGS="-O3 -s -fPIC -Isrc -I$GLUE_INC"
-          LIBS="-landroid -llog -lEGL -lGLESv2 -lm"
+          LIBS="-landroid -laaudio -llog -lEGL -lGLESv2 -lm"
 
           echo ":: Compiling arm64-v8a (64-bit)"
           "$TC/aarch64-linux-android29-clang" $CFLAGS -shared $SRC $LIBS \
@@ -82,6 +86,8 @@ jobs:
           cp assets/fonts/OFL.txt staging/assets/licenses/PT_Sans-OFL.txt
           cp assets/licenses/stb_truetype-MIT.txt staging/assets/licenses/stb_truetype-MIT.txt
           cp LICENSE staging/assets/licenses/PvG3-MIT.txt
+          mkdir -p staging/assets/music
+          cp assets/music/kirill-pond-loop.wav staging/assets/music/
 
           "$BT/aapt" package -f -M AndroidManifest.xml \
             -I "$SDK/platforms/android-34/android.jar" \
@@ -100,6 +106,7 @@ jobs:
           unzip -l PvG3.apk | grep 'lib/armeabi-v7a/libpvg3.so'
           unzip -l PvG3.apk | grep 'assets/licenses/PT_Sans-OFL.txt'
           unzip -l PvG3.apk | grep 'assets/licenses/stb_truetype-MIT.txt'
+          unzip -l PvG3.apk | grep 'assets/music/kirill-pond-loop.wav'
 
       - uses: actions/upload-artifact@v4
         with:

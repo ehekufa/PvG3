@@ -1,6 +1,7 @@
 # build / generated artifacts
 host_test
 sim_test
+music_test
 *.o
 *.so
 *.apk

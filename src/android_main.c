@@ -5,6 +5,7 @@
  * full-screen quad. Touch events are mapped to the game's virtual resolution.
  */
 #include "game.h"
+#include "android_music.h"
 
 #include <android/log.h>
 #include <android/input.h>
@@ -54,6 +55,11 @@ typedef struct {
 static Engine *G;
 static void campaign_save(struct android_app *app);
 static void garden_save(struct android_app *app);
+
+/* No playback from the background, even if the screen/game is still alive. */
+static void update_music(void) {
+    android_music_set_playing(G->ready && G->resumed && G->focused);
+}
 
 static void engine_term(Engine *e) {
     if (e->display != EGL_NO_DISPLAY) {
@@ -133,20 +139,25 @@ static void on_app_cmd(struct android_app *app, int32_t cmd) {
     switch (cmd) {
     case APP_CMD_INIT_WINDOW:
         if (app->window) engine_init(G);
+        update_music();
         break;
     case APP_CMD_RESUME:
         G->resumed = 1;
+        update_music();
         break;
     case APP_CMD_GAINED_FOCUS:
         G->focused = 1;
+        update_music();
         break;
     case APP_CMD_LOST_FOCUS:
         G->focused = 0;
+        update_music();
         campaign_save(app);
         break;
     case APP_CMD_PAUSE:
     case APP_CMD_STOP:
         G->resumed = 0;
+        update_music();
         campaign_save(app);
         garden_save(app);
         break;
@@ -156,6 +167,8 @@ static void on_app_cmd(struct android_app *app, int32_t cmd) {
         break;
     case APP_CMD_TERM_WINDOW:
         campaign_save(app);
+        G->ready = 0;
+        update_music();
         engine_term(G);
         break;
     default: break;
@@ -281,6 +294,8 @@ void android_main(struct android_app *app) {
     game_init();
     garden_load(app);   /* keep reading the existing pvg3-garden.v1 */
     campaign_load(app);
+    if (!android_music_init(app->activity ? app->activity->assetManager : NULL))
+        LOGE("music unavailable; the game continues without audio");
 
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -320,5 +335,6 @@ void android_main(struct android_app *app) {
 
     campaign_save(app);
     garden_save(app);
+    android_music_shutdown();
     engine_term(&engine);
 }

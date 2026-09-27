@@ -121,6 +121,25 @@ Android его содержимое сохраняется при обычном
 для кувшинки добавлен только новый ID. Неполный/повреждённый файл кампании
 не применяется.
 
+## Музыка
+
+[«Кириллов пруд»](assets/music/kirill-pond-loop.wav) — оригинальная
+инструментальная тема для всей игры: лёгкий синтезаторный мотив, бас,
+перкуссия и «водные» колокольчики. Файл — обычный **WAV (RIFF/PCM, 16 бит,
+стерео, 48 кГц)** длительностью 34,13 секунды. Он незаметно зацикливается:
+хвосты нот и эха переходят через границу цикла, без паузы и щелчка.
+Тема звучит в меню, истории, Саду Дзен и на уровнях; при сворачивании игры
+или потере фокуса Android останавливает воспроизведение, при возвращении —
+продолжает. Громкость управляется кнопками устройства. Если устройство не
+поддерживает аудиовыход, игра продолжает работать без музыки.
+
+Музыка сочинена и синтезирована в
+[`tools/compose_music.py`](tools/compose_music.py) **без чужих мелодий,
+семплов и онлайн-сервисов**. Запусти `python3 tools/compose_music.py`, чтобы
+повторно создать WAV; `python3 tools/compose_music.py --check` проверяет,
+что файл соответствует партитуре. WAV также включён в APK как
+`assets/music/kirill-pond-loop.wav` и воспроизводится через AAudio.
+
 Для всего русского интерфейса используется **настоящий сглаженный шрифт PT
 Sans Regular** с поддержкой кириллицы, а не пиксельные буквы из кода.
 Шрифт распространяется по [SIL OFL 1.1](assets/fonts/OFL.txt); для растеризации
@@ -136,7 +155,7 @@ Sans Regular** с поддержкой кириллицы, а не пиксел�
 исходников выполни `python3 tools/pack_sprites.py` и `python3 tools/pack_font.py`;
 сгенерированные заголовки хранятся в репозитории.
 
-GitHub Actions собирает подписанный APK версии **1.5** для `arm64-v8a` и
+GitHub Actions собирает подписанный APK версии **1.6** для `arm64-v8a` и
 `armeabi-v7a`, Android 10+ (API 29). Результат — артефакт
 `PvG3-Android-arm64-arm32` из workflow **Build PvG3 (Android APK, arm64 + arm32)**.
 Каждая сборка подписывается новым тестовым ключом, поэтому перед установкой
@@ -153,6 +172,10 @@ gcc -std=c11 -O2 -Wall -Wextra -Werror -Isrc src/game.c src/font.c tools/host_te
 
 gcc -std=c11 -O2 -Wall -Wextra -Werror -DGAME_TEST -Isrc src/game.c src/font.c tools/sim_test.c -o sim_test -lm
 ./sim_test
+
+python3 tools/compose_music.py --check
+gcc -std=c11 -O2 -Wall -Wextra -Werror -Isrc src/music_wav.c tools/music_test.c -o music_test -lm
+./music_test
 ```
 
 MIT — см. [LICENSE](LICENSE). Фанатская игра по мотивам жанра tower defense;
