@@ -57,9 +57,30 @@ export async function listRooms() {
     .sort((a, b) => b[1].host.ping - a[1].host.ping)
     .slice(0, 24).map(([id, room]) => ({id, room}));
 }
+// RTDB does not preserve [] or arrays filled with null: those paths become
+// missing nodes. Keep sentinel values in the wire format, then restore the
+// exact arrays expected by the rules before either client uses a snapshot.
+export function encodeState(state) {
+  const nonempty = values => values.length ? values : [false];
+  return {...state,
+    plants: state.plants.map(p => p === null ? false : p),
+    ducks: nonempty(state.ducks), peas: nonempty(state.peas),
+    coins: nonempty(state.coins)};
+}
+export function decodeState(state) {
+  if (!state || typeof state !== 'object') return state;
+  if (Array.isArray(state.plants))
+    state.plants = state.plants.map(p => p === false ? null : p);
+  for (const key of ['ducks', 'peas', 'coins'])
+    if (Array.isArray(state[key]) && state[key].length === 1 && state[key][0] === false)
+      state[key] = [];
+  return state;
+}
 export async function getRoom(id) {
   if (!validId(id)) throw new Error('Неверный код комнаты.');
-  return request(`${ROOM_PATH}/${id}`);
+  const room = await request(`${ROOM_PATH}/${id}`);
+  if (room?.state) decodeState(room.state);
+  return room;
 }
 export async function createRoom(playerId, map) {
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -93,7 +114,7 @@ export async function chooseRole(id, slot, role) {
   return request(`${ROOM_PATH}/${id}/${slot}/role`, 'PUT', role);
 }
 export async function writeState(id, state) {
-  return request(`${ROOM_PATH}/${id}/state`, 'PUT', state);
+  return request(`${ROOM_PATH}/${id}/state`, 'PUT', encodeState(state));
 }
 export async function writeCommand(id, command) {
   return request(`${ROOM_PATH}/${id}/command`, 'PUT', command);

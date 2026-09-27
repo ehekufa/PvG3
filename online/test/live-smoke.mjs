@@ -80,21 +80,27 @@ try {
       'Guest command was not reflected in the host snapshot.');
     console.log('Two-player roles, duck command and acknowledgement round-trip succeeded.');
   }
+} catch (e) {
+  // The sandbox cannot download the runner's raw log ZIP; expose the precise
+  // failure through a GitHub check annotation as well as the normal log.
+  console.error(`::error::${String(e.message).replaceAll('%', '%25').replaceAll('\n', '%0A')}`);
+  console.error(e);
+  process.exitCode = 1;
 } finally {
   if (owned) {
-    const get = await fetch(url, {headers:{'X-Firebase-ETag':'true'}});
-    const saved = get.ok ? await get.json() : null;
-    if (saved?.marker !== marker) {
-      console.error(`Test room ${id} changed; leaving it intact instead of deleting someone else's data.`);
-      process.exitCode = 1;
-    } else {
+    try {
+      const get = await fetch(url, {headers:{'X-Firebase-ETag':'true'}});
+      const saved = get.ok ? await get.json() : null;
+      if (saved?.marker !== marker)
+        throw new Error(`Test room ${id} changed; refusing to delete someone else's data.`);
       const etag = get.headers.get('etag');
-      if (!etag) {console.error(`No ETag for ${id}; refusing unsafe deletion.`);process.exitCode = 1;}
-      else {
-        const result = await fetch(url, {method:'DELETE', headers:{'If-Match':etag}});
-        console.log(`DELETE /rooms/${id}: HTTP ${result.status}`);
-        assert(result.ok, `Could not remove temporary room ${id}.`);
-      }
+      assert(etag, `No ETag for ${id}; refusing unsafe deletion.`);
+      const result = await fetch(url, {method:'DELETE', headers:{'If-Match':etag}});
+      console.log(`DELETE /rooms/${id}: HTTP ${result.status}`);
+      assert(result.ok, `Could not remove temporary room ${id}.`);
+    } catch (e) {
+      console.error(`::error::Cleanup: ${e.message}`);
+      process.exitCode = 1;
     }
   }
 }
