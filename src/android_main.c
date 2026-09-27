@@ -7,6 +7,7 @@
 #include "game.h"
 #include "android_music.h"
 
+#include <jni.h>
 #include <android/log.h>
 #include <android/input.h>
 #include <android/native_window.h>
@@ -237,7 +238,7 @@ static void campaign_load(struct android_app *app) {
     size_t count = fread(bytes, 1, len, f);
     int extra = fgetc(f);
     fclose(f);
-    /* Old V1-V4 saves are shorter than V5. Pass the actual file length to
+    /* Old V1-V4 saves are shorter than V5/V6. Pass the actual file length to
      * game_save_import, which validates size, version and checksum together. */
     if (extra != EOF || !game_save_import(bytes, count))
         LOGE("campaign save rejected (incomplete or incompatible)");
@@ -265,6 +266,55 @@ static void campaign_save(struct android_app *app) {
     free(bytes);
 }
 
+/* Open the published HTML5 multiplayer version. It uses the same author's
+ * PNGs and Firebase database, but lives in a browser so no API keys or extra
+ * Java bytecode need to be stored in this native-only APK. */
+static void open_online_page(struct android_app *app) {
+    if (!app->activity || !app->activity->vm || !app->activity->clazz) return;
+    JavaVM *vm = app->activity->vm;
+    JNIEnv *env = NULL;
+    int attached = 0;
+    if ((*vm)->GetEnv(vm, (void **)&env, JNI_VERSION_1_6) != JNI_OK) {
+        if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK) return;
+        attached = 1;
+    }
+    jclass uri_class = NULL, intent_class = NULL, activity_class = NULL;
+    jstring url = NULL, action = NULL;
+    jobject uri = NULL, intent = NULL;
+    uri_class = (*env)->FindClass(env, "android/net/Uri");
+    intent_class = (*env)->FindClass(env, "android/content/Intent");
+    activity_class = (*env)->FindClass(env, "android/app/Activity");
+    if (!uri_class || !intent_class || !activity_class) goto done;
+    jmethodID parse = (*env)->GetStaticMethodID(env, uri_class, "parse",
+                                "(Ljava/lang/String;)Landroid/net/Uri;");
+    jmethodID ctor = (*env)->GetMethodID(env, intent_class, "<init>",
+                                "(Ljava/lang/String;Landroid/net/Uri;)V");
+    jmethodID start = (*env)->GetMethodID(env, activity_class, "startActivity",
+                                "(Landroid/content/Intent;)V");
+    if (!parse || !ctor || !start) goto done;
+    url = (*env)->NewStringUTF(env, "https://ehekufa.github.io/PvG3/online/");
+    action = (*env)->NewStringUTF(env, "android.intent.action.VIEW");
+    if (!url || !action) goto done;
+    uri = (*env)->CallStaticObjectMethod(env, uri_class, parse, url);
+    if (!uri || (*env)->ExceptionCheck(env)) goto done;
+    intent = (*env)->NewObject(env, intent_class, ctor, action, uri);
+    if (!intent || (*env)->ExceptionCheck(env)) goto done;
+    (*env)->CallVoidMethod(env, app->activity->clazz, start, intent);
+done:
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        LOGE("could not launch browser for ONLINE");
+    }
+    if (intent) (*env)->DeleteLocalRef(env, intent);
+    if (uri) (*env)->DeleteLocalRef(env, uri);
+    if (action) (*env)->DeleteLocalRef(env, action);
+    if (url) (*env)->DeleteLocalRef(env, url);
+    if (activity_class) (*env)->DeleteLocalRef(env, activity_class);
+    if (intent_class) (*env)->DeleteLocalRef(env, intent_class);
+    if (uri_class) (*env)->DeleteLocalRef(env, uri_class);
+    if (attached) (*vm)->DetachCurrentThread(vm);
+}
+
 static int32_t on_input(struct android_app *app, AInputEvent *ev) {
     if (AInputEvent_getType(ev) != AINPUT_EVENT_TYPE_MOTION) return 0;
     if (!G->ready || !G->resumed || !G->focused) return 0;
@@ -276,6 +326,7 @@ static int32_t on_input(struct android_app *app, AInputEvent *ev) {
     if (action == AMOTION_EVENT_ACTION_DOWN) {
         int was_garden = game_phase() == GAME_GARDEN;
         game_input_press(vx, vy);
+        if (game_take_online_request()) open_online_page(app);
         if (was_garden) garden_save(app); /* also save when leaving the garden */
         campaign_save(app); /* cards, coins, selection, results and menu */
     } else if (action == AMOTION_EVENT_ACTION_UP) game_input_release(vx, vy);

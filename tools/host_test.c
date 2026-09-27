@@ -90,6 +90,14 @@ int main(void) {
     game_input_press(320, 160 + 4 * 99 + 44); /* lily's page */
     game_tick(0, fb);
     write_bmp("shots/book_lily.bmp", GAME_W, GAME_H, fb);
+    game_input_press(450, 141);             /* enemy tab */
+    game_input_press(320, 160 + 1 * 99 + 44); /* cone duck */
+    game_tick(0, fb);
+    write_bmp("shots/book_cone.bmp", GAME_W, GAME_H, fb);
+    game_input_press(320, 160 + 2 * 99 + 44); /* helmet duck */
+    game_tick(0, fb);
+    write_bmp("shots/book_helmet.bmp", GAME_W, GAME_H, fb);
+    game_input_press(250, 141);             /* back to the plant tab */
     game_input_press(1130, 50);             /* garden */
     game_input_press(1160, 60);             /* menu */
 
@@ -116,6 +124,9 @@ int main(void) {
     game_debug_snapshot();                 /* final level, queen in robot */
     for (int i = 0; i < 30; i++) game_tick(0.016f, fb);
     write_bmp("shots/play.bmp", GAME_W, GAME_H, fb);
+    game_debug_armored_snapshot();
+    game_tick(0, fb);
+    write_bmp("shots/armored_ducks.bmp", GAME_W, GAME_H, fb);
 
     game_init();
     game_input_press(235, 100);            /* level selector */

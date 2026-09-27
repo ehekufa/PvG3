@@ -17,7 +17,7 @@ static int battle_card_y(int type) { return 137 + type * 107 + 50; }
 static int book_row_y(int type) { return 160 + type * 99 + 44; }
 static int cell_x(int col) { return 250 + col * 114 + 57; }
 static int cell_y(int row) { return 120 + row * 112 + 56; }
-#define LEGACY_SAVE_LEN 9988u /* V1-V4 prefix in the V5 export */
+#define LEGACY_SAVE_LEN 9988u /* V1-V4 prefix in the V6 export */
 static float migrated_x(float x) { return 250 + (x - 120) * 114 / 120; }
 static float migrated_y(float y) { return 120 + (y - 150) * 112 / 108; }
 
@@ -39,7 +39,7 @@ static void advance(float seconds) {
     }
 }
 
-/* V1-V4 shared a 9988-byte layout. V5 appends a second checksummed section.
+/* V1-V4 shared a 9988-byte layout. V5/V6 append a second checksummed section.
  * These fixtures simulate the old binary prefix, including its old checksum. */
 static void rehash(uint8_t *bytes, size_t length) {
     uint32_t hash = 2166136261u;
@@ -78,6 +78,9 @@ int main(void) {
     assert(game_wave_remaining() == 8 && game_wave_total() == 8);
     game_input_press(5, 5);
     assert(game_phase() == GAME_MENU);
+    game_input_press(1058, 615);             /* ONLINE opens the companion game */
+    assert(game_take_online_request() && !game_take_online_request());
+    assert(game_phase() == GAME_MENU);       /* no campaign changes */
     game_input_press(630, 80);               /* labeled levels button */
     assert(game_phase() == GAME_SELECT);
     game_input_press(1130, 50);
@@ -118,6 +121,17 @@ int main(void) {
     assert(game_debug_book_plant() == 3);    /* Jumper's picture and 250 coins */
     game_input_press(320, book_row_y(4));
     assert(game_debug_book_plant() == 4);    /* lily's picture and 25 coins */
+    game_input_press(450, 141);              /* enemy tab, same illustrated duck */
+    game_input_press(320, book_row_y(0));
+    assert(game_debug_book_enemy() == 0);    /* original duck: 180 HP */
+    game_input_press(320, book_row_y(1));
+    assert(game_debug_book_enemy() == 2);    /* cone duck: 420 HP */
+    game_input_press(320, book_row_y(2));
+    assert(game_debug_book_enemy() == 3);    /* helmet duck: 750 HP */
+    game_input_press(320, book_row_y(3));
+    assert(game_debug_book_enemy() == 1);    /* Queen's final robot */
+    game_input_press(250, 141);              /* return to illustrated plants */
+    assert(game_debug_book_plant() == 4);
     game_input_press(1130, 50);
     assert(game_phase() == GAME_GARDEN);
     game_input_press(1160, 60);
@@ -200,6 +214,19 @@ int main(void) {
     assert(game_phase() == GAME_PLAY && game_wave_remaining() == wave_saved);
     assert(game_debug_coin_balance() == 75 && game_debug_plant_type(0, 1) == 2);
     assert(game_debug_first_enemy_type() == 0);
+    /* V5 used the same 10044 bytes and only the original duck/robot IDs. */
+    memcpy(bad, saved, len);
+    uint32_t previous_version = 5;
+    memcpy(bad + 4, &previous_version, sizeof previous_version);
+    rehash(bad, LEGACY_SAVE_LEN);
+    rehash(bad, len);
+    game_init();
+    assert(game_save_import(bad, len));
+    game_input_press(640, 600);
+    assert(game_phase() == GAME_PLAY && game_debug_first_enemy_type() == 0);
+    game_init();
+    assert(game_save_import(saved, len));
+    game_input_press(640, 600);
 
     /* Rewatching level 0 from the selector cannot erase that saved battle. */
     game_input_press(1180, 55);             /* battle -> menu */
@@ -387,7 +414,7 @@ int main(void) {
     assert(game_debug_duck_x(2) < duck_x && game_debug_duck_x(2) > duck_x - 2);
 
     /* V3 snapshots keep the old prefix but use the ORIGINAL lawn geometry.
-     * Migrate every world-space object, then re-export V5: it must not move
+     * Migrate every world-space object, then re-export V6: it must not move
      * again the next time the player resumes the same battle. */
     game_debug_snapshot();
     float old_boss_x = game_debug_boss_x();
@@ -419,7 +446,7 @@ int main(void) {
     assert(game_save_export(saved, len));
     uint32_t version;
     memcpy(&version, saved + 4, sizeof version);
-    assert(version == 5);
+    assert(version == 6);
     game_init();
     assert(game_save_import(saved, len));
     game_input_press(640, 600);
@@ -456,7 +483,7 @@ int main(void) {
     assert(game_save_export(saved, len));
     game_init();
     assert(game_save_import(saved, len));
-    game_input_press(640, 600);              /* V5 keeps BOTH water layers */
+    game_input_press(640, 600);              /* V6 keeps BOTH water layers */
     assert(game_level() == 5 && game_debug_lily_at(1, 2) && game_debug_lily_at(2, 5));
     assert(game_debug_plant_type(1, 2) == 0 && game_debug_plant_type(3, 1) == 2);
     assert(game_debug_cooldown(4) > 0 && game_debug_coin_balance() == 170);
@@ -492,6 +519,27 @@ int main(void) {
     assert(!game_debug_lily_at(1, 2));
     seed_at(0, 1, 2);                         /* water becomes ordinary grass */
     assert(game_debug_plant_type(1, 2) == 0);
+
+    /* Cone and helmet are tougher versions of the SAME illustrated duck;
+     * both count toward the wave and survive a V6 campaign save/load. */
+    game_init();
+    game_input_press(235, 100); game_input_press(190, 270);
+    game_debug_spawn_armored_duck(0, 800, 2);
+    game_debug_spawn_armored_duck(1, 960, 3);
+    assert(game_debug_first_enemy_type() == 2);
+    assert(game_debug_enemy_hp(2) == 420 && game_debug_enemy_hp(3) == 750);
+    assert(game_wave_remaining() == 8);
+    assert(game_save_export(saved, len));
+    game_init();
+    assert(game_save_import(saved, len));
+    game_input_press(640, 600);
+    assert(game_debug_enemy_hp(2) == 420 && game_debug_enemy_hp(3) == 750);
+    memcpy(bad, saved, len);
+    previous_version = 5;
+    memcpy(bad + 4, &previous_version, sizeof previous_version);
+    rehash(bad, LEGACY_SAVE_LEN); rehash(bad, len);
+    assert(!game_save_import(bad, len));   /* no armor IDs in a V5 save */
+    assert(game_debug_enemy_hp(3) == 750); /* invalid import did not mutate */
     free(saved);
     free(bad);
 
@@ -500,6 +548,6 @@ int main(void) {
     for (int i = 0; i < 12 * 60; i++) game_tick(1.0f / 60, NULL);
     assert(game_phase() == GAME_PLAY && game_level() == 1);
 
-    puts("OK: water level and lilies, five drawn plants, V1-V5 saves, waves, boss and Cyrillic font");
+    puts("OK: water/lilies, cone and helmet ducks, enemy book, V1-V6 saves and Cyrillic font");
     return 0;
 }

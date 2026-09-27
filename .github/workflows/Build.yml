@@ -30,6 +30,8 @@ jobs:
           gcc -std=c11 -O2 -Wall -Wextra -Werror -Isrc \
             src/music_wav.c tools/music_test.c -o music_test -lm
           ./music_test
+          node --test online/test/*.test.js
+          test -s online/index.html && test -s online/style.css
           test -s assets/fonts/OFL.txt
           test -s assets/licenses/stb_truetype-MIT.txt
           gcc -std=c11 -O2 -Wall -Wextra -Werror -DGAME_TEST -Isrc \

@@ -242,7 +242,16 @@ enum { PT_NONE = -1, PT_PEA = 0, PT_WALL, PT_SUNFLOWER, PT_JUMPER,
        PT_LILY, PT_COUNT };
 _Static_assert(PT_JUMPER == 3 && PT_LILY == 4,
                "existing garden plant IDs must not change");
-enum { EN_DUCK = 0, EN_ROBOT };
+/* Save IDs 0/1 were already used by the duck and the final robot. The cone
+ * and helmet are protective gear on the author's SAME duck drawing. */
+enum { EN_DUCK = 0, EN_ROBOT = 1, EN_CONE = 2, EN_HELMET = 3, EN_COUNT };
+static const int EN_BASE_HP[EN_COUNT] = { 180, 5500, 420, 750 };
+static const int EN_ONLINE_COST[EN_COUNT] = { 50, 0, 100, 175 };
+static const char *const EN_NAMES[EN_COUNT] = {
+    "УТКА-ЗОМБИ", "РОБОТ КОРОЛЕВЫ", "УТКА С КОНУСОМ", "УТКА В ШЛЕМЕ"
+};
+static const int BOOK_ENEMIES[] = { EN_DUCK, EN_CONE, EN_HELMET, EN_ROBOT };
+#define BOOK_ENEMY_COUNT 4
 
 typedef struct {
     int cost, hp;
@@ -296,6 +305,9 @@ static float cooldown[PT_COUNT];
 static int garden[ROWS][COLS];
 static int garden_selected;            /* -1 nothing, PT_COUNT eraser */
 static int book_selected;
+static int book_enemy_selected;         /* 0..3 in BOOK_ENEMIES */
+static int book_enemy_tab;              /* the five plants or illustrated foes */
+static int open_online_requested;
 static Phase book_return;
 static float spawn_t;
 static int to_spawn;
@@ -399,6 +411,36 @@ static void draw_plant(int cx, int cy, int type, float sway) {
 /* author's duck-zombie and the Duck Queen's piloted robot            */
 /* ------------------------------------------------------------------ */
 
+/* The zombie variants use the *same* user-drawn duck. Only their protective
+ * cone/helmet are UI geometry; no replacement or invented character art. */
+static void draw_duck_variant(int x, int y, int size, int type, int flip) {
+    sprite_draw(SPR_DUCK, x, y, size, size, flip);
+    int cx = x + size * (flip ? 46 : 54) / 100;
+    int brim = y + size * 34 / 100;
+    if (type == EN_CONE) {
+        int tip = brim - size * 52 / 100;
+        int half = size * 25 / 100;
+        for (int py = tip; py < brim; py++) {
+            int w = 2 + (py - tip) * half / (brim - tip);
+            rect(cx - w, py, cx + w, py, COL(238, 111, 28));
+            if (w > 6) rect(cx - w + 3, py, cx - w + 5, py, COL(255, 193, 71));
+        }
+        rect(cx - half - 4, brim - size / 15, cx + half + 4, brim,
+             COL(181, 70, 24));
+        rect(cx - half + 2, brim - size / 15, cx + half - 2,
+             brim - size / 15 + 3, COL(255, 192, 65));
+    } else if (type == EN_HELMET) {
+        ellipse(cx, brim - size / 10, size * 29 / 100, size * 20 / 100,
+                COL(84, 106, 123));
+        ellipse(cx - size / 13, brim - size / 6, size / 12, size / 15,
+                COL(157, 179, 185));
+        rect(cx - size * 33 / 100, brim - size / 20,
+             cx + size * 33 / 100, brim + size / 35, COL(47, 69, 81));
+        rect(cx - size * 28 / 100, brim - size / 20,
+             cx + size * 28 / 100, brim - size / 40, COL(179, 192, 188));
+    }
+}
+
 static void draw_enemy(const Zombie *z) {
     int x = (int)z->x, y = CELL_CY(z->row);
     if (z->type == EN_ROBOT) {
@@ -407,7 +449,8 @@ static void draw_enemy(const Zombie *z) {
     } else {
         ellipse(x, y + 36, 40, 8, COL(48, 120, 34));
         /* The duck faces right in the PNG: turn it towards the house. */
-        sprite_draw(SPR_DUCK, x - 46, y - 50 + (int)(sinf(z->anim) * 2), 92, 92, 1);
+        draw_duck_variant(x - 46, y - 50 + (int)(sinf(z->anim) * 2),
+                          92, z->type, 1);
     }
 }
 
@@ -423,8 +466,13 @@ static int spawn_zombie(void) {
             z->active = 1;
             z->row = (int)(rndf() * ROWS);
             z->x = GAME_W + 30 + rndf() * 60;
-            z->type = EN_DUCK; /* one enemy species, the author's yellow duck */
-            z->hp = z->maxhp = (180 + 35 * (level - 1)) * (1.0f + 0.25f * prog);
+            float roll = rndf();
+            z->type = level >= 6 && roll < 0.12f ? EN_HELMET :
+                      level >= 3 && roll < 0.38f ? EN_CONE : EN_DUCK;
+            /* The same duck gains real HP from its gear; not merely a hat. */
+            float base = (180 + 35 * (level - 1)) *
+                         (float)EN_BASE_HP[z->type] / EN_BASE_HP[EN_DUCK];
+            z->hp = z->maxhp = base * (1.0f + 0.25f * prog);
             z->speed = 22 + level * 0.7f + rndf() * 5;
             z->eating = 0; z->anim = rndf() * 6.28f;
             return 1;
@@ -522,6 +570,9 @@ void game_init(void) {
         for (int c = 0; c < COLS; c++) garden[r][c] = PT_NONE;
     garden_selected = -1;
     book_selected = PT_PEA;
+    book_enemy_selected = 0;
+    book_enemy_tab = 0;
+    open_online_requested = 0;
     book_return = PH_MENU;
     phase = PH_MENU;
 }
@@ -540,14 +591,22 @@ void game_debug_snapshot(void) {
     grid[4][1].type = PT_SUNFLOWER; grid[4][1].hp = PDEF[PT_SUNFLOWER].hp;
     grid[4][1].fire_t = COIN_INTERVAL;
     grid[2][5].type = PT_JUMPER; grid[2][5].hp = PDEF[PT_JUMPER].hp;
-    spawn_zombie(); zomb[0].x = 980; zomb[0].row = 4;
-    spawn_zombie(); zomb[1].x = 1100; zomb[1].row = 0;
+    spawn_zombie(); zomb[0].x = 980; zomb[0].row = 4; zomb[0].type = EN_DUCK;
+    spawn_zombie(); zomb[1].x = 1100; zomb[1].row = 0; zomb[1].type = EN_DUCK;
     spawn_boss();   zomb[2].x = 1020; boss_spawned = 1;
     boss_phase = 1; to_spawn = 0;
     banner_text = "КОРОЛЕВА В РОБОТЕ!"; banner_t = 5;
     spawn_pea(2, 400, 20);
     spawn_pea(1, 520, 20);
     spawn_coin(CELL_CX(1) + 26, CELL_CY(4) - 30); coins[0].y = coins[0].target_y;
+}
+
+void game_debug_armored_snapshot(void) {
+    game_debug_snapshot();
+    zomb[0].type = EN_CONE;
+    zomb[0].hp = zomb[0].maxhp = EN_BASE_HP[EN_CONE];
+    zomb[1].type = EN_HELMET;
+    zomb[1].hp = zomb[1].maxhp = EN_BASE_HP[EN_HELMET];
 }
 
 /* ------------------------------------------------------------------ */
@@ -819,6 +878,7 @@ void game_input_press(int x, int y) {
             garden_selected = -1;
             phase = PH_GARDEN;
         } else if (inside(x, y, 98, 568, 392, 670)) open_book();
+        else if (inside(x, y, 887, 563, 1229, 667)) open_online_requested = 1;
         return;
     }
     if (phase == PH_SELECT) {
@@ -841,10 +901,14 @@ void game_input_press(int x, int y) {
     }
     if (phase == PH_BOOK) {
         if (inside(x, y, 1045, 18, 1265, 85)) { phase = book_return; return; }
-        for (int i = 0; i < PT_COUNT; i++)
+        if (inside(x, y, 160, 121, 344, 159)) { book_enemy_tab = 0; return; }
+        if (inside(x, y, 355, 121, 540, 159)) { book_enemy_tab = 1; return; }
+        int count = book_enemy_tab ? BOOK_ENEMY_COUNT : PT_COUNT;
+        for (int i = 0; i < count; i++)
             if (inside(x, y, 160, BOOK_ENTRY_Y + i * BOOK_ENTRY_STEP,
                        540, BOOK_ENTRY_Y + i * BOOK_ENTRY_STEP + BOOK_ENTRY_H)) {
-                book_selected = i;
+                if (book_enemy_tab) book_enemy_selected = i;
+                else book_selected = i;
                 return;
             }
         return;
@@ -941,6 +1005,11 @@ void game_input_press(int x, int y) {
 }
 
 void game_input_release(int x, int y) { (void)x; (void)y; }
+int game_take_online_request(void) {
+    int requested = open_online_requested;
+    open_online_requested = 0;
+    return requested;
+}
 
 /* ------------------------------------------------------------------ */
 /* render                                                             */
@@ -1005,7 +1074,7 @@ static void draw_mowers(void) {
 int game_wave_remaining(void) {
     int remaining = to_spawn;
     for (int i = 0; i < ZMAX; i++)
-        if (zomb[i].active && zomb[i].type == EN_DUCK) remaining++;
+        if (zomb[i].active && zomb[i].type != EN_ROBOT) remaining++;
     return remaining;
 }
 
@@ -1157,13 +1226,13 @@ static void draw_menu(void) {
 
     draw_button(98, 568, 392, 665, "КНИГА", 5);
     draw_button(440, 548, 840, 674, "СТАРТ", 8);
-    rect(887, 563, 1229, 667, COL(104, 106, 99));
-    rect(893, 569, 1223, 661, COL(210, 211, 199));
-    char status[60];
-    snprintf(status, sizeof(status), "ПРОЙДЕНО: %d / 10", game_completed_level());
-    draw_text_c(1058, 583, 3, COL(62, 67, 56), status);
-    snprintf(status, sizeof(status), "СТАРТ: УРОВЕНЬ %d", resume_level);
-    draw_text_c(1058, 621, 2, COL(67, 69, 60), status);
+    char status[75];
+    snprintf(status, sizeof(status), "ПРОЙДЕНО: %d / 10   •   СТАРТ: УРОВЕНЬ %d",
+             game_completed_level(), resume_level);
+    draw_text_c(1058, 538, 2, COL(46, 48, 43), status);
+    draw_button(893, 569, 1223, 661, "ОНЛАЙН", 6);
+    rect(926, 609, 946, 614, COL(255, 217, 106));
+    rect(933, 602, 939, 621, COL(255, 217, 106));
     draw_text_c(640, 689, 2, COL(44, 46, 42),
                 "АВТОСОХРАНЕНИЕ. РАСТЕНИЯ СОЗДАЛ КИРИЛЛ.");
 }
@@ -1262,22 +1331,64 @@ static void draw_book(void) {
     rect(567, 122, 1192, 677, COL(223, 142, 79));
     rect(550, 122, 568, 677, COL(150, 91, 56));
     rect(554, 131, 564, 667, COL(190, 124, 77));
-    draw_text(160, 135, 3, COL(93, 57, 39), "РАСТЕНИЯ КИРИЛЛА");
+    rect(160, 123, 344, 158, book_enemy_tab ? COL(171, 134, 98) : COL(253, 193, 91));
+    rect(355, 123, 540, 158, book_enemy_tab ? COL(253, 193, 91) : COL(171, 134, 98));
+    draw_text_c(252, 131, 2, COL(70, 47, 32), "РАСТЕНИЯ");
+    draw_text_c(448, 131, 2, COL(70, 47, 32), "ВРАГИ");
 
-    for (int i = 0; i < PT_COUNT; i++) {
+    int count = book_enemy_tab ? BOOK_ENEMY_COUNT : PT_COUNT;
+    for (int i = 0; i < count; i++) {
         int y0 = BOOK_ENTRY_Y + i * BOOK_ENTRY_STEP;
+        int type = book_enemy_tab ? BOOK_ENEMIES[i] : i;
+        int highlighted = (book_enemy_tab ? book_enemy_selected : book_selected) == i;
         rect(160, y0, 540, y0 + BOOK_ENTRY_H,
-             book_selected == i ? COL(173, 93, 42) : COL(178, 147, 108));
+             highlighted ? COL(173, 93, 42) : COL(178, 147, 108));
         rect(165, y0 + 5, 535, y0 + BOOK_ENTRY_H - 5,
-             book_selected == i ? COL(254, 209, 132) : COL(249, 233, 192));
-        sprite_draw(PDEF[i].sprite, 183, y0 + 11, 67, 67, 0);
-        draw_text(265, y0 + 9, 2, COL(75, 52, 33), PDEF[i].short_name);
-        draw_text(265, y0 + 35, 2, COL(100, 70, 39), "ЦЕНА:");
-        draw_int(352, y0 + 35, 2, COL(100, 70, 39), PDEF[i].cost);
-        draw_text(265, y0 + 64, 2, COL(111, 75, 42),
-                  i == PT_PEA ? "АТАКА" : i == PT_WALL ? "ЗАЩИТА" :
-                  i == PT_JUMPER ? "ОТБРОС" :
-                  i == PT_LILY ? "ВОДА" : "МОНЕТЫ");
+             highlighted ? COL(254, 209, 132) : COL(249, 233, 192));
+        if (book_enemy_tab) {
+            if (type == EN_ROBOT) sprite_draw(SPR_ROBOT, 183, y0 + 11, 67, 67, 0);
+            else draw_duck_variant(183, y0 + 15, 63, type, 1);
+            draw_text(265, y0 + 9, 2, COL(75, 52, 33), EN_NAMES[type]);
+            draw_text(265, y0 + 38, 2, COL(100, 70, 39), "ЗДОРОВЬЕ:");
+            draw_int(423, y0 + 38, 2, COL(100, 70, 39), EN_BASE_HP[type]);
+        } else {
+            sprite_draw(PDEF[i].sprite, 183, y0 + 11, 67, 67, 0);
+            draw_text(265, y0 + 9, 2, COL(75, 52, 33), PDEF[i].short_name);
+            draw_text(265, y0 + 35, 2, COL(100, 70, 39), "ЦЕНА:");
+            draw_int(352, y0 + 35, 2, COL(100, 70, 39), PDEF[i].cost);
+            draw_text(265, y0 + 64, 2, COL(111, 75, 42),
+                      i == PT_PEA ? "АТАКА" : i == PT_WALL ? "ЗАЩИТА" :
+                      i == PT_JUMPER ? "ОТБРОС" :
+                      i == PT_LILY ? "ВОДА" : "МОНЕТЫ");
+        }
+    }
+
+    if (book_enemy_tab) {
+        int type = BOOK_ENEMIES[book_enemy_selected];
+        if (type == EN_ROBOT) sprite_draw(SPR_ROBOT, 762, 158, 210, 210, 0);
+        else draw_duck_variant(762, 163, 208, type, 1);
+        int title_size = 4;
+        while (title_size > 2 && text_w(title_size, EN_NAMES[type]) > 565) title_size--;
+        draw_text_c(865, 380, title_size, COL(71, 47, 39), EN_NAMES[type]);
+        draw_text(600, 430, 3, COL(88, 57, 36), "ЗДОРОВЬЕ:");
+        draw_int(815, 430, 3, COL(126, 76, 26), EN_BASE_HP[type]);
+        if (type != EN_ROBOT) {
+            draw_text(600, 475, 2, COL(88, 57, 36), "ОТПРАВИТЬ ОНЛАЙН:");
+            draw_int(916, 475, 2, COL(126, 76, 26), EN_ONLINE_COST[type]);
+            draw_text(974, 475, 2, COL(88, 57, 36), "МОНЕТ");
+        } else draw_text(600, 475, 2, COL(88, 57, 36), "ПОЯВЛЯЕТСЯ В КОНЦЕ УРОВНЯ 10");
+        rect(580, 524, 1150, 663, COL(147, 83, 45));
+        rect(585, 529, 1145, 658, COL(249, 193, 121));
+        draw_text(598, 541, 2, COL(78, 52, 33),
+                  type == EN_DUCK ? "НАРИСОВАННАЯ АВТОРОМ УТКА-ЗОМБИ." :
+                  type == EN_CONE ? "КОНУС ЗАЩИЩАЕТ ТУ ЖЕ УТКУ." :
+                  type == EN_HELMET ? "ШЛЕМ ДЕЛАЕТ ТУ ЖЕ УТКУ ЕЩЁ КРЕПЧЕ." :
+                                      "КОРОЛЕВА УПРАВЛЯЕТ БОЛЬШИМ РОБОТОМ.");
+        draw_text(598, 573, 2, COL(78, 52, 33),
+                  type == EN_ROBOT ? "МЕДЛЕННО ТОПЧЕТ РАСТЕНИЯ." :
+                                     "ЧЕМ ДАЛЬШЕ УРОВЕНЬ, ТЕМ БОЛЬШЕ ЗДОРОВЬЯ.");
+        draw_text(598, 618, 3, COL(116, 65, 36), "РИСУНОК АВТОРА");
+        return;
     }
 
     const PlantDef *p = &PDEF[book_selected];
@@ -1461,8 +1572,8 @@ int game_garden_import(const uint8_t cells[GAME_GARDEN_CELLS]) {
 }
 
 /* The garden remains in pvg3-garden.v1. Campaign V1-V4 had the exact same
- * binary layout; V5 appends water-pad flags and their packet cooldown without
- * altering any old fields. Thus old in-progress battles can still be read.
+ * binary layout; V5 added water-pad flags and V6 keeps the V5 length/layout
+ * while allowing the two new duck IDs. Old in-progress battles still load.
  * No pointers or random bytes persist; integers/floats are 32-bit on the
  * supported little-endian Android ABIs. */
 _Static_assert(sizeof(int) == 4 && sizeof(float) == 4, "save needs 32-bit fields");
@@ -1497,7 +1608,7 @@ _Static_assert(sizeof(SaveStateV5) == 10044 &&
                "Keep the campaign V5 save layout readable on both Android ABIs");
 
 #define SAVE_MAGIC 0x33477650u /* little-endian bytes 'P', 'v', 'G', '3' */
-#define SAVE_VERSION 5u
+#define SAVE_VERSION 6u
 
 /* Campaigns saved before the vertical-card UI used the lawn at (120,150)
  * with 120x108 cells. Preserve each entity's position within its cell when
@@ -1574,7 +1685,7 @@ int game_save_import(const void *src, size_t length) {
     if (length == sizeof(SaveStateV5)) {
         SaveStateV5 v5;
         memcpy(&v5, src, sizeof(v5)); /* src need not be aligned */
-        if (v5.base.version != SAVE_VERSION ||
+        if ((v5.base.version != 5u && v5.base.version != SAVE_VERSION) ||
             v5.checksum != save_checksum_v5(&v5) ||
             v5.base.checksum != save_checksum(&v5.base) ||
             v5.reserved[0] || v5.reserved[1] || v5.reserved[2] ||
@@ -1594,11 +1705,11 @@ int game_save_import(const void *src, size_t length) {
         imported_lily_cooldown = v5.lily_cooldown;
     } else if (length == sizeof(SaveState)) {
         memcpy(&s, src, sizeof(s)); /* legacy V1-V4 file */
-        if (s.version >= SAVE_VERSION) return 0;
+        if (s.version >= 5u) return 0;
     } else return 0;
     if (s.magic != SAVE_MAGIC ||
         (s.version != 1u && s.version != 2u && s.version != 3u &&
-         s.version != 4u && s.version != SAVE_VERSION) ||
+         s.version != 4u && s.version != 5u && s.version != SAVE_VERSION) ||
         s.checksum != save_checksum(&s) ||
         s.completed < 0 ||
         (s.version == 1u && s.completed > MAX_LEVEL) ||
@@ -1620,7 +1731,7 @@ int game_save_import(const void *src, size_t length) {
               s.jumper_cooldown > PDEF[PT_JUMPER].recharge + 1)) ||
             s.coin_balance < 0 || s.coin_balance > 1000000 ||
             s.selected < -1 ||
-            s.selected >= (s.version < SAVE_VERSION ? PT_LILY : PT_COUNT) ||
+            s.selected >= (s.version < 5u ? PT_LILY : PT_COUNT) ||
             s.total_zombies != 5 + s.level * 3 ||
             s.to_spawn < 0 || s.to_spawn > s.total_zombies ||
             !isfinite(s.spawn_t) || !isfinite(s.global_t) || !isfinite(s.banner_t))
@@ -1637,7 +1748,7 @@ int game_save_import(const void *src, size_t length) {
                 if (p->type < PT_NONE || p->type >= PT_LILY ||
                     (p->type != PT_NONE && (!isfinite(p->hp) ||
                       !isfinite(p->fire_t) || !isfinite(p->sway))) ||
-                    (s.version == SAVE_VERSION && s.level == WATER_LEVEL &&
+                    (s.version >= 5u && s.level == WATER_LEVEL &&
                      r >= WATER_FIRST_ROW && r <= WATER_LAST_ROW &&
                      p->type != PT_NONE && !imported_lily[r][c])) return 0;
             }
@@ -1646,7 +1757,8 @@ int game_save_import(const void *src, size_t length) {
             const Zombie *z = &s.zomb[i];
             if (z->active != 0 && z->active != 1) return 0;
             if (z->active && (z->row < 0 || z->row >= ROWS ||
-                z->type < EN_DUCK || z->type > EN_ROBOT ||
+                z->type < EN_DUCK ||
+                z->type > (s.version >= SAVE_VERSION ? EN_HELMET : EN_ROBOT) ||
                 !isfinite(z->x) || !isfinite(z->hp) || !isfinite(z->maxhp) ||
                 !isfinite(z->speed) || !isfinite(z->anim))) return 0;
         }
@@ -1688,7 +1800,7 @@ int game_save_import(const void *src, size_t length) {
                     !isfinite(s.coins[i].target_y)) return 0;
             }
         }
-        if (s.version < SAVE_VERSION && s.level == WATER_LEVEL) {
+        if (s.version < 5u && s.level == WATER_LEVEL) {
             /* Level 5 used to be land. Do not drown plants on a saved V1-V4
              * board: give each occupied water cell a free supporting pad. */
             for (int r = WATER_FIRST_ROW; r <= WATER_LAST_ROW; r++)
@@ -1748,6 +1860,23 @@ void game_debug_spawn_duck(int row, float x) {
             if (to_spawn > 0) to_spawn--;
             return;
         }
+}
+void game_debug_spawn_armored_duck(int row, float x, int type) {
+    if (row < 0 || row >= ROWS || (type != EN_CONE && type != EN_HELMET)) return;
+    for (int i = 0; i < ZMAX; i++)
+        if (!zomb[i].active) {
+            Zombie *z = &zomb[i];
+            memset(z, 0, sizeof(*z));
+            z->active = 1; z->type = type; z->row = row; z->x = x;
+            z->hp = z->maxhp = EN_BASE_HP[type]; z->speed = 25;
+            if (to_spawn > 0) to_spawn--;
+            return;
+        }
+}
+float game_debug_enemy_hp(int type) {
+    for (int i = 0; i < ZMAX; i++)
+        if (zomb[i].active && zomb[i].type == type) return zomb[i].hp;
+    return -1;
 }
 float game_debug_duck_x(int row) {
     for (int i = 0; i < ZMAX; i++)
@@ -1826,7 +1955,10 @@ int game_debug_garden_plant_type(int row, int col) {
     if ((unsigned)row >= ROWS || (unsigned)col >= COLS) return PT_NONE;
     return garden[row][col];
 }
-int game_debug_book_plant(void) { return book_selected; }
+int game_debug_book_plant(void) { return book_enemy_tab ? -1 : book_selected; }
+int game_debug_book_enemy(void) {
+    return book_enemy_tab ? BOOK_ENEMIES[book_enemy_selected] : -1;
+}
 int game_debug_level_completed(int n) {
     return n >= 1 && n <= MAX_LEVEL && !!(completed_mask & (1u << (n - 1)));
 }

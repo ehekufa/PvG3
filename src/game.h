@@ -29,7 +29,7 @@ int game_wave_total(void);
  * coins, enemies and unlocked progress; load returns to the menu, where Play
  * resumes an in-progress battle. The separately saved Zen Garden is excluded.
  * Import validates the entire snapshot before changing any game state and
- * also accepts the shorter V1-V4 files from earlier APKs. */
+ * also accepts the shorter V1-V4 and same-sized V5 files from earlier APKs. */
 size_t game_save_size(void);
 int game_save_export(void *dst, size_t capacity);
 int game_save_import(const void *src, size_t length);
@@ -37,13 +37,17 @@ int game_save_import(const void *src, size_t length);
 /* Pointer events in virtual coordinates (0..GAME_W, 0..GAME_H). */
 void game_input_press(int x, int y);
 void game_input_release(int x, int y);
+/* Menu ONLINE button requests the separately hosted multiplayer page. The
+ * Android host consumes this once and opens the HTTPS page in a browser. */
+int game_take_online_request(void);
 
 /* Advance by dt seconds. If fb is non-NULL, render to GAME_W*GAME_H pixels
  * in RGBA8 byte order. Pass NULL to simulate without drawing (tests). */
 void game_tick(float dt, uint32_t *fb);
 
-/* Host screenshot helper: jump into a populated level-10 scene. */
+/* Host screenshot helpers: jump into illustrated combat scenes. */
 void game_debug_snapshot(void);
+void game_debug_armored_snapshot(void);
 
 /* Zen Garden layout is stored by the Android host in the app's private data.
  * 0 = empty plot, 1..5 = one of Kirill's five drawn plants. Old IDs 1..4 stay. */
@@ -58,6 +62,8 @@ int game_phase(void);
 /* Deterministic test hooks; excluded from the Android build. */
 void game_debug_finish_wave(void);
 void game_debug_spawn_duck(int row, float x);
+void game_debug_spawn_armored_duck(int row, float x, int type);
+float game_debug_enemy_hp(int type);
 float game_debug_duck_x(int row);
 void game_debug_defeat_boss(void);
 int game_debug_boss_alive(void);
@@ -79,6 +85,7 @@ int game_debug_coin_count(void);
 float game_debug_cooldown(int plant);
 int game_debug_garden_plant_type(int row, int col);
 int game_debug_book_plant(void);
+int game_debug_book_enemy(void);
 int game_debug_level_completed(int level);
 #endif
 
