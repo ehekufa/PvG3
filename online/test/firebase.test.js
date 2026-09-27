@@ -20,8 +20,8 @@ test('room creation, list, compare-and-set join, role choice, actions and exit',
     }
     key=segments.at(-1);
     if (segments[0] === 'rooms' && segments.length === 1) {
-      assert.equal(route.searchParams.get('shallow'), 'true');
-      return reply(200,Object.fromEntries(Object.keys(rooms.rooms||{}).map(k=>[k,true])));
+      assert.equal(route.searchParams.get('shallow'), null);
+      return reply(200,rooms.rooms||null);
     }
     const method = opts.method || 'GET';
     if (method === 'GET') return reply(200,parent[key] ?? null);
@@ -38,10 +38,16 @@ test('room creation, list, compare-and-set join, role choice, actions and exit',
     const host='a'.repeat(32),guest='b'.repeat(32);
     const created=await createRoom(host,5);
     assert(validId(created.id));
-    assert.equal((await listRooms())[0],created.id);
+    // Abandoned rooms whose codes sort after this one must not hide it.
+    const alphabet='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    for (let i=0;i<32;i++) rooms.rooms[`ZZAA${alphabet[0]}${alphabet[i]}`]={
+      version:1,host:{id:host,ping:Date.now()-11*60*1000},guest:null,
+    };
+    assert.deepEqual((await listRooms()).map(({id})=>id),[created.id]);
     assert.equal((await getRoom(created.id)).map,5);
     const joined=await joinRoom(created.id,guest);
     assert.equal(joined.guest.id,guest);
+    assert.deepEqual(await listRooms(),[]); // occupied rooms are not advertised
     await assert.rejects(joinRoom(created.id,'c'.repeat(32)),/занята/);
     await chooseRole(created.id,'host','plants');
     await chooseRole(created.id,'guest','zombies');

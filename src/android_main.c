@@ -292,7 +292,12 @@ static void open_online_page(struct android_app *app) {
     jmethodID start = (*env)->GetMethodID(env, activity_class, "startActivity",
                                 "(Landroid/content/Intent;)V");
     if (!parse || !ctor || !start) goto done;
-    url = (*env)->NewStringUTF(env, "https://ehekufa.github.io/PvG3/online/");
+    /* Pages needs a one-time repository-admin setting. Until it is enabled,
+     * launch the public branch through an HTML-capable source-code proxy;
+     * otherwise the ONLINE button would just open a GitHub Pages 404. The
+     * proxy asks for a one-time confirmation before showing the game. */
+    url = (*env)->NewStringUTF(env,
+        "https://raw.githack.com/ehekufa/PvG3/arena/01a0dc80-pvg3/online/index.html");
     action = (*env)->NewStringUTF(env, "android.intent.action.VIEW");
     if (!url || !action) goto done;
     uri = (*env)->CallStaticObjectMethod(env, uri_class, parse, url);

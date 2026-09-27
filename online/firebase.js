@@ -43,8 +43,19 @@ export function randomPlayerId() {
   return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
 }
 export async function listRooms() {
-  const data = await request(`${ROOM_PATH}?shallow=true`);
-  return data && typeof data === 'object' ? Object.keys(data).filter(validId).slice(-24).reverse() : [];
+  // Shallow RTDB queries contain keys but no timestamps. Taking the last N
+  // keys would eventually hide new rooms behind abandoned, alphabetically
+  // later ones. Read just /rooms, then show the most recently active lobbies.
+  const data = await request(ROOM_PATH);
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return [];
+  const now = Date.now();
+  return Object.entries(data)
+    .filter(([id, room]) => validId(id) && room?.version === 1 &&
+      typeof room.host?.id === 'string' && Number.isFinite(room.host.ping) &&
+      Math.abs(now - room.host.ping) < 10 * 60 * 1000 &&
+      !room.guest && !room.state)
+    .sort((a, b) => b[1].host.ping - a[1].host.ping)
+    .slice(0, 24).map(([id, room]) => ({id, room}));
 }
 export async function getRoom(id) {
   if (!validId(id)) throw new Error('Неверный код комнаты.');

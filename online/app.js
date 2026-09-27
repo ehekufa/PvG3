@@ -48,33 +48,24 @@ async function refreshRooms() {
   const loading = document.createElement('p');
   loading.className = 'muted';loading.textContent = 'Обновляем комнаты…';list.append(loading);
   try {
-    const codes = (await listRooms()).slice(0, 12);
-    const info = await Promise.all(codes.map(async id => {
-      try { return {id, room: await getRoom(id)}; }
-      catch { return {id, room: null}; }
-    }));
+    const info = (await listRooms()).slice(0, 12);
     if (screen !== 'rooms') return;
     list.innerHTML = '';
-    let count = 0;
     for (const {id, room: entry} of info) {
-      if (!entry || entry.version !== 1 || !entry.host?.id ||
-          Math.abs(Date.now() - entry.host.ping) > 10 * 60 * 1000) continue;
-      count++;
-      const occupied = !!(entry.guest || entry.state);
       const button = document.createElement('button');
-      button.type = 'button';button.className = 'room-item';button.disabled = occupied;
+      button.type = 'button';button.className = 'room-item';
       const left = document.createElement('span');
       const code = document.createElement('strong');code.textContent = id;
       const detail = document.createElement('small');
       detail.textContent = entry.map === 5 ? 'Водное поле · кувшинки' : 'Обычный газон';
       left.append(code, detail);
       const tag = document.createElement('span');tag.className = 'badge';
-      tag.textContent = occupied ? 'занята' : 'войти →';
+      tag.textContent = 'войти →';
       button.append(left, tag);
       button.addEventListener('click', () => enterRoom(id));
       list.append(button);
     }
-    if (!count) {
+    if (!info.length) {
       const empty = document.createElement('p');empty.className = 'muted';
       empty.textContent = 'Пока нет свободных комнат. Создай свою кнопкой «+»!';
       list.append(empty);
