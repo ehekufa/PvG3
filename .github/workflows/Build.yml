@@ -3,6 +3,11 @@ name: Build PvG3 (Android APK, arm64 + arm32)
 on:
   push:
   workflow_dispatch:
+    inputs:
+      firebase_smoke:
+        description: 'Probe Firebase CORS and temporarily create/remove a test room'
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -114,3 +119,9 @@ jobs:
         with:
           name: PvG3-Android-arm64-arm32
           path: PvG3.apk
+
+      # Never touch the real database on ordinary pushes. A manual run with
+      # firebase_smoke=true checks browser CORS and cleans up its own room.
+      - name: Probe live Firebase (manual only)
+        if: github.event_name == 'workflow_dispatch' && inputs.firebase_smoke
+        run: node online/test/live-smoke.mjs --write

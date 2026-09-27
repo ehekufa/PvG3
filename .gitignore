@@ -10,3 +10,4 @@ unsigned.apk
 staging/
 build/
 shots/
+node_modules/

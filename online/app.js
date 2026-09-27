@@ -12,9 +12,11 @@ let chosenPlant = -1, chosenDuck = -1, mapChoice = 1, pendingSeq = 0;
 let seq = 0, lastSnapshot = 0, lastPublish = 0, writing = false;
 let lastFrame = performance.now(), lastPing = 0, generation = 0;
 let toastTimer;
-const savedId = localStorage.getItem('pvg3-online-player');
+// A browser tab keeps its seat after reload, while a second tab is a second
+// player. A shared localStorage ID would incorrectly identify both as one.
+const savedId = sessionStorage.getItem('pvg3-online-player');
 const playerId = savedId && /^[0-9a-f]{32}$/.test(savedId) ? savedId : randomPlayerId();
-localStorage.setItem('pvg3-online-player', playerId);
+sessionStorage.setItem('pvg3-online-player', playerId);
 
 function show(name) {
   screen = name;
@@ -34,6 +36,10 @@ function connection(ok, text) {
 function session() {
   if (roomId) sessionStorage.setItem('pvg3-room', JSON.stringify({id: roomId, slot}));
   else sessionStorage.removeItem('pvg3-room');
+}
+function clearInvite() {
+  if (new URLSearchParams(location.search).has('room'))
+    history.replaceState(null, '', location.pathname);
 }
 async function refreshRooms() {
   const list = $('room-list');
@@ -116,7 +122,8 @@ async function enterRoom(id, alreadyJoined = false) {
     const joined = alreadyJoined ? await getRoom(id) : await joinRoom(id, playerId);
     if (gen !== generation) return;
     if (!joined || joined.version !== 1 ||
-        (alreadyJoined && joined[slot]?.id !== playerId))
+        (alreadyJoined && joined[slot]?.id !== playerId) ||
+        (!alreadyJoined && joined.guest?.id !== playerId))
       throw new Error('Комната закрылась или другой игрок занял твоё место.');
     roomId = id;room = joined;
     if (!alreadyJoined) slot = 'guest';
@@ -128,7 +135,12 @@ async function enterRoom(id, alreadyJoined = false) {
     }
     connection(true, 'В комнате');
     poll(gen);
-  } catch (e) {connection(false, 'Ошибка комнаты');notice(e.message, 6000);refreshRooms();}
+  } catch (e) {
+    if (gen !== generation) return;
+    roomId = '';slot = '';room = null;state = null;
+    session();clearInvite();show('rooms');connection(false, 'Ошибка комнаты');
+    notice(e.message, 6000);refreshRooms();
+  }
 }
 async function create() {
   $('create').disabled = true;
@@ -158,7 +170,7 @@ async function leave() {
   const id = roomId, oldSlot = slot;
   generation++;
   roomId = '';slot = '';room = null;state = null;pendingSeq = 0;
-  session();show('rooms');connection(null, 'Выходим…');
+  session();clearInvite();show('rooms');connection(null, 'Выходим…');
   try {await leaveRoom(id, oldSlot, playerId);connection(true, 'Firebase на связи');}
   catch (e) {connection(false, 'Не удалось закрыть комнату');notice(e.message);}
   refreshRooms();
@@ -176,8 +188,12 @@ async function poll(gen) {
   try {
     const current = await getRoom(roomId);
     if (gen !== generation) return;
-    if (!current || current.version !== 1 || current[slot]?.id !== playerId)
-      throw new Error('Комната закрыта. Вернись в список комнат.');
+    if (!current || current.version !== 1 || current[slot]?.id !== playerId) {
+      generation++;roomId = '';slot = '';room = null;state = null;pendingSeq = 0;
+      session();clearInvite();show('rooms');connection(false, 'Комната закрыта');
+      notice('Комната закрыта. Вернулись к списку комнат.');refreshRooms();
+      return;
+    }
     room = current;
     if (slot === 'host') {
       if (!state && current.host.role && current.guest?.role && current.host.role !== current.guest.role) {
@@ -326,11 +342,14 @@ $('music').addEventListener('click', async () => {
 canvas.addEventListener('pointerdown', pointer);
 populateBook();preloadArtwork();
 requestAnimationFrame(frame);
-try {
-  const previous = JSON.parse(sessionStorage.getItem('pvg3-room') || 'null');
-  if (previous && validId(previous.id) && ['host','guest'].includes(previous.slot)) {
-    slot = previous.slot;enterRoom(previous.id, true);
-  } else if (validId(new URLSearchParams(location.search).get('room'))) {
-    enterRoom(new URLSearchParams(location.search).get('room'));
-  } else refreshRooms();
-} catch {refreshRooms();}
+let previous = null;
+try {previous = JSON.parse(sessionStorage.getItem('pvg3-room') || 'null');}
+catch {sessionStorage.removeItem('pvg3-room');}
+const invite = new URLSearchParams(location.search).get('room');
+if (validId(invite) && previous?.id !== invite) {
+  // A new invitation should take priority over another room from this tab.
+  enterRoom(invite);
+} else if (previous && validId(previous.id) && ['host','guest'].includes(previous.slot)) {
+  slot = previous.slot;enterRoom(previous.id, true);
+} else if (validId(invite)) enterRoom(invite);
+else refreshRooms();
