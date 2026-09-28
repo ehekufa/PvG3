@@ -198,11 +198,25 @@ static void ui_tap(int x, int y) {
     assert(lvgl_ui_pointer(x, y, 1));ui_snapshot("tap_down");
     assert(lvgl_ui_pointer(x, y, 0));ui_snapshot("tap_up");
 }
+static void ui_quick_tap(int x, int y) {
+    /* Android may deliver DOWN+UP before one render frame; never miss a tap. */
+    assert(lvgl_ui_pointer(x, y, 1));
+    assert(lvgl_ui_pointer(x, y, 0));
+    ui_snapshot("quick_tap");
+}
 static void ui_board_tap(int x, int y) {
     assert(!lvgl_ui_pointer(x, y, 1));
     game_input_press(x, y);ui_snapshot("board_down");
     assert(!lvgl_ui_pointer(x, y, 0));
     game_input_release(x, y);ui_snapshot("board_up");
+}
+static void ui_drag(int x0, int y0, int x1, int y1,
+                    const char *hover_shot) {
+    assert(lvgl_ui_pointer(x0, y0, 1));ui_snapshot("drag_start");
+    assert(lvgl_ui_move((x0 + x1) / 2, (y0 + y1) / 2));
+    ui_snapshot("drag_move");
+    assert(lvgl_ui_move(x1, y1));ui_snapshot(hover_shot);
+    assert(lvgl_ui_pointer(x1, y1, 0));ui_snapshot("drag_drop");
 }
 static int run_lvgl_test(void) {
     static uint8_t before[20000], after[20000];
@@ -213,9 +227,13 @@ static int run_lvgl_test(void) {
     ui_snapshot("menu");
     ui_tap(1090, 79);assert(game_phase() == GAME_GARDEN);
     ui_snapshot("garden");
-    ui_tap(320, 55);ui_board_tap(424, 176);
     uint8_t garden[GAME_GARDEN_CELLS], garden_after[GAME_GARDEN_CELLS];
+    ui_tap(320, 55);ui_board_tap(424, 176); /* no more tap -> tap planting */
+    game_garden_export(garden);assert(garden[1] == 0);
+    ui_drag(320, 55, 424, 176, "garden_hover");
     game_garden_export(garden);assert(garden[1] == 1);
+    ui_board_tap(535, 176); /* garden drag does not leave a seed selected */
+    game_garden_export(garden);assert(garden[2] == 0);
     ui_tap(989, 44);assert(game_phase() == GAME_BOOK);
     ui_snapshot("book_plants");
     ui_tap(430, 220);ui_snapshot("book_enemies");
@@ -227,7 +245,10 @@ static int run_lvgl_test(void) {
     ui_tap(225, 525);ui_snapshot("book_robot");
     ui_tap(1150, 76);assert(game_phase() == GAME_GARDEN);
     ui_tap(1150, 44);assert(game_phase() == GAME_MENU);
-    ui_tap(829, 78);assert(game_phase() == GAME_SELECT);
+    assert(lvgl_ui_pointer(829, 78, 1));
+    assert(lvgl_ui_cancel());ui_snapshot("cancel_menu_button");
+    assert(game_phase() == GAME_MENU);
+    ui_quick_tap(829, 78);assert(game_phase() == GAME_SELECT);
     ui_snapshot("levels");
     ui_tap(640, 620);assert(game_phase() == GAME_INTRO);
     ui_snapshot("intro_bread");
@@ -237,7 +258,31 @@ static int run_lvgl_test(void) {
     ui_tap(1130, 76);assert(game_phase() == GAME_SELECT);
     ui_tap(1070, 270);assert(game_phase() == GAME_PLAY && game_level() == 5);
     ui_snapshot("offline_water");
-    ui_tap(120, 610);ui_board_tap(535, 288);ui_snapshot("offline_lily");
+    /* The lily illustration must survive recharge; no black/blank packet. */
+    uint32_t lily_icon_pixel = ui_pixels[600 * GAME_W + 50];
+    assert(((lily_icon_pixel >> 8) & 255u) > 180u);
+    int initial_coins = game_debug_coin_balance();
+    ui_tap(120, 610);ui_board_tap(535, 288);
+    assert(!game_debug_lily_at(1, 2) && game_debug_coin_balance() == initial_coins);
+    ui_drag(120, 610, 535, 288, "offline_lily_hover");
+    assert(game_debug_lily_at(1, 2) && game_debug_coin_balance() == initial_coins - 25);
+    assert(game_debug_cooldown(4) > 0);ui_snapshot("offline_lily_cooldown");
+    assert(ui_pixels[600 * GAME_W + 50] == lily_icon_pixel);
+    /* Cooldown leaves the drawing visible, refuses touches, has no seconds. */
+    ui_tap(120, 610);ui_board_tap(650, 288);
+    assert(!game_debug_lily_at(1, 3) && game_debug_coin_balance() == initial_coins - 25);
+    ui_drag(120, 180, 650, 288, "offline_invalid_hover"); /* needs a lily */
+    assert(game_debug_plant_type(1, 3) == -1 &&
+           game_debug_coin_balance() == initial_coins - 25);
+    ui_drag(120, 180, 535, 288, "offline_pea_hover");
+    assert(game_debug_plant_type(1, 2) == 0 &&
+           game_debug_coin_balance() == initial_coins - 125);
+    ui_snapshot("offline_dragged_pea");
+    /* CANCEL after touching another packet cannot accidentally plant it. */
+    assert(lvgl_ui_pointer(120, 287, 1));ui_snapshot("drag_cancel_start");
+    assert(lvgl_ui_move(651, 178));assert(lvgl_ui_cancel());
+    ui_snapshot("drag_cancelled");
+    assert(game_debug_plant_type(0, 3) == -1);
     ui_tap(1160, 73);assert(game_phase() == GAME_MENU);
     /* Online interaction must not modify the offline campaign or garden. */
     assert(game_save_export(before, bytes));
@@ -256,6 +301,15 @@ static int run_lvgl_test(void) {
     ui_tap(352, 438);tick_pump(3);
     assert(game_phase() == GAME_ONLINE_MATCH && db.host_role == ON_ROLE_PLANTS);
     ui_snapshot("match_plants");
+    ui_tap(120, 580);ui_board_tap(535, 288);
+    OnMatch match;int role;
+    game_online_ui_snapshot(&match, &role, NULL, NULL, 0, NULL);
+    assert(!match.lilies[1 * ON_COLS + 2] && match.plant_cash == 250);
+    ui_drag(120, 580, 535, 288, "online_lily_hover");tick_pump(2);
+    game_online_ui_snapshot(&match, &role, NULL, NULL, 0, NULL);
+    assert(role == ON_ROLE_PLANTS && match.lilies[1 * ON_COLS + 2] &&
+           match.plant_cash == 225 && match.plant_cooldown[ON_LILY] > 0);
+    ui_snapshot("match_lily_cooldown");
     ui_tap(1141, 75);tick_pump(2);
     assert(game_phase() == GAME_ONLINE_ROOMS && !db.present);
     /* List join remains distinct from '+' and the square search button. */
@@ -272,8 +326,20 @@ static int run_lvgl_test(void) {
     ui_tap(925, 430);tick_pump(2);
     assert(db.guest_role == ON_ROLE_ZOMBIES);
     ui_snapshot("lobby_guest");
+    OnMatch hosted;on_match_new(&hosted, 1);
+    assert(on_protocol_match_json(&hosted, db.state, sizeof db.state));
+    wait_poll();tick_pump(2);
+    assert(game_phase() == GAME_ONLINE_MATCH);
+    ui_snapshot("match_zombies");
+    ui_drag(95, 200, 913, 187, "online_zombie_hover");tick_pump(2);
+    assert(strstr(db.command, "\"kind\":\"spawn\"") &&
+           strstr(db.command, "\"seq\":1"));
     ui_tap(1150, 75);tick_pump(2);
     assert(game_phase() == GAME_ONLINE_ROOMS && !db.guest_id[0]);
+    /* The fake host ends the previous match before the second join-by-code. */
+    db.state[0] = db.command[0] = 0;
+    db.host_ping = epoch_ms();
+    on_net_refresh();tick_pump(2);
     ui_snapshot("rooms_after_guest");
     ui_tap(818, 210);
     /* The square search action is not '+': it accepts all six real keys. */
@@ -291,7 +357,7 @@ static int run_lvgl_test(void) {
     lvgl_ui_shutdown();
     game_set_lvgl_ui(0);
     on_net_shutdown();
-    puts("LVGL menu, levels, square search, + create, roles, match and saves passed");
+    puts("LVGL uncluttered UI, drag planting, cooldown art, cancel, quick taps, both online roles and saves passed");
     return 0;
 }
 #endif

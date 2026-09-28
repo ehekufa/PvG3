@@ -61,11 +61,11 @@ jobs:
           gcc -std=c11 -O2 -Wall -Wextra -Werror -Isrc -Isrc/vendor/lvgl \
             -c src/lvgl_ui.c -o /tmp/pvg3-lvgl-ui.o
           gcc -std=c11 -O2 -Wall -Wextra -Werror -Isrc -Isrc/vendor/lvgl \
-            -DPVG3_LVGL_TEST -c tools/native_online_integration_test.c \
+            -DPVG3_LVGL_TEST -DGAME_TEST -c tools/native_online_integration_test.c \
             -o /tmp/pvg3-lvgl-ui-test.o
           LVGL_SOURCES="$(find src/vendor/lvgl/src -name '*.c' | LC_ALL=C sort)"
           gcc -std=c11 -O1 -D_POSIX_C_SOURCE=200809L -DON_NET_MANUAL \
-            -DPVG3_LVGL_TEST -Isrc -Isrc/vendor/lvgl \
+            -DPVG3_LVGL_TEST -DGAME_TEST -Isrc -Isrc/vendor/lvgl \
             src/game.c src/font.c src/online_rules.c src/online_protocol.c \
             src/online_net.c src/lvgl_ui.c tools/native_online_integration_test.c \
             $LVGL_SOURCES -o lvgl_ui_test -lm -pthread

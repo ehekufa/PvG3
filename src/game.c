@@ -22,7 +22,6 @@
 
 static uint32_t *FB;
 static int use_lvgl_ui;
-void game_set_lvgl_ui(int enabled) {use_lvgl_ui = !!enabled;}
 
 /* Constant-friendly color macro (usable in static initializers AND runtime). */
 #define COL(r,g,b) (0xFF000000u | ((b)<<16) | ((g)<<8) | (r))
@@ -364,6 +363,18 @@ static char online_code[ON_ROOM_ID_SIZE];
 static char online_hint[110];
 static float online_hint_time;
 static Phase book_return;
+
+void game_set_lvgl_ui(int enabled) {
+    use_lvgl_ui = !!enabled;
+    if (enabled) {
+        /* A saved two-tap selection from an older APK must not cause a tap
+         * on the lawn to plant: LVGL packets now require a drag-and-drop. */
+        selected = -1;
+        garden_selected = -1;
+        online_selected = -1;
+    }
+}
+
 static float spawn_t;
 static int to_spawn;
 static int total_zombies;
@@ -1160,7 +1171,10 @@ void game_input_press(int x, int y) {
             y >= LAWN_Y && y < LAWN_Y + ROWS * CELL_H) {
             int c = (x - LAWN_X) / CELL_W, r = (y - LAWN_Y) / CELL_H;
             if (garden_selected == PT_COUNT) garden[r][c] = PT_NONE;
-            else if (garden_selected >= 0) garden[r][c] = garden_selected;
+            else if (garden_selected >= 0) {
+                garden[r][c] = garden_selected;
+                if (use_lvgl_ui) garden_selected = -1;
+            }
         }
         return;
     }
@@ -1729,7 +1743,10 @@ static void draw_play_scene(void) {
             draw_coin_icon((int)coins[i].x, (int)coins[i].y + bob, 22);
         }
     draw_parts();
-    if (!use_lvgl_ui) draw_seed_bar();
+    /* Native LVGL already shows the wave and boss health, with no extra
+     * legacy captions or black banners painted over the author's map. */
+    if (use_lvgl_ui) return;
+    draw_seed_bar();
     if (banner_t > 0 && banner_text && phase == PH_PLAY) {
         int s = 3;
         while (s > 1 && text_w(s, banner_text) > GAME_W - 120) s--;

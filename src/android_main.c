@@ -153,12 +153,14 @@ static void on_app_cmd(struct android_app *app, int32_t cmd) {
         break;
     case APP_CMD_LOST_FOCUS:
         G->focused = 0;
+        if (G->ui_ready) lvgl_ui_cancel();
         update_music();
         campaign_save(app);
         break;
     case APP_CMD_PAUSE:
     case APP_CMD_STOP:
         G->resumed = 0;
+        if (G->ui_ready) lvgl_ui_cancel();
         update_music();
         campaign_save(app);
         garden_save(app);
@@ -281,9 +283,17 @@ static int32_t on_input(struct android_app *app, AInputEvent *ev) {
         if (!handled) game_input_press(vx, vy);
         if (was_garden) garden_save(app); /* also save when leaving the garden */
         campaign_save(app); /* the campaign and online state are separate */
-    } else if (action == AMOTION_EVENT_ACTION_UP ||
-               action == AMOTION_EVENT_ACTION_CANCEL) {
+    } else if (action == AMOTION_EVENT_ACTION_MOVE) {
+        if (G->ui_ready) lvgl_ui_move(vx, vy);
+    } else if (action == AMOTION_EVENT_ACTION_UP) {
+        int was_garden = game_phase() == GAME_GARDEN;
         int handled = G->ui_ready && lvgl_ui_pointer(vx, vy, 0);
+        if (!handled) game_input_release(vx, vy);
+        /* A drag plants on release, not on DOWN; persist the new board now. */
+        if (was_garden) garden_save(app);
+        campaign_save(app);
+    } else if (action == AMOTION_EVENT_ACTION_CANCEL) {
+        int handled = G->ui_ready && lvgl_ui_cancel();
         if (!handled) game_input_release(vx, vy);
     }
     return 1;

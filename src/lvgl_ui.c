@@ -35,21 +35,27 @@ enum {
     U_BOOK_BACK, U_BOOK_PLANTS, U_BOOK_ENEMIES,
     U_INTRO_NEXT, U_INTRO_SKIP, U_OFFLINE_BOOK, U_OFFLINE_MENU,
     U_RESULT_NEXT, U_RESULT_RETRY, U_RESULT_MENU,
-    U_LEVEL_BASE = 100, U_ROOM_BASE = 200, U_KEY_BASE = 300, U_SEED_BASE = 400,
-    U_OFFLINE_SEED_BASE = 500, U_GARDEN_SEED_BASE = 600,
+    U_LEVEL_BASE = 100, U_ROOM_BASE = 200, U_KEY_BASE = 300,
     U_BOOK_ENTRY_BASE = 700
 };
 
 static lv_display_t *display;
 static lv_indev_t *pointer;
 static lv_obj_t *screen;
-static lv_font_t *fonts[5], *packet_font;
+static lv_font_t *fonts[5];
 static const int font_sizes[5] = {19, 24, 30, 40, 54};
 static lv_image_dsc_t pictures[PV_ART_COUNT];
 static uint32_t *layer;
 static uint8_t *drawbuf;
 static int active_phase = -1, page = 0, chosen_map = 1, search_open;
 static int pointer_down, captured, touch_x, touch_y, dirty;
+/* A packet is dragged over the author's board. LVGL draws the packet and its
+ * ghost; game.c still validates the drop, so invalid water/occupied cells and
+ * unaffordable moves never spend coins or send network commands. */
+static int drag_index = -1, drag_phase, drag_x, drag_y;
+static lv_obj_t *drag_ghost, *drag_target;
+static char drag_notice[70];
+static float drag_notice_left;
 static uint32_t view_sig;
 static char search_code[ON_ROOM_ID_SIZE], local_notice[110];
 static char visible_ids[8][ON_ROOM_ID_SIZE];
@@ -169,46 +175,36 @@ static void duck_art(lv_obj_t *parent, int cx, int cy, int size, int variant) {
     }
 }
 
-static void header(lv_obj_t *root, const char *kicker, const char *title,
-                   const char *subtitle, const char *back, int action) {
+static void header(lv_obj_t *root, const char *title, const char *back,
+                   int action) {
+    /* One large heading instead of three stacked lines of tiny explanations. */
     box(root, 0, 0, GAME_W, 148, 0, DARK, 0);
     box(root, 0, 145, GAME_W, 4, 0, GOLD, 0);
-    label(root, 73, 31, 785, 27, kicker, 1, GOLD, LV_TEXT_ALIGN_LEFT);
-    label(root, 70, 61, 900, 64, title, 4, WHITE, LV_TEXT_ALIGN_LEFT);
-    if (subtitle) label(root, 73, 117, 890, 30, subtitle, 1,
-                        C(C5D8B7), LV_TEXT_ALIGN_LEFT);
+    label(root, 70, 46, back ? 940 : 1120, 71, title, 4, WHITE,
+          LV_TEXT_ALIGN_LEFT);
     if (back) button(root, 1065, 48, 175, 62, back, 2, C(476750),
                      WHITE, action);
 }
 
 static void menu_screen(lv_obj_t *root) {
-    header(root, "МИР КИРИЛЛА  /  РАСТЕНИЯ И ГУСИ", "Растения против гусей 3",
-           "Приключение Кирилла: сад, утки и история для друзей", NULL, 0);
+    header(root, "Растения против гусей 3", NULL, 0);
     button(root, 730, 51, 220, 64, "Уровни", 2, C(476750), WHITE, U_MENU_LEVELS);
     button(root, 971, 51, 270, 64, "Сад Дзен", 2, C(476750), WHITE, U_MENU_GARDEN);
-    box(root, 55, 179, 1170, 350, 25, PAPER, 1);
-    box(root, 77, 202, 347, 301, 22, C(E0EDCC), 0);
-    box(root, 466, 202, 347, 301, 22, C(E4EAD2), 0);
-    box(root, 855, 202, 347, 301, 22, C(EEE1C4), 0);
-    art(root, PV_ART_BREAD, 250, 324, 206);
-    art(root, PV_ART_DIMA, 640, 326, 210);
-    art(root, PV_ART_KIRILL, 1029, 324, 205);
-    label(root, 93, 439, 310, 55, "Хлебушек", 2, INK, LV_TEXT_ALIGN_CENTER);
-    label(root, 482, 439, 310, 55, "Дима в маске", 2, INK, LV_TEXT_ALIGN_CENTER);
-    label(root, 871, 439, 310, 55, "Кирилл", 2, INK, LV_TEXT_ALIGN_CENTER);
+    /* The characters stand together on the lawn, not in three square frames. */
+    box(root, 55, 176, 1170, 355, 34, C(E5EFD9), 0);
+    art(root, PV_ART_BREAD, 250, 322, 228);
+    art(root, PV_ART_DIMA, 640, 324, 230);
+    art(root, PV_ART_KIRILL, 1029, 322, 225);
+    label(root, 93, 448, 310, 55, "Хлебушек", 2, INK, LV_TEXT_ALIGN_CENTER);
+    label(root, 482, 448, 310, 55, "Дима в маске", 2, INK, LV_TEXT_ALIGN_CENTER);
+    label(root, 871, 448, 310, 55, "Кирилл", 2, INK, LV_TEXT_ALIGN_CENTER);
     button(root, 90, 563, 280, 94, "Умная книга", 2, WHITE, INK, U_MENU_BOOK);
     button(root, 410, 548, 445, 125, "Начать игру", 3, GOLD, INK, U_MENU_PLAY);
     button(root, 895, 563, 295, 94, "Играть вдвоём", 2, SAGE, INK, U_MENU_ONLINE);
-    char detail[160];
-    snprintf(detail, sizeof detail, "Автосохранение   ·   пройдено %d / 10   ·   продолжить с уровня %d",
-             game_completed_level(), game_resume_level());
-    label(root, 230, 683, 820, 27, detail, 0, MUTED, LV_TEXT_ALIGN_CENTER);
 }
 
 static void levels_screen(lv_obj_t *root) {
-    header(root, "ИСТОРИЯ КИРИЛЛА", "Выбери уровень",
-           "Уровень 0 — кат-сцена; бой кончается, когда вся волна побеждена",
-           "Назад", U_MENU_BACK);
+    header(root, "Выбери уровень", "Назад", U_MENU_BACK);
     for (int n = 1; n <= 10; n++) {
         int col = (n - 1) % 5, row = (n - 1) / 5;
         int x = 84 + col * 225, y = 194 + row * 188;
@@ -219,55 +215,42 @@ static void levels_screen(lv_obj_t *root) {
         char num[30];
         snprintf(num, sizeof num, "%02d", n);
         label(o, 17, 13, 170, 62, num, 4, INK, LV_TEXT_ALIGN_LEFT);
-        label(o, 18, 93, 177, 39, n == 5 ? "Водная карта" :
-              n == 10 ? "Робот Королевы" : "Обычный газон", 1,
-              MUTED, LV_TEXT_ALIGN_LEFT);
+        if (n == 5 || n == 10)
+            label(o, 18, 91, 180, 48, n == 5 ? "Вода" : "Финал",
+                  2, INK, LV_TEXT_ALIGN_LEFT);
     }
-    button(root, 414, 590, 452, 67, "Уровень 0 · повторить историю", 2,
+    button(root, 414, 590, 452, 67, "Уровень 0 · история", 2,
            GOLD, INK, U_INTRO);
-    label(root, 295, 672, 690, 28,
-          "Кат-сцену можно пересматривать: сохранение останется на месте.",
-          0, MUTED, LV_TEXT_ALIGN_CENTER);
 }
 
 /* Offline navigation and HUD share the same real LVGL widgets as online. The
  * plants, map, coins and opponents beneath them are still the original game. */
 static void garden_screen(lv_obj_t *root) {
-    GameOfflineUIState state;
-    game_offline_ui_snapshot(&state);
     box(root, 0, 0, 1280, 121, 0, DARK, 0);
     box(root, 0, 118, 1280, 3, 0, GOLD, 0);
-    label(root, 22, 35, 225, 42, "Сад Дзен", 2, WHITE, LV_TEXT_ALIGN_LEFT);
-    label(root, 23, 78, 228, 30, "Создания Кирилла", 0, GOLD, LV_TEXT_ALIGN_LEFT);
+    label(root, 18, 29, 236, 53, "Сад Дзен", 3, WHITE, LV_TEXT_ALIGN_LEFT);
     for (int i = 0; i < 5; i++) {
         GameBookEntry entry;
         if (!game_book_entry(0, i, &entry)) continue;
         int x = 260 + i * 130;
-        lv_obj_t *card = button(root, x, 16, 120, 99, "", 0,
-                                state.garden_selection == i ? GOLD : PAPER,
-                                INK, U_GARDEN_SEED_BASE + i);
-        art(card, entry.art_id, 60, 38, 52);
-        lv_obj_t *caption = label(card, 3, 74, 114, 27,
-                                  entry.short_name, 0, INK,
-                                  LV_TEXT_ALIGN_CENTER);
-        lv_obj_set_style_text_font(caption, packet_font, 0);
+        lv_obj_t *slot = button(root, x, 15, 120, 100, "", 0,
+                                DARK, WHITE, 0);
+        lv_obj_set_style_bg_opa(slot, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_shadow_width(slot, 0, 0);
+        if (drag_phase == GAME_GARDEN && drag_index == i)
+            box(slot, 17, 6, 86, 86, 43, GOLD, 0);
+        art(slot, entry.art_id, 60, 49, 85);
     }
     button(root, 918, 22, 145, 44, "Книга", 1, C(476750), WHITE, U_GARDEN_BOOK);
     button(root, 1079, 22, 179, 44, "В меню", 1, C(476750), WHITE, U_GARDEN_EXIT);
-    button(root, 918, 77, 340, 39, state.garden_selection == 5 ?
-           "Убираем растение" : "Убрать растение", 1,
-           state.garden_selection == 5 ? GOLD : SAGE, INK, U_GARDEN_ERASE);
-    box(root, 250, 681, 1030, 39, 0, DARK, 0);
-    label(root, 275, 688, 980, 29,
-          "Выбери растение и клетку. В саду все растения бесплатны.",
-          0, WHITE, LV_TEXT_ALIGN_CENTER);
+    button(root, 918, 77, 340, 39, "Убрать", 1, SAGE, INK, U_GARDEN_ERASE);
+    label(root, 24, 84, 225, 33, "Тяни в сад", 1, GOLD, LV_TEXT_ALIGN_LEFT);
 }
 
 static void book_screen(lv_obj_t *root) {
     GameOfflineUIState state;
     game_offline_ui_snapshot(&state);
-    header(root, "ЗАПИСИ КИРИЛЛА  /  ЖИВАЯ КНИГА", "Умная книга",
-           "Растения и противники с рисунков Кирилла", "Назад", U_BOOK_BACK);
+    header(root, "Умная книга", "Назад", U_BOOK_BACK);
     box(root, 63, 179, 513, 505, 22, PAPER, 1);
     box(root, 596, 179, 633, 505, 22, WHITE, 1);
     button(root, 84, 194, 220, 54, "Растения", 1,
@@ -285,45 +268,32 @@ static void book_screen(lv_obj_t *root) {
         if (state.book_enemy_tab && entry.art_id == PV_ART_DUCK)
             duck_art(card, 42, 34, 50, entry.enemy_variant);
         else art(card, entry.art_id, 42, 34, 54);
-        label(card, 81, 7, 371, 40, entry.short_name, 1,
+        label(card, 81, 16, 371, 44, entry.short_name, 2,
               INK, LV_TEXT_ALIGN_LEFT);
-        char info[90];
-        if (state.book_enemy_tab) snprintf(info, sizeof info, "Здоровье: %d", entry.hp);
-        else snprintf(info, sizeof info, "Цена: %d монет", entry.cost);
-        label(card, 82, 40, 325, 26, info, 0, MUTED, LV_TEXT_ALIGN_LEFT);
     }
-    if (state.book_enemy_tab)
-        label(root, 93, 596, 452, 71,
-              "Конус и шлем защищают ту же самую утку с рисунка автора.",
-              0, MUTED, LV_TEXT_ALIGN_CENTER);
     GameBookEntry entry;
     if (!game_book_entry(state.book_enemy_tab, state.book_selection, &entry)) return;
-    box(root, 618, 198, 589, 193, 20,
-        state.book_enemy_tab ? C(F3E7D0) : C(E7F0DB), 0);
     if (state.book_enemy_tab && entry.art_id == PV_ART_DUCK)
-        duck_art(root, 913, 303, 155, entry.enemy_variant);
-    else art(root, entry.art_id, 913, 295, entry.art_id == PV_ART_ROBOT ? 190 : 175);
-    label(root, 617, 398, 592, 53, entry.name, 3, INK,
+        duck_art(root, 913, 303, 180, entry.enemy_variant);
+    else art(root, entry.art_id, 913, 295, entry.art_id == PV_ART_ROBOT ? 210 : 195);
+    label(root, 617, 394, 592, 64, entry.name, 3, INK,
           LV_TEXT_ALIGN_CENTER);
-    char stats[135];
     if (state.book_enemy_tab) {
-        if (entry.art_id == PV_ART_ROBOT)
-            snprintf(stats, sizeof stats,
-                     "Здоровье: %d\nПриходит в финале уровня 10", entry.hp);
-        else snprintf(stats, sizeof stats,
-                      "Здоровье: %d\nОтправить онлайн: %d монет",
-                      entry.hp, entry.cost);
-    } else snprintf(stats, sizeof stats,
-                    "Цена: %d монет  ·  здоровье: %d\nПерезарядка: %.1f с",
-                    entry.cost, entry.hp, (double)entry.recharge);
-    label(root, 635, 449, 554, 68, stats, 1, MUTED, LV_TEXT_ALIGN_CENTER);
-    box(root, 616, 528, 594, 135, 17, C(F7E7CD), 0);
-    label(root, 640, 542, 550, 52, entry.description, 1, INK,
-          LV_TEXT_ALIGN_CENTER);
-    label(root, 640, 592, 550, 45, entry.detail, 0, MUTED,
-          LV_TEXT_ALIGN_CENTER);
-    label(root, 676, 665, 476, 34, "Рисунок и растения: Кирилл",
-          0, MUTED, LV_TEXT_ALIGN_CENTER);
+        char hp[60];
+        snprintf(hp, sizeof hp, "Здоровье: %d", entry.hp);
+        label(root, 641, 458, 542, 44, hp, 2, MUTED, LV_TEXT_ALIGN_CENTER);
+        box(root, 616, 511, 594, 152, 23, C(F7E7CD), 0);
+        label(root, 642, 521, 542, 70, entry.description, 2, INK,
+              LV_TEXT_ALIGN_CENTER);
+        label(root, 642, 590, 542, 63, entry.detail, 1, INK,
+              LV_TEXT_ALIGN_CENTER);
+    } else {
+        box(root, 616, 478, 594, 185, 23, C(F7E7CD), 0);
+        label(root, 642, 490, 542, 79, entry.description, 2, INK,
+              LV_TEXT_ALIGN_CENTER);
+        label(root, 642, 573, 542, 73, entry.detail, 1, INK,
+              LV_TEXT_ALIGN_CENTER);
+    }
 }
 
 static void intro_screen(lv_obj_t *root) {
@@ -347,8 +317,22 @@ static void intro_screen(lv_obj_t *root) {
                        "Может, кто-то помогать мне будет?";
     label(root, 136, 550, 918, 33, speaker, 1, MUTED, LV_TEXT_ALIGN_LEFT);
     label(root, 136, 590, 982, 61, line, 3, INK, LV_TEXT_ALIGN_LEFT);
-    label(root, 973, 685, 243, 30, "Коснись: дальше  >", 0,
-          WHITE, LV_TEXT_ALIGN_RIGHT);
+
+}
+
+/* Big, unframed pictures rather than price/time cards. Keep the picture
+ * visible throughout cooldown; only its caption changes to "Подождите". */
+static void packet(lv_obj_t *root, int y, int image_id, int duck_variant,
+                   int waiting, int dragging) {
+    lv_obj_t *slot = button(root, 12, y, 223, 100, "", 0, DARK, WHITE, 0);
+    lv_obj_set_style_bg_opa(slot, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_shadow_width(slot, 0, 0);
+    if (dragging) box(slot, 10, 5, 94, 94, 47, GOLD, 0);
+    if (duck_variant >= 0) duck_art(slot, 57, 51, 94, duck_variant);
+    else art(slot, image_id, 57, 51, 94);
+    if (waiting)
+        label(slot, 95, 31, 128, 48, "Подождите", 1, GOLD,
+              LV_TEXT_ALIGN_LEFT);
 }
 
 static void play_screen(lv_obj_t *root) {
@@ -357,44 +341,29 @@ static void play_screen(lv_obj_t *root) {
     box(root, 0, 0, 1280, 121, 0, DARK, 0);
     box(root, 0, 118, 1280, 3, 0, GOLD, 0);
     box(root, 0, 121, 246, 599, 0, C(334B3B), 0);
-    label(root, 22, 40, 210, 30, "МОНЕТЫ", 1, GOLD, LV_TEXT_ALIGN_LEFT);
-    box(root, 22, 76, 34, 34, 17, GOLD, 0);
-    label(root, 24, 78, 30, 30, "М", 0, INK, LV_TEXT_ALIGN_CENTER);
+    box(root, 22, 64, 36, 36, 18, GOLD, 0);
+    label(root, 26, 68, 29, 29, "М", 1, INK, LV_TEXT_ALIGN_CENTER);
     char coins[25];snprintf(coins, sizeof coins, "%d", state.coins);
-    label(root, 67, 73, 159, 48, coins, 3, WHITE, LV_TEXT_ALIGN_LEFT);
+    label(root, 72, 53, 157, 58, coins, 3, WHITE, LV_TEXT_ALIGN_LEFT);
     char title[100];
     if (state.boss_health_percent > 0)
-        snprintf(title, sizeof title, "Уровень %d  ·  Робот Королевы: %d%%",
+        snprintf(title, sizeof title, "Уровень %d  ·  Робот: %d%%",
                  state.level, state.boss_health_percent);
-    else snprintf(title, sizeof title, "Уровень %d  ·  Осталось врагов: %d из %d",
-                  state.level, state.wave_remaining, state.wave_total);
-    label(root, 270, 40, 639, 45, title, 2, WHITE, LV_TEXT_ALIGN_LEFT);
-    label(root, 272, 82, 630, 28,
-          state.level == 5 ? "Вода: сначала кувшинка, потом растение" :
-          "Выбери растение, затем свободную клетку. Собирай монеты!",
-          0, C(C4D9BB), LV_TEXT_ALIGN_LEFT);
+    else snprintf(title, sizeof title, "Уровень %d  ·  Осталось: %d",
+                  state.level, state.wave_remaining);
+    label(root, 270, 32, 639, 45, title, 2, WHITE, LV_TEXT_ALIGN_LEFT);
+    label(root, 271, 77, 652, 36,
+          drag_notice_left > 0 ? drag_notice : state.level == 5 ?
+          "Тяни кувшинку на воду" : "Тяни растение на клетку",
+          1, drag_notice_left > 0 ? GOLD : C(C4D9BB), LV_TEXT_ALIGN_LEFT);
     button(root, 929, 43, 150, 64, "Книга", 2, C(476750), WHITE, U_OFFLINE_BOOK);
     button(root, 1094, 43, 165, 64, "В меню", 1, C(476750), WHITE, U_OFFLINE_MENU);
     for (int i = 0; i < 5; ++i) {
+        if (i == 4 && state.level != 5) continue; /* no unused lily on dry levels */
         GameBookEntry entry;
         if (!game_book_entry(0, i, &entry)) continue;
-        int y = 137 + i * 107;
-        lv_obj_t *card = button(root, 20, y, 210, 100, "", 0,
-                                state.selection == i ? GOLD : PAPER,
-                                INK, U_OFFLINE_SEED_BASE + i);
-        art(card, entry.art_id, 50, 50, 65);
-        label(card, 80, 16, 124, 42, entry.short_name,
-              0, INK, LV_TEXT_ALIGN_LEFT);
-        char price[44];
-        if (state.cooldown[i] > .05f)
-            snprintf(price, sizeof price, "Ждать %.0f с", (double)ceilf(state.cooldown[i]));
-        else snprintf(price, sizeof price, "%d монет", entry.cost);
-        label(card, 80, 67, 126, 30, price, 0,
-              state.coins < entry.cost || state.cooldown[i] > 0 ?
-              C(A37260) : C(59804F), LV_TEXT_ALIGN_LEFT);
-        if (state.coins < entry.cost || state.cooldown[i] > 0 ||
-            (i == 4 && state.level != 5))
-            lv_obj_set_style_bg_color(card, C(EEE7D5), 0);
+        packet(root, 137 + i * 107, entry.art_id, -1,
+               state.cooldown[i] > 0, drag_phase == GAME_PLAY && drag_index == i);
     }
 }
 
@@ -428,11 +397,8 @@ static void result_screen(lv_obj_t *root, int phase) {
 
 /* Count/status is recomputed on each Firebase snapshot, never hard-coded. */
 static void rooms_screen(lv_obj_t *root, const OnNetView *v) {
-    header(root, "МИР КИРИЛЛА  /  ИГРА ВДВОЁМ", "Играем вместе",
-           "Создай комнату или зайди к другу", "В меню", U_ROOMS_BACK);
+    header(root, "Играем вместе", "В меню", U_ROOMS_BACK);
     box(root, 43, 162, 1195, 89, 19, PAPER, 1);
-    label(root, 68, 167, 410, 23, "ПОЛЕ ДЛЯ НОВОЙ КОМНАТЫ", 0, MUTED,
-          LV_TEXT_ALIGN_LEFT);
     lv_obj_t *lawn = button(root, 64, 191, 207, 54, "Газон", 2,
                              chosen_map == 1 ? SAGE : WHITE, INK, U_MAP_LAWN);
     lv_obj_t *water = button(root, 282, 191, 210, 54, "Вода", 2,
@@ -443,29 +409,20 @@ static void rooms_screen(lv_obj_t *root, const OnNetView *v) {
     button(root, 720, 179, 208, 62, "□  Поиск", 2, WHITE, INK, U_SEARCH);
     button(root, 941, 179, 275, 62, "+  Создать", 2, GOLD, INK, U_CREATE);
     box(root, 43, 271, 1195, 421, 23, PAPER, 1);
-    label(root, 70, 286, 550, 52, "Свободные комнаты", 3, INK,
+    label(root, 70, 286, 660, 52, "Свободные комнаты", 3, INK,
           LV_TEXT_ALIGN_LEFT);
-    char count[60];
-    if (v->notice[0]) snprintf(count, sizeof count, "Проблема со связью");
-    else if (!v->connected) snprintf(count, sizeof count, "Ищем комнаты...");
-    else snprintf(count, sizeof count, "Свободно: %d", v->room_count);
-    label(root, 568, 295, 310, 34, count, 1,
-          v->notice[0] ? C(A1513B) : MUTED, LV_TEXT_ALIGN_LEFT);
     button(root, 1027, 284, 193, 48, "Обновить", 1, WHITE, INK, U_REFRESH);
     box(root, 69, 341, 1142, 2, 0, C(D9DDC5), 0);
     if (v->room_count == 0) {
-        box(root, 452, 360, 376, 125, 24, C(E6EFDB), 0);
         art(root, PV_ART_PEA, 544, 417, 118);
         art(root, PV_ART_DUCK, 740, 418, 116);
-        const char *title = v->notice[0] ? "Проверим подключение" :
+        const char *title = v->notice[0] ? "Нет связи" :
                             !v->connected ? "Ищем комнаты..." :
                             "Здесь пока тихо";
         label(root, 285, 497, 710, 52, title, 3, INK, LV_TEXT_ALIGN_CENTER);
-        label(root, 253, 544, 774, 37,
-              v->notice[0] ? v->notice : !v->connected ?
-              "Это займёт пару секунд." :
-              "Создай комнату — и пригласи друга по коду.", 1, MUTED,
-              LV_TEXT_ALIGN_CENTER);
+        if (v->notice[0])
+            label(root, 253, 548, 774, 38, v->notice, 1,
+                  C(A1513B), LV_TEXT_ALIGN_CENTER);
         button(root, 479, 587, 322, 66,
                v->notice[0] ? "Повторить поиск" : "+ Создать комнату", 2,
                GOLD, INK, v->notice[0] ? U_REFRESH : U_CREATE);
@@ -481,33 +438,19 @@ static void rooms_screen(lv_obj_t *root, const OnNetView *v) {
             snprintf(visible_ids[i], sizeof visible_ids[i], "%s", v->rooms[idx].id);
             lv_obj_t *card = button(root, x, y, width, 71, "", 1, WHITE, INK,
                                     U_ROOM_BASE + i);
-            box(card, 11, 10, 60, 50, 11,
-                v->rooms[idx].map == 5 ? BLUE : SAGE, 0);
-            label(card, 89, 4, 340, 40, v->rooms[idx].id, 2, INK,
+            label(card, 29, 14, 217, 48, v->rooms[idx].id, 2, INK,
                   LV_TEXT_ALIGN_LEFT);
-            label(card, 91, 39, 340, 28,
-                  v->rooms[idx].map == 5 ? "Водный уровень" : "Обычный газон",
-                  0, MUTED, LV_TEXT_ALIGN_LEFT);
-            label(card, width - 194, 20, 173, 35, "Войти  >", 1,
+            label(card, width - 300, 19, 119, 42,
+                  v->rooms[idx].map == 5 ? "Вода" : "Газон",
+                  1, MUTED, LV_TEXT_ALIGN_CENTER);
+            label(card, width - 174, 19, 158, 42, "Войти  >", 1,
                   C(477E4D), LV_TEXT_ALIGN_CENTER);
         }
         if (v->room_count > 8) {
             button(root, 77, 660, 168, 43, "Назад", 1, WHITE, INK, U_ROOM_BASE + 8);
             button(root, 1035, 660, 168, 43, "Дальше", 1, WHITE, INK,
                    U_ROOM_BASE + 9);
-        } else if (v->room_count <= 2) {
-            int y = v->room_count == 1 ? 465 : 542;
-            label(root, 260, y, 760, 45,
-                  "Комната найдена! Коснись карточки, чтобы войти.",
-                  2, INK, LV_TEXT_ALIGN_CENTER);
-            label(root, 305, y + 42, 670, 34,
-                  "Не видишь комнату друга? Найди её по коду сверху.",
-                  1, MUTED, LV_TEXT_ALIGN_CENTER);
-            button(root, 475, y + 88, 330, 56,
-                   "Поиск по коду", 1, SAGE, INK, U_SEARCH);
-        } else label(root, 255, 665, 770, 29,
-                     "Коснись комнаты, чтобы войти. Занятые скрыты.",
-                     0, MUTED, LV_TEXT_ALIGN_CENTER);
+        }
     }
     if (!search_open) return;
     lv_obj_t *veil = box(root, 0, 0, 1280, 720, 0, C(14251E), 0);
@@ -515,9 +458,7 @@ static void rooms_screen(lv_obj_t *root, const OnNetView *v) {
     box(root, 216, 72, 848, 611, 26, PAPER, 1);
     label(root, 259, 111, 590, 58, "Найти комнату по коду", 3, INK,
           LV_TEXT_ALIGN_LEFT);
-    label(root, 261, 161, 682, 34,
-          "Попроси у друга шесть букв или цифр из заголовка.",
-          1, MUTED, LV_TEXT_ALIGN_LEFT);
+
     button(root, 895, 111, 126, 51, "Назад", 1, WHITE, INK, U_SEARCH_CLOSE);
     size_t len = strlen(search_code);
     for (int i = 0; i < 6; ++i) {
@@ -545,131 +486,84 @@ static void rooms_screen(lv_obj_t *root, const OnNetView *v) {
 static void lobby_screen(lv_obj_t *root, const OnNetView *v) {
     char title[66];
     snprintf(title, sizeof title, "Комната %s", v->room_id);
-    header(root, "МИР КИРИЛЛА  /  ИГРА ВДВОЁМ", title,
-           "Назови другу этот код, чтобы он смог зайти", "Выйти", U_LOBBY_EXIT);
-    box(root, 89, 166, 1102, 83, 19, WHITE, 1);
-    box(root, 108, 181, 73, 53, 12, v->map == 5 ? BLUE : SAGE, 0);
-    label(root, 203, 186, 403, 51,
-          v->map == 5 ? "Водный уровень" : "Обычный газон", 2, INK,
+    header(root, title, "Выйти", U_LOBBY_EXIT);
+    label(root, 127, 184, 430, 51,
+          v->map == 5 ? "Вода" : "Газон", 2, INK,
           LV_TEXT_ALIGN_LEFT);
-    box(root, 876, 185, 285, 45, 14,
-        v->guest_id[0] ? SAGE : C(F2E4C9), 0);
-    label(root, 892, 191, 257, 35, v->guest_id[0] ?
-          "Друг уже в комнате" : "Ждём второго игрока", 1, INK,
-          LV_TEXT_ALIGN_CENTER);
+    label(root, 815, 184, 350, 47, v->guest_id[0] ?
+          "Друг вошёл" : "Ждём друга", 2, MUTED,
+          LV_TEXT_ALIGN_RIGHT);
     int mine = v->slot == ON_SLOT_HOST ? v->host_role : v->guest_role;
     int other = v->slot == ON_SLOT_HOST ? v->guest_role : v->host_role;
     for (int side = ON_ROLE_PLANTS; side <= ON_ROLE_ZOMBIES; ++side) {
         int x = side == ON_ROLE_PLANTS ? 90 : 663;
         int chosen = mine == side, taken = other == side;
         lv_obj_t *card = button(root, x, 268, 527, 317, "", 1,
-                                chosen ? GOLD : WHITE, INK,
+                                WHITE, INK,
                                 side == ON_ROLE_PLANTS ? U_PLANTS : U_ZOMBIES);
-        box(card, 6, 6, 515, 305, 20,
-            side == ON_ROLE_PLANTS ? C(EAF3DC) : C(F9EBD4), 0);
-        box(card, 24, 23, 189, 211, 19,
-            side == ON_ROLE_PLANTS ? C(D4E9BE) : C(EFDABB), 0);
+        lv_obj_set_style_bg_opa(card, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_shadow_width(card, 0, 0);
         art(card, side == ON_ROLE_PLANTS ? PV_ART_PEA : PV_ART_DUCK,
-            119, 128, 165);
-        label(card, 231, 44, 283, 48,
-              side == ON_ROLE_PLANTS ? "За растения" : "За зомби", 3, INK,
-              LV_TEXT_ALIGN_LEFT);
-        label(card, 232, 108, 264, 75,
-              side == ON_ROLE_PLANTS ? "Посади защиту.\nСобирай монеты." :
-              "Выпусти уток.\nВыбери нужный ряд.", 1, MUTED,
-              LV_TEXT_ALIGN_LEFT);
-        box(card, 26, 247, 475, 53, 13,
-            chosen ? DARK : taken ? C(E1E2D5) : WHITE, 0);
-        label(card, 40, 256, 449, 37,
-              chosen ? "Ты играешь здесь" : taken ? "Здесь играет друг" :
-              "Нажми, чтобы выбрать", 1, chosen ? WHITE : INK,
+            264, 121, 210);
+        label(card, 32, 224, 463, 61,
+              side == ON_ROLE_PLANTS ? "Растения" : "Зомби", 3, INK,
               LV_TEXT_ALIGN_CENTER);
+        box(card, 129, 285, 269, 6, 3, chosen ? GOLD : SAGE, 0);
+        if (taken)
+            label(card, 155, 288, 220, 29, "Сторона занята", 1,
+                  MUTED, LV_TEXT_ALIGN_CENTER);
     }
     box(root, 90, 609, 1100, 78, 17, DARK, 0);
-    const char *status = !v->guest_id[0] ? "Ждём друга" :
-                         v->busy ? "Запоминаем твой выбор..." :
-                         !mine && other == ON_ROLE_PLANTS ?
-                         "Друг защищает сад. Выбери зомби справа!" :
-                         !mine && other == ON_ROLE_ZOMBIES ?
-                         "Утки уже у друга. Выбери растения слева!" :
-                         !mine ? "Выбери свою сторону" : !other ?
-                         "Ты готов! Теперь очередь друга" :
-                         "Оба готовы! Начинаем бой...";
-    label(root, 138, 622, 1004, 40, status, 2, WHITE, LV_TEXT_ALIGN_CENTER);
-    label(root, 128, 659, 1024, 26,
-          v->notice[0] ? v->notice : !v->guest_id[0] ?
-          "Скажи другу код сверху. Сторону можно выбрать заранее." :
-          "Игра начнётся сама, когда вы выберете разные стороны.",
-          0, v->notice[0] ? GOLD : C(C6D9BC), LV_TEXT_ALIGN_CENTER);
+    const char *status = v->notice[0] ? v->notice : !v->guest_id[0] ?
+                         "Ждём друга" : v->busy ? "Сохраняем выбор..." :
+                         !mine ? "Выбери сторону" : !other ?
+                         "Ждём выбор друга" : "Начинаем бой...";
+    label(root, 138, 623, 1004, 49, status, 2,
+          v->notice[0] ? GOLD : WHITE, LV_TEXT_ALIGN_CENTER);
 }
 
 static void match_screen(lv_obj_t *root, const OnNetView *v) {
     OnMatch state;
-    int role = 0, selected = -1;
+    int role = 0;
     char hint[110];float hint_left = 0;
-    game_online_ui_snapshot(&state, &role, &selected, hint, sizeof hint, &hint_left);
+    game_online_ui_snapshot(&state, &role, NULL, hint, sizeof hint, &hint_left);
     int plants = role == ON_ROLE_PLANTS;
     box(root, 0, 0, 1280, 120, 0, DARK, 0);
     box(root, 0, 118, 1280, 3, 0, GOLD, 0);
     box(root, 0, 121, 246, 599, 0, C(334B3B), 0);
-    label(root, 22, 40, 215, 34, plants ? "ЗА РАСТЕНИЯ" : "ЗА ЗОМБИ",
-          1, GOLD, LV_TEXT_ALIGN_LEFT);
-    box(root, 22, 75, 33, 33, 17, GOLD, 0);
-    label(root, 24, 78, 29, 30, "М", 0, INK, LV_TEXT_ALIGN_CENTER);
+    box(root, 22, 64, 36, 36, 18, GOLD, 0);
+    label(root, 26, 68, 29, 29, "М", 1, INK, LV_TEXT_ALIGN_CENTER);
     char cash[24];
     snprintf(cash, sizeof cash, "%d", plants ? state.plant_cash : state.zombie_cash);
-    label(root, 66, 73, 159, 48, cash, 3, WHITE, LV_TEXT_ALIGN_LEFT);
+    label(root, 72, 53, 157, 58, cash, 3, WHITE, LV_TEXT_ALIGN_LEFT);
     char title[86];
-    snprintf(title, sizeof title, "Комната %s  ·  осталось уток: %d",
+    snprintf(title, sizeof title, "Комната %s  ·  осталось: %d",
              v->room_id, state.left + state.duck_count);
-    label(root, 272, 37, 634, 40, title, 2, WHITE, LV_TEXT_ALIGN_LEFT);
-    label(root, 274, 78, 630, 31,
-          state.map == 5 ? "Вода: сначала кувшинка, потом растение" :
-          "Выбери карточку, затем клетку или ряд на поле", 1,
-          C(C4D9BB), LV_TEXT_ALIGN_LEFT);
+    label(root, 272, 32, 634, 45, title, 2, WHITE, LV_TEXT_ALIGN_LEFT);
+    const char *message = drag_notice_left > 0 ? drag_notice :
+                          hint_left > 0 ? hint : v->notice[0] ? v->notice :
+                          v->pending ? "Ждём ход..." : !v->guest_id[0] ?
+                          "Друг вышел" : plants && state.map == 5 ?
+                          "Тяни кувшинку на воду" : plants ?
+                          "Тяни растение на клетку" : "Тяни утку на ряд";
+    label(root, 272, 77, 655, 36, message, 1,
+          drag_notice_left > 0 || hint_left > 0 || v->notice[0] ?
+          GOLD : C(C4D9BB), LV_TEXT_ALIGN_LEFT);
     button(root, 930, 43, 150, 66, "Книга", 2, C(476750), WHITE, U_MATCH_BOOK);
     button(root, 1094, 43, 165, 66, "Выйти", 2, C(476750), WHITE, U_MATCH_EXIT);
     static const int arts[5] = {PV_ART_PEA, PV_ART_WALNUT,
                                 PV_ART_SUNFLOWER, PV_ART_JUMPER, PV_ART_LILY};
-    static const char *names[5] = {"Горохострел", "Орех", "Подсолнух",
-                                    "Джампер", "Кувшинка"};
-    static const char *ducks[3] = {"Утка-зомби", "Утка с конусом", "Утка в шлеме"};
-    int n = plants ? 5 : 3;
+    int n = plants ? (state.map == 5 ? 5 : 4) : 3;
     for (int i = 0; i < n; ++i) {
         int top = plants ? 125 + i * 104 : 151 + i * 113;
-        int price = plants ? on_plant_cost[i] : on_duck_cost[i];
-        float wait = plants ? state.plant_cooldown[i] : state.duck_cooldown[i];
-        int affordable = (plants ? state.plant_cash : state.zombie_cash) >= price &&
-                         wait <= 0 && (plants ? (i != ON_LILY || state.map == 5) :
-                                       state.left > 0);
-        lv_obj_t *card = button(root, 12, top, 223, 98, "", 0,
-                                selected == i ? GOLD : PAPER, INK,
-                                U_SEED_BASE + i);
-        if (plants) art(card, arts[i], 53, 49, 69);
-        else duck_art(card, 53, 49, 69, on_duck_type[i]);
-        label(card, 86, 14, 134, 41, plants ? names[i] : ducks[i],
-              0, INK, LV_TEXT_ALIGN_LEFT);
-        char cost[48];
-        if (wait > 0.05f) snprintf(cost, sizeof cost, "Ждать %.0f с", ceilf(wait));
-        else snprintf(cost, sizeof cost, "%d монет", price);
-        label(card, 86, 64, 134, 31, cost, 0,
-              affordable ? C(59804F) : C(A37260), LV_TEXT_ALIGN_LEFT);
-        if (!affordable) lv_obj_set_style_bg_color(card, C(EEE6D4), 0);
+        int waiting = plants ? state.plant_cooldown[i] > 0 :
+                               state.duck_cooldown[i] > 0;
+        packet(root, top, plants ? arts[i] : PV_ART_DUCK,
+               plants ? -1 : on_duck_type[i],
+               waiting, drag_phase == GAME_ONLINE_MATCH && drag_index == i);
     }
-    if (!plants) {
-        label(root, 15, 527, 220, 59, "Выбери утку,\nзатем ряд на поле", 0,
-              C(D9E8CE), LV_TEXT_ALIGN_CENTER);
+    if (!plants)
         button(root, 15, 615, 217, 80, "Закончить", 1, GOLD, INK, U_MATCH_FINISH);
-    }
-    box(root, 248, 681, 1032, 39, 0, DARK, 0);
-    label(root, 285, 686, 955, 32, hint_left > 0 ? hint :
-          v->notice[0] ? v->notice : v->pending ?
-          "Ждём подтверждения прошлого хода..." : !v->guest_id[0] ?
-          "Друг вышел. Бой поставлен на паузу." : state.map == 5 ?
-          "На воде сначала ставь кувшинку." :
-          "Карточка + клетка. Коснись монеты, чтобы собрать.",
-          0, hint_left > 0 || v->notice[0] ? GOLD : WHITE,
-          LV_TEXT_ALIGN_CENTER);
     if (state.winner) {
         lv_obj_t *shade = box(root, 0, 0, 1280, 720, 0, C(14251E), 0);
         lv_obj_set_style_bg_opa(shade, LV_OPA_80, 0);
@@ -765,6 +659,142 @@ static uint32_t state_signature(int phase, const OnNetView *v) {
     return h;
 }
 
+/* Android's MOVE events update a real LVGL image under the finger. Planting
+ * happens only on release over the 9x5 board, never on tapping a packet. */
+static int over_board(int x, int y) {
+    return x >= ON_BOARD_X && x < ON_BOARD_X + ON_COLS * ON_CELL_W &&
+           y >= ON_BOARD_Y && y < ON_BOARD_Y + ON_ROWS * ON_CELL_H;
+}
+
+static int packet_at(int phase, int x, int y) {
+    if (phase == GAME_GARDEN && y >= 15 && y < 115) {
+        for (int i = 0; i < 5; ++i)
+            if (x >= 260 + i * 130 && x < 380 + i * 130) return i;
+    }
+    if (phase == GAME_PLAY && x >= 12 && x < 235) {
+        for (int i = 0; i < 5; ++i) {
+            int top = 137 + i * 107;
+            if (y >= top && y < top + 100)
+                return i == 4 && game_level() != 5 ? -1 : i;
+        }
+    }
+    if (phase == GAME_ONLINE_MATCH && x >= 12 && x < 235) {
+        OnMatch state;int role;
+        game_online_ui_snapshot(&state, &role, NULL, NULL, 0, NULL);
+        if (state.winner) return -1;
+        int plants = role == ON_ROLE_PLANTS;
+        for (int i = 0; i < (plants ? (state.map == 5 ? 5 : 4) : 3); ++i) {
+            int top = plants ? 125 + i * 104 : 151 + i * 113;
+            if (y >= top && y < top + 100) return i;
+        }
+    }
+    return -1;
+}
+
+static void drag_warning(const char *message) {
+    snprintf(drag_notice, sizeof drag_notice, "%s", message);
+    drag_notice_left = 1.8f;
+    dirty = 1;
+}
+
+static int packet_ready(int phase, int index) {
+    if (phase == GAME_GARDEN) return 1;
+    if (phase == GAME_PLAY) {
+        GameOfflineUIState s;GameBookEntry entry;
+        game_offline_ui_snapshot(&s);
+        if (!game_book_entry(0, index, &entry)) return 0;
+        if (s.cooldown[index] > 0) {drag_warning("Подождите");return 0;}
+        if (s.coins < entry.cost) {drag_warning("Мало монет");return 0;}
+        return 1;
+    }
+    if (phase == GAME_ONLINE_MATCH) {
+        OnMatch s;int role;
+        game_online_ui_snapshot(&s, &role, NULL, NULL, 0, NULL);
+        int plants = role == ON_ROLE_PLANTS;
+        if ((plants ? s.plant_cooldown[index] : s.duck_cooldown[index]) > 0) {
+            drag_warning("Подождите");return 0;
+        }
+        if (!plants && s.left <= 0) {drag_warning("Утки закончились");return 0;}
+        if ((plants ? s.plant_cash : s.zombie_cash) <
+            (plants ? on_plant_cost[index] : on_duck_cost[index])) {
+            drag_warning("Мало монет");return 0;
+        }
+        return 1;
+    }
+    return 0;
+}
+
+static void drag_position(int x, int y) {
+    drag_x = x;drag_y = y;
+    if (!drag_ghost) return;
+    int gx = x - 55, gy = y - 94;
+    if (over_board(x, y)) {
+        int col = (x - ON_BOARD_X) / ON_CELL_W;
+        int row = (y - ON_BOARD_Y) / ON_CELL_H;
+        int zombie = 0;
+        if (drag_phase == GAME_ONLINE_MATCH) {
+            int role;
+            game_online_ui_snapshot(NULL, &role, NULL, NULL, 0, NULL);
+            zombie = role == ON_ROLE_ZOMBIES;
+        }
+        if (drag_target) {
+            lv_obj_set_size(drag_target, zombie ? GAME_W - ON_BOARD_X : ON_CELL_W,
+                            ON_CELL_H);
+            lv_obj_set_pos(drag_target,
+                           zombie ? ON_BOARD_X : ON_BOARD_X + col * ON_CELL_W,
+                           ON_BOARD_Y + row * ON_CELL_H);
+            lv_obj_remove_flag(drag_target, LV_OBJ_FLAG_HIDDEN);
+        }
+        gx = (zombie ? GAME_W - 90 : ON_BOARD_X + col * ON_CELL_W + ON_CELL_W / 2) - 55;
+        gy = ON_BOARD_Y + row * ON_CELL_H + ON_CELL_H / 2 - 55;
+    } else if (drag_target) lv_obj_add_flag(drag_target, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_pos(drag_ghost, gx, gy);
+}
+
+static void drag_overlay(lv_obj_t *root, int phase) {
+    drag_ghost = drag_target = NULL;
+    if (drag_index < 0 || drag_phase != phase) return;
+    drag_target = box(root, 0, 0, ON_CELL_W, ON_CELL_H, 13, GOLD, 0);
+    lv_obj_set_style_bg_opa(drag_target, 50, 0);
+    lv_obj_set_style_border_width(drag_target, 4, 0);
+    lv_obj_set_style_border_color(drag_target, GOLD, 0);
+    drag_ghost = lv_obj_create(root);
+    lv_obj_remove_style_all(drag_ghost);
+    lv_obj_set_size(drag_ghost, 110, 110);
+    lv_obj_set_style_bg_opa(drag_ghost, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_opa(drag_ghost, LV_OPA_80, 0);
+    lv_obj_remove_flag(drag_ghost, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    if (phase == GAME_ONLINE_MATCH) {
+        int role;
+        game_online_ui_snapshot(NULL, &role, NULL, NULL, 0, NULL);
+        if (role == ON_ROLE_ZOMBIES) {
+            duck_art(drag_ghost, 55, 55, 96, on_duck_type[drag_index]);
+            drag_position(drag_x, drag_y);
+            return;
+        }
+    }
+    GameBookEntry entry;
+    if (game_book_entry(0, drag_index, &entry))
+        art(drag_ghost, entry.art_id, 55, 55, 95);
+    drag_position(drag_x, drag_y);
+}
+
+static void drop_packet(int phase, int index, int x, int y) {
+    if (!over_board(x, y) || phase != game_phase()) return;
+    if (phase == GAME_GARDEN)
+        game_input_press(320 + index * 130, 60);
+    else if (phase == GAME_PLAY)
+        game_input_press(125, 185 + index * 107);
+    else if (phase == GAME_ONLINE_MATCH) {
+        int role;
+        game_online_ui_snapshot(NULL, &role, NULL, NULL, 0, NULL);
+        game_input_press(120, role == ON_ROLE_ZOMBIES ?
+                         201 + index * 113 : 175 + index * 104);
+    }
+    game_input_press(x, y);
+    game_input_release(x, y);
+}
+
 static void pressed(lv_event_t *ev) {
     int code = (int)(intptr_t)lv_event_get_user_data(ev);
     if (code >= U_KEY_BASE && code < U_KEY_BASE + 32) {
@@ -780,26 +810,9 @@ static void pressed(lv_event_t *ev) {
     }
     if (code == U_ROOM_BASE + 8) {if (page > 0) page--;dirty = 1;return;}
     if (code == U_ROOM_BASE + 9) {page++;dirty = 1;return;}
-    if (code >= U_GARDEN_SEED_BASE && code < U_GARDEN_SEED_BASE + 5) {
-        game_input_press(320 + (code - U_GARDEN_SEED_BASE) * 130, 60);
-        dirty = 1;return;
-    }
     if (code >= U_BOOK_ENTRY_BASE && code < U_BOOK_ENTRY_BASE + 5) {
         game_input_press(300, 181 + (code - U_BOOK_ENTRY_BASE) * 99);
         dirty = 1;return;
-    }
-    if (code >= U_OFFLINE_SEED_BASE && code < U_OFFLINE_SEED_BASE + 5) {
-        game_input_press(125, 185 + (code - U_OFFLINE_SEED_BASE) * 107);
-        dirty = 1;return;
-    }
-    if (code >= U_SEED_BASE && code < U_SEED_BASE + 5) {
-        int i = code - U_SEED_BASE;
-        int y = active_phase == GAME_ONLINE_MATCH ?
-                175 + i * 104 : 200;
-        OnMatch s;int role;
-        game_online_ui_snapshot(&s, &role, NULL, NULL, 0, NULL);
-        if (role == ON_ROLE_ZOMBIES) y = 201 + i * 113;
-        game_input_press(120, y);dirty = 1;return;
     }
     if (code > U_LEVEL_BASE && code <= U_LEVEL_BASE + 10) {
         int n = code - U_LEVEL_BASE;
@@ -884,6 +897,7 @@ static void rebuild(int phase, const OnNetView *net) {
     else if (phase == GAME_ONLINE_ROOMS) rooms_screen(screen, net);
     else if (phase == GAME_ONLINE_LOBBY) lobby_screen(screen, net);
     else if (phase == GAME_ONLINE_MATCH) match_screen(screen, net);
+    drag_overlay(screen, phase);
     memset(layer, 0, (size_t)GAME_W * GAME_H * 4);
     lv_screen_load(screen);
     if (old) lv_obj_del(old);
@@ -907,13 +921,14 @@ int lvgl_ui_init(void) {
     lv_indev_set_type(pointer, LV_INDEV_TYPE_POINTER);
     lv_indev_set_display(pointer, display);
     lv_indev_set_read_cb(pointer, read_pointer);
+    /* Consume each Android DOWN/UP immediately. A very fast tap can have
+     * both events in one looper iteration, before the next draw frame. */
+    lv_indev_set_mode(pointer, LV_INDEV_MODE_EVENT);
     size_t ttf_len = 0;
     const unsigned char *ttf = font_ttf_data(&ttf_len);
     for (int i = 0; i < 5; i++)
         fonts[i] = lv_tiny_ttf_create_data(ttf, ttf_len, font_sizes[i]);
-    packet_font = lv_tiny_ttf_create_data(ttf, ttf_len, 16);
-    if (!fonts[0] || !fonts[1] || !fonts[2] || !fonts[3] || !fonts[4] ||
-        !packet_font) {
+    if (!fonts[0] || !fonts[1] || !fonts[2] || !fonts[3] || !fonts[4]) {
         lvgl_ui_shutdown();return 0;
     }
     const int art_ids[] = {PV_ART_BREAD, PV_ART_DIMA, PV_ART_KIRILL,
@@ -939,7 +954,9 @@ int lvgl_ui_init(void) {
         pictures[id].data_size = (uint32_t)(w * h * 4);
         pictures[id].data = (const uint8_t *)pixels;
     }
-    page = 0;chosen_map = 1;active_phase = -1;
+    page = 0;chosen_map = 1;active_phase = -1;drag_index = -1;
+    drag_ghost = drag_target = NULL;
+    drag_notice_left = 0;drag_notice[0] = 0;
     pointer_down = captured = touch_x = touch_y = search_open = dirty = 0;
     search_code[0] = local_notice[0] = 0;
     return 1;
@@ -953,8 +970,6 @@ void lvgl_ui_shutdown(void) {
             if (fonts[i]) lv_tiny_ttf_destroy(fonts[i]);
             fonts[i] = NULL;
         }
-        if (packet_font) lv_tiny_ttf_destroy(packet_font);
-        packet_font = NULL;
         lv_deinit();
     }
     for (int i = 0; i < PV_ART_COUNT; i++) {
@@ -963,7 +978,8 @@ void lvgl_ui_shutdown(void) {
     }
     free(drawbuf);drawbuf = NULL;
     free(layer);layer = NULL;
-    active_phase = -1;
+    active_phase = -1;drag_index = -1;
+    drag_ghost = drag_target = NULL;
 }
 
 int lvgl_ui_fullscreen(int phase) {
@@ -978,8 +994,22 @@ int lvgl_ui_pointer(int x, int y, int down) {
     if (x >= GAME_W) x = GAME_W - 1;
     if (y < 0) y = 0;
     if (y >= GAME_H) y = GAME_H - 1;
+    touch_x = x;touch_y = y;
     if (down) {
         int phase = game_phase();
+        int index = packet_at(phase, x, y);
+        if (index >= 0) {
+            /* The LVGL image is draggable, not a two-tap selection button. */
+            captured = 1;
+            pointer_down = 0;
+            if (packet_ready(phase, index)) {
+                drag_phase = phase;
+                drag_index = index;
+                drag_x = x;drag_y = y;
+                dirty = 1;
+            }
+            return 1;
+        }
         captured = lvgl_ui_fullscreen(phase) || phase == GAME_INTRO ||
                    phase == GAME_LEVEL_CLEAR || phase == GAME_WIN ||
                    phase == GAME_LOSE;
@@ -991,13 +1021,50 @@ int lvgl_ui_pointer(int x, int y, int down) {
             captured = match.winner || y <= 120 || x < 246 || y >= 680;
         }
         pointer_down = captured;
-    } else pointer_down = 0;
+        if (captured) lv_indev_read(pointer);
+        return captured;
+    }
+    int handled = captured;
+    pointer_down = 0;
+    if (drag_index >= 0) {
+        int index = drag_index, phase = drag_phase;
+        drag_index = -1;
+        dirty = 1;
+        drop_packet(phase, index, x, y);
+        handled = 1;
+    } else if (handled) lv_indev_read(pointer);
+    captured = 0;
+    return handled;
+}
+
+int lvgl_ui_move(int x, int y) {
+    if (!display) return 0;
+    if (x < 0) x = 0;
+    if (x >= GAME_W) x = GAME_W - 1;
+    if (y < 0) y = 0;
+    if (y >= GAME_H) y = GAME_H - 1;
     touch_x = x;touch_y = y;
+    if (drag_index >= 0) drag_position(x, y);
+    else if (captured && pointer_down) lv_indev_read(pointer);
     return captured;
+}
+
+int lvgl_ui_cancel(void) {
+    int handled = captured;
+    if (pointer_down && pointer) lv_indev_wait_release(pointer);
+    pointer_down = captured = 0;
+    touch_x = touch_y = 0;
+    if (handled && pointer) lv_indev_read(pointer);
+    if (drag_index >= 0) {drag_index = -1;dirty = 1;}
+    return handled;
 }
 
 void lvgl_ui_frame(float dt, uint32_t *game_rgba) {
     if (!display || !game_rgba) return;
+    if (drag_notice_left > 0) {
+        drag_notice_left -= dt;
+        if (drag_notice_left <= 0) dirty = 1;
+    }
     int ms = (int)(dt * 1000 + 0.5f);
     if (ms < 1) ms = 1;
     if (ms > 50) ms = 50;
@@ -1005,11 +1072,22 @@ void lvgl_ui_frame(float dt, uint32_t *game_rgba) {
     /* Process releases BEFORE deleting/rebuilding widget trees. */
     lv_timer_handler();
     int phase = game_phase();
+    if (phase != active_phase) {
+        drag_notice_left = 0;
+        drag_notice[0] = 0;
+    }
     OnNetView v = {0};
     if (phase == GAME_ONLINE_ROOMS || phase == GAME_ONLINE_LOBBY ||
         phase == GAME_ONLINE_MATCH) on_net_view(&v);
+    if (drag_index >= 0 &&
+        (phase != drag_phase || (phase == GAME_ONLINE_MATCH && v.state.winner))) {
+        drag_index = -1;
+        dirty = 1;
+    }
     uint32_t sig = state_signature(phase, &v);
-    if (phase != active_phase || sig != view_sig || dirty) {
+    /* Never delete a pressed LVGL button during a network refresh or a toast
+     * timeout: the release must reach the same widget to generate CLICKED. */
+    if (phase != active_phase || (!pointer_down && (sig != view_sig || dirty))) {
         rebuild(phase, &v);
         view_sig = state_signature(phase, &v);
         lv_refr_now(display); /* show network transitions on the same frame */
