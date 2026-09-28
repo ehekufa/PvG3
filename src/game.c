@@ -6,6 +6,7 @@
  */
 
 #include "game.h"
+#include "game_view.h"
 #include "font.h"
 #include "online_net.h"
 
@@ -20,6 +21,8 @@
 /* ------------------------------------------------------------------ */
 
 static uint32_t *FB;
+static int use_lvgl_ui;
+void game_set_lvgl_ui(int enabled) {use_lvgl_ui = !!enabled;}
 
 /* Constant-friendly color macro (usable in static initializers AND runtime). */
 #define COL(r,g,b) (0xFF000000u | ((b)<<16) | ((g)<<8) | (r))
@@ -110,6 +113,11 @@ static void ellipse(int cx, int cy, int rx, int ry, uint32_t c) {
  * only once, not on every frame; no Android file paths or third-party decoder. */
 typedef struct { int w, h; const uint64_t *runs; unsigned nruns; } SpritePacked;
 #include "sprites_data.h"
+_Static_assert((int)PV_ART_BREAD == (int)SPR_KHLEBUSHEK &&
+               (int)PV_ART_PEA == (int)SPR_PEA &&
+               (int)PV_ART_MOWER == (int)SPR_MOWER &&
+               (int)PV_ART_COUNT == (int)SPR_COUNT,
+               "LVGL art IDs must match the PNG packer");
 static uint32_t *sprite_pixels[SPR_COUNT];
 static int sprites_initialized;
 
@@ -136,6 +144,16 @@ static void init_sprites(void) {
 /* Scale (and optionally flip) a rectangular part of the author's image. All
  * destination coordinates are clipped BEFORE sampling, including off-screen
  * enemies, so neither map cropping nor sprite animation reads outside data. */
+const uint32_t *game_art_rgba(int id, int *width, int *height) {
+    if (width) *width = 0;
+    if (height) *height = 0;
+    if (id < 0 || id >= SPR_COUNT) return NULL;
+    init_sprites();
+    if (width) *width = SPRITE_DATA[id].w;
+    if (height) *height = SPRITE_DATA[id].h;
+    return sprite_pixels[id];
+}
+
 static void sprite_crop(int id, int x, int y, int w, int h,
                         int sx, int sy, int sw, int sh, int flip) {
     if (id < 0 || id >= SPR_COUNT || !sprite_pixels[id] || w <= 0 || h <= 0 ||
@@ -285,6 +303,32 @@ static const PlantDef PDEF[PT_COUNT] = {
                   "РАСТЁТ В ВОДЕ: ОСНОВА ДЛЯ ПОСАДКИ.",
                   "ДРУГИЕ РАСТЕНИЯ СТАВЯТСЯ ПОВЕРХ НЕЁ." },
 };
+
+int game_book_entry(int enemy_tab, int index, GameBookEntry *out) {
+    if (!out || index < 0 || index >= (enemy_tab ? BOOK_ENEMY_COUNT : PT_COUNT))
+        return 0;
+    memset(out, 0, sizeof *out);
+    if (!enemy_tab) {
+        const PlantDef *p = &PDEF[index];
+        out->name = p->name;out->short_name = p->short_name;
+        out->description = p->description;out->detail = p->detail;
+        out->art_id = p->sprite;out->cost = p->cost;
+        out->hp = p->hp;out->recharge = p->recharge;
+    } else {
+        int type = BOOK_ENEMIES[index];
+        out->name = out->short_name = EN_NAMES[type];
+        out->art_id = type == EN_ROBOT ? SPR_ROBOT : SPR_DUCK;
+        out->cost = EN_ONLINE_COST[type];out->hp = EN_BASE_HP[type];
+        out->enemy_variant = type;
+        out->description = type == EN_DUCK ? "НАРИСОВАННАЯ АВТОРОМ УТКА-ЗОМБИ." :
+                           type == EN_CONE ? "КОНУС ЗАЩИЩАЕТ ТУ ЖЕ УТКУ." :
+                           type == EN_HELMET ? "ШЛЕМ ДЕЛАЕТ ТУ ЖЕ УТКУ ЕЩЁ КРЕПЧЕ." :
+                                             "КОРОЛЕВА УПРАВЛЯЕТ БОЛЬШИМ РОБОТОМ.";
+        out->detail = type == EN_ROBOT ? "ПОЯВЛЯЕТСЯ В КОНЦЕ УРОВНЯ 10. ДВИЖЕТСЯ МЕДЛЕННО." :
+                                         "ЧЕМ ДАЛЬШЕ УРОВЕНЬ, ТЕМ БОЛЬШЕ ЗДОРОВЬЯ.";
+    }
+    return 1;
+}
 
 typedef struct { int type; float hp; float fire_t; float sway; } Plant;
 typedef struct { int active; int row; float x; float hp; float maxhp; int type;
@@ -891,6 +935,15 @@ static int online_role(void) {
     return online_view.slot == ON_SLOT_HOST ? online_view.host_role :
            online_view.slot == ON_SLOT_GUEST ? online_view.guest_role : ON_NO_ROLE;
 }
+
+void game_online_ui_snapshot(OnMatch *match, int *role, int *selection,
+                             char *hint, size_t hint_size, float *hint_seconds) {
+    if (match) *match = online_match;
+    if (role) *role = online_role();
+    if (selection) *selection = online_selected;
+    if (hint && hint_size) snprintf(hint, hint_size, "%s", online_hint);
+    if (hint_seconds) *hint_seconds = online_hint_time;
+}
 /* Indexes into the live room list; no extra connections or Firebase reads. */
 static int online_filtered(int indexes[ON_ROOM_LIST_CAP]) {
     int n = 0, prefix = (int)strlen(online_code);
@@ -1255,6 +1308,25 @@ int game_wave_remaining(void) {
 
 int game_wave_total(void) { return total_zombies; }
 
+void game_offline_ui_snapshot(GameOfflineUIState *out) {
+    if (!out) return;
+    memset(out, 0, sizeof *out);
+    out->level = level;out->coins = coin_balance;
+    out->selection = selected;out->garden_selection = garden_selected;
+    out->wave_remaining = game_wave_remaining();out->wave_total = total_zombies;
+    out->intro_step = intro_step;
+    out->book_enemy_tab = book_enemy_tab;
+    out->book_selection = book_enemy_tab ? book_enemy_selected : book_selected;
+    memcpy(out->cooldown, cooldown, sizeof out->cooldown);
+    if (boss_phase)
+        for (int i = 0; i < ZMAX; i++)
+            if (zomb[i].active && zomb[i].type == EN_ROBOT) {
+                out->boss_health_percent = (int)ceilf(100 * zomb[i].hp / zomb[i].maxhp);
+                if (out->boss_health_percent < 0) out->boss_health_percent = 0;
+                break;
+            }
+}
+
 /* Shared button style is defined below; the battle header uses it too. */
 static void draw_button(int x0, int y0, int x1, int y1, const char *label, int size);
 
@@ -1461,6 +1533,7 @@ static void draw_garden(void) {
                 draw_plant(CELL_CX(c), CELL_CY(r), garden[r][c],
                            sinf(global_t * 2 + r + c));
 
+    if (use_lvgl_ui) return; /* LVGL paints the packets and garden actions. */
     if (sprite_pixels[SPR_MAP])
         sprite_crop(SPR_MAP, LAWN_X, 0, GAME_W - LAWN_X, LAWN_Y,
                     0, 0, 242, 135, 0);
@@ -1604,9 +1677,11 @@ static void draw_book(void) {
 static void draw_intro(void) {
     draw_background();
     rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(17, 24, 48), 105);
-    rect_blend(0, 0, GAME_W - 1, 115, COL(17, 20, 35), 221);
-    draw_text_c(535, 37, 6, COL(255, 224, 157), "УРОВЕНЬ 0: КАТ-СЦЕНА");
-    draw_button(1020, 10, 1270, 89, "ПРОПУСТИТЬ", 3);
+    if (!use_lvgl_ui) {
+        rect_blend(0, 0, GAME_W - 1, 115, COL(17, 20, 35), 221);
+        draw_text_c(535, 37, 6, COL(255, 224, 157), "УРОВЕНЬ 0: КАТ-СЦЕНА");
+        draw_button(1020, 10, 1270, 89, "ПРОПУСТИТЬ", 3);
+    }
     draw_khlebushek(245, 492, 246, intro_step == 0);
     /* Dima really walks toward Khlebushek in the first shot. */
     float approach = intro_t / 2.8f;
@@ -1614,6 +1689,7 @@ static void draw_intro(void) {
     int dx = 935 - (int)(430 * approach);
     draw_dima(dx, 492, 240);
     if (intro_step >= 2) draw_kirill(977, 492, 248);
+    if (use_lvgl_ui) return; /* LVGL owns the dialog and skip/next controls. */
 
     rect(95, 533, 1185, 679, COL(29, 33, 47));
     rect(102, 540, 1178, 672, COL(238, 215, 166));
@@ -1653,7 +1729,7 @@ static void draw_play_scene(void) {
             draw_coin_icon((int)coins[i].x, (int)coins[i].y + bob, 22);
         }
     draw_parts();
-    draw_seed_bar();
+    if (!use_lvgl_ui) draw_seed_bar();
     if (banner_t > 0 && banner_text && phase == PH_PLAY) {
         int s = 3;
         while (s > 1 && text_w(s, banner_text) > GAME_W - 120) s--;
@@ -1845,6 +1921,9 @@ static void draw_online_match(void) {
         disc((int)s->peas[i].x, (int)s->peas[i].y, 9, COL(120, 210, 90));
     for (int i = 0; i < s->coin_count; i++)
         draw_coin_icon((int)s->coins[i].x, (int)s->coins[i].y, 22);
+    /* With LVGL active only the author's map and moving entities are drawn
+     * here. The LVGL tree provides touchable cards, status, book and result. */
+    if (use_lvgl_ui) return;
     rect_blend(0, 0, GAME_W - 1, 119, COL(22, 27, 31), 220);
     int role = online_role(), plants = role == ON_ROLE_PLANTS;
     draw_text(21, 18, 3, COL(255, 230, 170), plants ? "РАСТЕНИЯ" : "ЗОМБИ");
@@ -1909,7 +1988,7 @@ static void render(void) {
     if (phase == PH_GARDEN) { draw_garden(); return; }
     if (phase == PH_BOOK) { draw_book(); return; }
     draw_play_scene();
-    if (phase != PH_PLAY) draw_result();
+    if (phase != PH_PLAY && !use_lvgl_ui) draw_result();
 }
 
 static void update_online(float dt) {

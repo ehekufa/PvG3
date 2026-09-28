@@ -1,0 +1,16 @@
+#ifndef PVG3_LVGL_UI_H
+#define PVG3_LVGL_UI_H
+#include <stdint.h>
+
+/* Main-thread LVGL adapter: the game owns all gameplay, saves, and networking.
+ * No browser, WebView, internet images, or second UI thread is involved. */
+int lvgl_ui_init(void);
+void lvgl_ui_shutdown(void);
+int lvgl_ui_fullscreen(int phase);
+/* Returns 1 when LVGL consumed a touch; pass other touches to game_input_*.
+ * All coordinates are in the game's 1280x720 virtual space. */
+int lvgl_ui_pointer(int x, int y, int pressed);
+/* Call after game_tick; composites LVGL's ARGB8888 layer over RGBA8 gameplay. */
+void lvgl_ui_frame(float dt, uint32_t *game_rgba);
+
+#endif

@@ -5,6 +5,7 @@
  * full-screen quad. Touch events are mapped to the game's virtual resolution.
  */
 #include "game.h"
+#include "lvgl_ui.h"
 #include "android_music.h"
 #include "android_online_http.h"
 #include "online_net.h"
@@ -50,7 +51,7 @@ typedef struct {
     EGLContext context;
     int w, h;
     GLuint program, tex;
-    int ready, resumed, focused;
+    int ready, resumed, focused, ui_ready;
 } Engine;
 
 static Engine *G;
@@ -276,10 +277,15 @@ static int32_t on_input(struct android_app *app, AInputEvent *ev) {
     int vy = (int)(y * GAME_H / G->h);
     if (action == AMOTION_EVENT_ACTION_DOWN) {
         int was_garden = game_phase() == GAME_GARDEN;
-        game_input_press(vx, vy);
+        int handled = G->ui_ready && lvgl_ui_pointer(vx, vy, 1);
+        if (!handled) game_input_press(vx, vy);
         if (was_garden) garden_save(app); /* also save when leaving the garden */
-        campaign_save(app); /* cards, coins, selection, results and menu */
-    } else if (action == AMOTION_EVENT_ACTION_UP) game_input_release(vx, vy);
+        campaign_save(app); /* the campaign and online state are separate */
+    } else if (action == AMOTION_EVENT_ACTION_UP ||
+               action == AMOTION_EVENT_ACTION_CANCEL) {
+        int handled = G->ui_ready && lvgl_ui_pointer(vx, vy, 0);
+        if (!handled) game_input_release(vx, vy);
+    }
     return 1;
 }
 
@@ -296,6 +302,9 @@ void android_main(struct android_app *app) {
     game_init();
     garden_load(app);   /* keep reading the existing pvg3-garden.v1 */
     campaign_load(app);
+    engine.ui_ready = lvgl_ui_init();
+    game_set_lvgl_ui(engine.ui_ready);
+    if (!engine.ui_ready) LOGE("LVGL could not start; using the original renderer");
     if (!android_music_init(app->activity ? app->activity->assetManager : NULL))
         LOGE("music unavailable; the game continues without audio");
 
@@ -327,7 +336,14 @@ void android_main(struct android_app *app) {
         if (dt < 0) dt = 0;
         if (dt > 0.05f) dt = 0.05f;
 
-        game_tick(dt, fb);
+        int was_fullscreen_ui = engine.ui_ready && lvgl_ui_fullscreen(game_phase());
+        if (was_fullscreen_ui) game_tick(dt, NULL); /* no hidden legacy redraw */
+        else game_tick(dt, fb);
+        /* The other player can start a match during game_tick(). Draw the
+         * battlefield immediately instead of briefly uploading an old frame. */
+        if (was_fullscreen_ui && !lvgl_ui_fullscreen(game_phase()))
+            game_tick(0, fb);
+        if (engine.ui_ready) lvgl_ui_frame(dt, fb);
         engine_draw(&engine, fb);
         if (t - last_save >= 1.0) {
             if (game_phase() == GAME_PLAY) campaign_save(app);
@@ -339,5 +355,6 @@ void android_main(struct android_app *app) {
     garden_save(app);
     on_net_shutdown();
     android_music_shutdown();
+    if (engine.ui_ready) lvgl_ui_shutdown();
     engine_term(&engine);
 }

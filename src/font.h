@@ -2,6 +2,10 @@
 #define PVG3_FONT_H_INCLUDED
 
 #include <stdint.h>
+#include <stddef.h>
+
+/* The same OFL-licensed embedded PT Sans is shared with LVGL's Tiny TTF. */
+const unsigned char *font_ttf_data(size_t *length);
 
 /* PT Sans Regular: OFL-licensed TrueType embedded at build time. Text size
  * uses the game's original 1..8 scale; uppercase letters are about 7*size px. */

@@ -1,0 +1,42 @@
+#ifndef PVG3_GAME_VIEW_H
+#define PVG3_GAME_VIEW_H
+
+#include "online_rules.h"
+#include <stdint.h>
+#include <stddef.h>
+
+/* Read-only sprites decoded from the author's original PNGs by game_init().
+ * Byte order in memory is RGBA; the LVGL adapter converts to ARGB8888 once. */
+enum {
+    PV_ART_BREAD, PV_ART_DIMA, PV_ART_KIRILL, PV_ART_DUCK,
+    PV_ART_ROBOT, PV_ART_PEA, PV_ART_WALNUT, PV_ART_SUNFLOWER,
+    PV_ART_JUMPER, PV_ART_LILY, PV_ART_LAWN, PV_ART_WATER, PV_ART_MOWER,
+    PV_ART_COUNT
+};
+const uint32_t *game_art_rgba(int id, int *width, int *height);
+
+/* A main-thread snapshot for the LVGL HUD; networking/gameplay stay in game.c.
+ * Must only be called from the render thread after game_tick. */
+void game_online_ui_snapshot(OnMatch *match, int *role, int *selection,
+                             char *hint, size_t hint_size, float *hint_seconds);
+
+/* Read-only values from the original campaign, cut-scene and Zen Garden.
+ * LVGL does not own game state; old saves and the authoritative rules remain
+ * byte-for-byte compatible with pre-LVGL APKs. */
+typedef struct {
+    int level, coins, selection, garden_selection;
+    int wave_remaining, wave_total, boss_health_percent;
+    int intro_step, book_enemy_tab, book_selection;
+    float cooldown[5];
+} GameOfflineUIState;
+void game_offline_ui_snapshot(GameOfflineUIState *out);
+
+typedef struct {
+    const char *name, *short_name, *description, *detail;
+    int art_id, cost, hp, enemy_variant;
+    float recharge;
+} GameBookEntry;
+/* 5 plants; 4 enemies (duck, cone duck, helmet duck, queen/robot). */
+int game_book_entry(int enemy_tab, int index, GameBookEntry *out);
+
+#endif

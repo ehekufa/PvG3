@@ -12,6 +12,11 @@
 #include "vendor/stb_truetype.h"
 #include "font_data.h"
 
+const unsigned char *font_ttf_data(size_t *length) {
+    if (length) *length = PT_SANS_TTF_SIZE;
+    return PT_SANS_TTF;
+}
+
 #define MAX_TEXT_SIZE 8
 #define GLYPH_SLOTS 224          /* ASCII + Cyrillic U+0400..U+045F */
 

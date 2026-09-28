@@ -4,6 +4,10 @@
 #define _POSIX_C_SOURCE 200809L
 #include "game.h"
 #include "online_net.h"
+#ifdef PVG3_LVGL_TEST
+#include "lvgl_ui.h"
+#include "game_view.h"
+#endif
 
 #include <assert.h>
 #include <inttypes.h>
@@ -172,7 +176,130 @@ static void screenshot(const char *name) {
     }
     assert(!fclose(f));
 }
+#ifdef PVG3_LVGL_TEST
+/* Exercises actual LVGL pointer events and the existing in-memory Firebase.
+ * Also writes screenshots if PVG3_LVGL_SHOTS=1; never touches the live DB. */
+static uint32_t ui_pixels[GAME_W * GAME_H];
+static void ui_snapshot(const char *name) {
+    game_tick(0, lvgl_ui_fullscreen(game_phase()) ? NULL : ui_pixels);
+    lvgl_ui_frame(.050f, ui_pixels);
+    if (!getenv("PVG3_LVGL_SHOTS")) return;
+    char path[100];snprintf(path, sizeof path, "shots/lvgl_%s.ppm", name);
+    FILE *f = fopen(path, "wb");assert(f);
+    fprintf(f, "P6\n%d %d\n255\n", GAME_W, GAME_H);
+    for (int i = 0; i < GAME_W * GAME_H; ++i) {
+        uint32_t pixel = ui_pixels[i];
+        fputc(pixel & 255, f);fputc((pixel >> 8) & 255, f);
+        fputc((pixel >> 16) & 255, f);
+    }
+    assert(!fclose(f));
+}
+static void ui_tap(int x, int y) {
+    assert(lvgl_ui_pointer(x, y, 1));ui_snapshot("tap_down");
+    assert(lvgl_ui_pointer(x, y, 0));ui_snapshot("tap_up");
+}
+static void ui_board_tap(int x, int y) {
+    assert(!lvgl_ui_pointer(x, y, 1));
+    game_input_press(x, y);ui_snapshot("board_down");
+    assert(!lvgl_ui_pointer(x, y, 0));
+    game_input_release(x, y);ui_snapshot("board_up");
+}
+static int run_lvgl_test(void) {
+    static uint8_t before[20000], after[20000];
+    size_t bytes = game_save_size();assert(bytes < sizeof before);
+    game_init();assert(game_save_export(before, bytes));
+    assert(lvgl_ui_init());
+    game_set_lvgl_ui(1);
+    ui_snapshot("menu");
+    ui_tap(1090, 79);assert(game_phase() == GAME_GARDEN);
+    ui_snapshot("garden");
+    ui_tap(320, 55);ui_board_tap(424, 176);
+    uint8_t garden[GAME_GARDEN_CELLS], garden_after[GAME_GARDEN_CELLS];
+    game_garden_export(garden);assert(garden[1] == 1);
+    ui_tap(989, 44);assert(game_phase() == GAME_BOOK);
+    ui_snapshot("book_plants");
+    ui_tap(430, 220);ui_snapshot("book_enemies");
+    ui_tap(225, 420);
+    GameOfflineUIState offline;
+    game_offline_ui_snapshot(&offline);
+    assert(offline.book_enemy_tab == 1 && offline.book_selection == 2);
+    ui_snapshot("book_helmet");
+    ui_tap(225, 525);ui_snapshot("book_robot");
+    ui_tap(1150, 76);assert(game_phase() == GAME_GARDEN);
+    ui_tap(1150, 44);assert(game_phase() == GAME_MENU);
+    ui_tap(829, 78);assert(game_phase() == GAME_SELECT);
+    ui_snapshot("levels");
+    ui_tap(640, 620);assert(game_phase() == GAME_INTRO);
+    ui_snapshot("intro_bread");
+    ui_tap(640, 402);ui_tap(640, 402);
+    game_offline_ui_snapshot(&offline);assert(offline.intro_step == 2);
+    ui_snapshot("intro_kirill");
+    ui_tap(1130, 76);assert(game_phase() == GAME_SELECT);
+    ui_tap(1070, 270);assert(game_phase() == GAME_PLAY && game_level() == 5);
+    ui_snapshot("offline_water");
+    ui_tap(120, 610);ui_board_tap(535, 288);ui_snapshot("offline_lily");
+    ui_tap(1160, 73);assert(game_phase() == GAME_MENU);
+    /* Online interaction must not modify the offline campaign or garden. */
+    assert(game_save_export(before, bytes));
+    ui_tap(1030, 611);assert(game_phase() == GAME_ONLINE_ROOMS);
+    tick_pump(1);ui_snapshot("rooms_empty");
+    ui_tap(817, 209);ui_snapshot("search");
+    ui_tap(307, 313);ui_snapshot("search_typed");
+    ui_tap(948, 234);ui_tap(948, 137);
+    ui_tap(384, 219);ui_tap(1060, 207);
+    tick_pump(2);assert(db.present && db.map == 5);
+    assert(game_phase() == GAME_ONLINE_LOBBY);
+    ui_snapshot("lobby_wait");
+    strcpy(db.guest_id, FAKE_GUEST);
+    db.guest_ping = epoch_ms();db.guest_role = ON_ROLE_ZOMBIES;
+    wait_poll();ui_snapshot("lobby_ready");
+    ui_tap(352, 438);tick_pump(3);
+    assert(game_phase() == GAME_ONLINE_MATCH && db.host_role == ON_ROLE_PLANTS);
+    ui_snapshot("match_plants");
+    ui_tap(1141, 75);tick_pump(2);
+    assert(game_phase() == GAME_ONLINE_ROOMS && !db.present);
+    /* List join remains distinct from '+' and the square search button. */
+    db.present = 1;db.map = 1;db.host_ping = epoch_ms();
+    strcpy(db.room_id, "ABCDEF");strcpy(db.host_id, FAKE_HOST);
+    db.host_role = ON_ROLE_PLANTS;db.guest_id[0] = 0;
+    db.guest_role = 0;db.state[0] = db.command[0] = 0;
+    on_net_refresh();tick_pump(3);
+    assert(view().room_count == 1);
+    ui_snapshot("rooms_list");
+    ui_tap(163, 378);tick_pump(2);
+    assert(game_phase() == GAME_ONLINE_LOBBY && view().slot == ON_SLOT_GUEST);
+    ui_snapshot("lobby_joined");
+    ui_tap(925, 430);tick_pump(2);
+    assert(db.guest_role == ON_ROLE_ZOMBIES);
+    ui_snapshot("lobby_guest");
+    ui_tap(1150, 75);tick_pump(2);
+    assert(game_phase() == GAME_ONLINE_ROOMS && !db.guest_id[0]);
+    ui_snapshot("rooms_after_guest");
+    ui_tap(818, 210);
+    /* The square search action is not '+': it accepts all six real keys. */
+    for (int i = 0; i < 6; ++i) ui_tap(316 + i * 78, 314);
+    ui_snapshot("search_complete");
+    ui_tap(640, 625);tick_pump(2);
+    assert(game_phase() == GAME_ONLINE_LOBBY && view().slot == ON_SLOT_GUEST);
+    ui_snapshot("lobby_by_code");
+    ui_tap(1150, 75);tick_pump(2);
+    ui_tap(1140, 77);
+    assert(game_phase() == GAME_MENU);
+    isolate_saves(before, after, bytes);
+    game_garden_export(garden_after);
+    assert(!memcmp(garden, garden_after, sizeof garden));
+    lvgl_ui_shutdown();
+    game_set_lvgl_ui(0);
+    on_net_shutdown();
+    puts("LVGL menu, levels, square search, + create, roles, match and saves passed");
+    return 0;
+}
+#endif
+
 int main(void) {
+#ifdef PVG3_LVGL_TEST
+    if (getenv("PVG3_LVGL_TEST")) return run_lvgl_test();
+#endif
     static uint8_t before[20000], after[20000];
     size_t size = game_save_size();assert(size <= sizeof before);
     game_init();assert(game_save_export(before, size));

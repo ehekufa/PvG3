@@ -44,6 +44,9 @@ void game_input_release(int x, int y);
 /* Advance by dt seconds. If fb is non-NULL, render to GAME_W*GAME_H pixels
  * in RGBA8 byte order. Pass NULL to simulate without drawing (tests). */
 void game_tick(float dt, uint32_t *fb);
+/* Android's LVGL adapter draws the online match HUD itself. Keep the old HUD
+ * for independent renderer tests and as a fallback if LVGL cannot initialize. */
+void game_set_lvgl_ui(int enabled);
 
 /* Host screenshot helpers: jump into illustrated combat scenes. */
 void game_debug_snapshot(void);
