@@ -241,10 +241,10 @@ static void garden_screen(lv_obj_t *root) {
             box(slot, 17, 6, 86, 86, 43, GOLD, 0);
         art(slot, entry.art_id, 60, 49, 85);
     }
-    button(root, 918, 22, 145, 44, "Книга", 1, C(476750), WHITE, U_GARDEN_BOOK);
-    button(root, 1079, 22, 179, 44, "В меню", 1, C(476750), WHITE, U_GARDEN_EXIT);
-    button(root, 918, 77, 340, 39, "Убрать", 1, SAGE, INK, U_GARDEN_ERASE);
-    label(root, 24, 84, 225, 33, "Тяни в сад", 1, GOLD, LV_TEXT_ALIGN_LEFT);
+    button(root, 918, 22, 145, 44, "Книга", 2, C(476750), WHITE, U_GARDEN_BOOK);
+    button(root, 1079, 22, 179, 44, "В меню", 2, C(476750), WHITE, U_GARDEN_EXIT);
+    button(root, 918, 77, 340, 39, "Убрать", 2, SAGE, INK, U_GARDEN_ERASE);
+    label(root, 24, 83, 225, 37, "Тяни в сад", 2, GOLD, LV_TEXT_ALIGN_LEFT);
 }
 
 static void book_screen(lv_obj_t *root) {
@@ -253,9 +253,9 @@ static void book_screen(lv_obj_t *root) {
     header(root, "Умная книга", "Назад", U_BOOK_BACK);
     box(root, 63, 179, 513, 505, 22, PAPER, 1);
     box(root, 596, 179, 633, 505, 22, WHITE, 1);
-    button(root, 84, 194, 220, 54, "Растения", 1,
+    button(root, 84, 194, 220, 54, "Растения", 2,
            state.book_enemy_tab ? WHITE : SAGE, INK, U_BOOK_PLANTS);
-    button(root, 314, 194, 226, 54, "Противники", 1,
+    button(root, 314, 194, 226, 54, "Противники", 2,
            state.book_enemy_tab ? SAGE : WHITE, INK, U_BOOK_ENEMIES);
     int count = state.book_enemy_tab ? 4 : 5;
     for (int i = 0; i < count; ++i) {
@@ -278,22 +278,13 @@ static void book_screen(lv_obj_t *root) {
     else art(root, entry.art_id, 913, 295, entry.art_id == PV_ART_ROBOT ? 210 : 195);
     label(root, 617, 394, 592, 64, entry.name, 3, INK,
           LV_TEXT_ALIGN_CENTER);
-    if (state.book_enemy_tab) {
-        char hp[60];
-        snprintf(hp, sizeof hp, "Здоровье: %d", entry.hp);
-        label(root, 641, 458, 542, 44, hp, 2, MUTED, LV_TEXT_ALIGN_CENTER);
-        box(root, 616, 511, 594, 152, 23, C(F7E7CD), 0);
-        label(root, 642, 521, 542, 70, entry.description, 2, INK,
-              LV_TEXT_ALIGN_CENTER);
-        label(root, 642, 590, 542, 63, entry.detail, 1, INK,
-              LV_TEXT_ALIGN_CENTER);
-    } else {
-        box(root, 616, 478, 594, 185, 23, C(F7E7CD), 0);
-        label(root, 642, 490, 542, 79, entry.description, 2, INK,
-              LV_TEXT_ALIGN_CENTER);
-        label(root, 642, 573, 542, 73, entry.detail, 1, INK,
-              LV_TEXT_ALIGN_CENTER);
-    }
+    /* A picture book, not a tiny stats table: prices, timers and HP live in
+     * the combat rules, while these two large lines explain the characters. */
+    box(root, 616, 477, 594, 186, 23, C(F7E7CD), 0);
+    label(root, 642, 494, 542, 77, entry.description, 2, INK,
+          LV_TEXT_ALIGN_CENTER);
+    label(root, 642, 575, 542, 78, entry.detail, 2, INK,
+          LV_TEXT_ALIGN_CENTER);
 }
 
 static void intro_screen(lv_obj_t *root) {
@@ -307,7 +298,7 @@ static void intro_screen(lv_obj_t *root) {
     box(root, 0, 118, 1280, 3, 0, GOLD, 0);
     label(root, 69, 40, 872, 57, "Уровень 0 · история Кирилла", 3,
           WHITE, LV_TEXT_ALIGN_LEFT);
-    button(root, 1018, 43, 238, 66, "Пропустить", 1,
+    button(root, 1018, 43, 238, 66, "Пропустить", 2,
            C(476750), WHITE, U_INTRO_SKIP);
     box(root, 93, 533, 1094, 149, 22, PAPER, 1);
     const char *speaker = state.intro_step == 0 ? "ХЛЕБУШЕК" :
@@ -315,7 +306,7 @@ static void intro_screen(lv_obj_t *root) {
     const char *line = state.intro_step == 0 ? "Хлебушек плачет..." :
                        state.intro_step == 1 ? "Не плачь, мы нового сделаем." :
                        "Может, кто-то помогать мне будет?";
-    label(root, 136, 550, 918, 33, speaker, 1, MUTED, LV_TEXT_ALIGN_LEFT);
+    label(root, 136, 547, 918, 40, speaker, 2, MUTED, LV_TEXT_ALIGN_LEFT);
     label(root, 136, 590, 982, 61, line, 3, INK, LV_TEXT_ALIGN_LEFT);
 
 }
@@ -340,7 +331,8 @@ static void play_screen(lv_obj_t *root) {
     game_offline_ui_snapshot(&state);
     box(root, 0, 0, 1280, 121, 0, DARK, 0);
     box(root, 0, 118, 1280, 3, 0, GOLD, 0);
-    box(root, 0, 121, 246, 599, 0, C(334B3B), 0);
+    lv_obj_t *rail = box(root, 0, 121, 246, 599, 0, C(24382E), 0);
+    lv_obj_set_style_bg_opa(rail, 115, 0); /* author's wood stays visible */
     box(root, 22, 64, 36, 36, 18, GOLD, 0);
     label(root, 26, 68, 29, 29, "М", 1, INK, LV_TEXT_ALIGN_CENTER);
     char coins[25];snprintf(coins, sizeof coins, "%d", state.coins);
@@ -352,12 +344,12 @@ static void play_screen(lv_obj_t *root) {
     else snprintf(title, sizeof title, "Уровень %d  ·  Осталось: %d",
                   state.level, state.wave_remaining);
     label(root, 270, 32, 639, 45, title, 2, WHITE, LV_TEXT_ALIGN_LEFT);
-    label(root, 271, 77, 652, 36,
+    label(root, 271, 75, 652, 42,
           drag_notice_left > 0 ? drag_notice : state.level == 5 ?
           "Тяни кувшинку на воду" : "Тяни растение на клетку",
-          1, drag_notice_left > 0 ? GOLD : C(C4D9BB), LV_TEXT_ALIGN_LEFT);
+          2, drag_notice_left > 0 ? GOLD : C(C4D9BB), LV_TEXT_ALIGN_LEFT);
     button(root, 929, 43, 150, 64, "Книга", 2, C(476750), WHITE, U_OFFLINE_BOOK);
-    button(root, 1094, 43, 165, 64, "В меню", 1, C(476750), WHITE, U_OFFLINE_MENU);
+    button(root, 1094, 43, 165, 64, "В меню", 2, C(476750), WHITE, U_OFFLINE_MENU);
     for (int i = 0; i < 5; ++i) {
         if (i == 4 && state.level != 5) continue; /* no unused lily on dry levels */
         GameBookEntry entry;
@@ -375,11 +367,11 @@ static void result_screen(lv_obj_t *root, int phase) {
                         phase == GAME_WIN ? "Робот остановлен!" :
                         "Защита прорвана";
     label(root, 347, 222, 586, 81, title, 4, INK, LV_TEXT_ALIGN_CENTER);
-    label(root, 372, 322, 536, 73,
+    label(root, 355, 317, 570, 91,
           phase == GAME_LEVEL_CLEAR ? "Волна побеждена. Готов к следующей?" :
           phase == GAME_WIN ? "Кирилл и гуси спасены!" :
           "Попробуй снова — сохранение не пропало.",
-          1, MUTED, LV_TEXT_ALIGN_CENTER);
+          2, MUTED, LV_TEXT_ALIGN_CENTER);
     if (phase == GAME_LEVEL_CLEAR) {
         button(root, 392, 461, 496, 98, "Следующий уровень", 2,
                GOLD, INK, U_RESULT_NEXT);
@@ -411,7 +403,7 @@ static void rooms_screen(lv_obj_t *root, const OnNetView *v) {
     box(root, 43, 271, 1195, 421, 23, PAPER, 1);
     label(root, 70, 286, 660, 52, "Свободные комнаты", 3, INK,
           LV_TEXT_ALIGN_LEFT);
-    button(root, 1027, 284, 193, 48, "Обновить", 1, WHITE, INK, U_REFRESH);
+    button(root, 1027, 284, 193, 48, "Обновить", 2, WHITE, INK, U_REFRESH);
     box(root, 69, 341, 1142, 2, 0, C(D9DDC5), 0);
     if (v->room_count == 0) {
         art(root, PV_ART_PEA, 544, 417, 118);
@@ -530,7 +522,8 @@ static void match_screen(lv_obj_t *root, const OnNetView *v) {
     int plants = role == ON_ROLE_PLANTS;
     box(root, 0, 0, 1280, 120, 0, DARK, 0);
     box(root, 0, 118, 1280, 3, 0, GOLD, 0);
-    box(root, 0, 121, 246, 599, 0, C(334B3B), 0);
+    lv_obj_t *rail = box(root, 0, 121, 246, 599, 0, C(24382E), 0);
+    lv_obj_set_style_bg_opa(rail, 115, 0);
     box(root, 22, 64, 36, 36, 18, GOLD, 0);
     label(root, 26, 68, 29, 29, "М", 1, INK, LV_TEXT_ALIGN_CENTER);
     char cash[24];
@@ -546,7 +539,7 @@ static void match_screen(lv_obj_t *root, const OnNetView *v) {
                           "Друг вышел" : plants && state.map == 5 ?
                           "Тяни кувшинку на воду" : plants ?
                           "Тяни растение на клетку" : "Тяни утку на ряд";
-    label(root, 272, 77, 655, 36, message, 1,
+    label(root, 272, 75, 655, 42, message, 2,
           drag_notice_left > 0 || hint_left > 0 || v->notice[0] ?
           GOLD : C(C4D9BB), LV_TEXT_ALIGN_LEFT);
     button(root, 930, 43, 150, 66, "Книга", 2, C(476750), WHITE, U_MATCH_BOOK);
@@ -563,7 +556,7 @@ static void match_screen(lv_obj_t *root, const OnNetView *v) {
                waiting, drag_phase == GAME_ONLINE_MATCH && drag_index == i);
     }
     if (!plants)
-        button(root, 15, 615, 217, 80, "Закончить", 1, GOLD, INK, U_MATCH_FINISH);
+        button(root, 15, 615, 217, 80, "Закончить", 2, GOLD, INK, U_MATCH_FINISH);
     if (state.winner) {
         lv_obj_t *shade = box(root, 0, 0, 1280, 720, 0, C(14251E), 0);
         lv_obj_set_style_bg_opa(shade, LV_OPA_80, 0);
@@ -573,9 +566,9 @@ static void match_screen(lv_obj_t *root, const OnNetView *v) {
         label(root, 365, 369, 550, 70,
               state.winner == role ? "Победа!" : "Победил соперник",
               4, INK, LV_TEXT_ALIGN_CENTER);
-        label(root, 367, 434, 546, 35,
+        label(root, 367, 429, 546, 46,
               state.winner == ON_WIN_PLANTS ? "Растения спасли сад" :
-              "Утки захватили сад", 1, MUTED, LV_TEXT_ALIGN_CENTER);
+              "Утки захватили сад", 2, MUTED, LV_TEXT_ALIGN_CENTER);
         button(root, 410, 493, 460, 65, "Вернуться к комнатам", 2,
                GOLD, INK, U_MATCH_RETURN);
     }
@@ -754,8 +747,9 @@ static void drag_position(int x, int y) {
 static void drag_overlay(lv_obj_t *root, int phase) {
     drag_ghost = drag_target = NULL;
     if (drag_index < 0 || drag_phase != phase) return;
-    drag_target = box(root, 0, 0, ON_CELL_W, ON_CELL_H, 13, GOLD, 0);
-    lv_obj_set_style_bg_opa(drag_target, 50, 0);
+    /* A round, temporary drop halo rather than permanent checkerboard tiles. */
+    drag_target = box(root, 0, 0, ON_CELL_W, ON_CELL_H, ON_CELL_W / 2, GOLD, 0);
+    lv_obj_set_style_bg_opa(drag_target, 45, 0);
     lv_obj_set_style_border_width(drag_target, 4, 0);
     lv_obj_set_style_border_color(drag_target, GOLD, 0);
     drag_ghost = lv_obj_create(root);

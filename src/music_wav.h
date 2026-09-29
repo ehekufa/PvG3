@@ -22,4 +22,10 @@ int music_wav_parse(const uint8_t *bytes, size_t size, MusicWav *out);
 void music_wav_copy_loop(const MusicWav *wav, size_t *cursor,
                          uint8_t *destination, size_t frame_count);
 
+/* Mix one non-looping spoken clip into a frame of background music, ducking
+ * music while there is speech. Both WAVs are already validated as stereo
+ * 48kHz PCM16. When the voice ends, the unchanged music remains audible. */
+void music_wav_overlay_voice(const MusicWav *voice, size_t *voice_cursor,
+                             uint8_t *music, size_t frame_count);
+
 #endif

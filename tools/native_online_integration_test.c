@@ -227,6 +227,17 @@ static int run_lvgl_test(void) {
     ui_snapshot("menu");
     ui_tap(1090, 79);assert(game_phase() == GAME_GARDEN);
     ui_snapshot("garden");
+    /* Unoccupied soil/wood must be pixel-for-pixel from the author's PNG,
+     * not the old checkerboard, fake-green wash or a hidden wooden path. */
+    int w, h;
+    const uint32_t *map = game_art_rgba(PV_ART_LAWN, &w, &h);
+    assert(map && w == 500 && h == 500);
+    int wood_x = 190, soil_x = 1100, clear_y = 625;
+    assert(ui_pixels[clear_y * GAME_W + wood_x] ==
+           map[(clear_y * h / GAME_H) * w + wood_x * (w / 2) / 250]);
+    assert(ui_pixels[clear_y * GAME_W + soil_x] ==
+           map[(clear_y * h / GAME_H) * w + w / 2 +
+               (soil_x - 250) * (w - w / 2) / (GAME_W - 250)]);
     uint8_t garden[GAME_GARDEN_CELLS], garden_after[GAME_GARDEN_CELLS];
     ui_tap(320, 55);ui_board_tap(424, 176); /* no more tap -> tap planting */
     game_garden_export(garden);assert(garden[1] == 0);
@@ -258,6 +269,13 @@ static int run_lvgl_test(void) {
     ui_tap(1130, 76);assert(game_phase() == GAME_SELECT);
     ui_tap(1070, 270);assert(game_phase() == GAME_PLAY && game_level() == 5);
     ui_snapshot("offline_water");
+    const uint32_t *water_map = game_art_rgba(PV_ART_WATER, &w, &h);
+    assert(water_map && w == 500 && h == 500);
+    int canal_x = 980, canal_y = 300;
+    int src_canal_y = h / 5 + (canal_y - 232) * (h * 27 / 50 - h / 5) / 224;
+    int src_canal_x = w / 2 + (canal_x - 250) * (w - w / 2) / (GAME_W - 250);
+    assert(ui_pixels[canal_y * GAME_W + canal_x] ==
+           water_map[src_canal_y * w + src_canal_x]);
     /* The lily illustration must survive recharge; no black/blank packet. */
     uint32_t lily_icon_pixel = ui_pixels[600 * GAME_W + 50];
     assert(((lily_icon_pixel >> 8) & 255u) > 180u);

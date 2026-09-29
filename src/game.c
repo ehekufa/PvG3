@@ -1255,54 +1255,47 @@ void game_input_release(int x, int y) { (void)x; (void)y; }
 /* render                                                             */
 /* ------------------------------------------------------------------ */
 
+/* Show every part of the author's 500x500 map. A previous crop kept only
+ * x=274..500 (featureless lime green), then hid the entire wooden path under
+ * an opaque HUD and painted a checkerboard over the grass. Map the left half
+ * to the packet rail and the right half to the 9x5 field instead. The split
+ * keeps the hand-drawn, irregular wood/grass boundary at the edge of play. */
+static void draw_authored_map_band(int id, int y, int h, int sy, int sh) {
+    const SpritePacked *map = &SPRITE_DATA[id];
+    int split = map->w / 2;
+    sprite_crop(id, 0, y, LAWN_X, h, 0, sy, split, sh, 0);
+    sprite_crop(id, LAWN_X, y, GAME_W - LAWN_X, h,
+                split, sy, map->w - split, sh, 0);
+}
+
 static void draw_background(void) {
     int scene_level = phase == PH_ONLINE_MATCH && online_has_match ?
                       online_match.map : level;
     int water_scene = scene_level == WATER_LEVEL &&
         (phase == PH_PLAY || phase == PH_LEVEL_CLEAR ||
          phase == PH_LOSE || phase == PH_WIN || phase == PH_ONLINE_MATCH);
-    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(65, 105, 51));
-    if (sprite_pixels[SPR_MAP]) {
-        /* Keep the author's wooden path as the packet rack. For level 5,
-         * crop the water map in three strips so the blue canal lines up
-         * EXACTLY with the two rows that require a lily. */
-        sprite_crop(SPR_MAP, 0, 0, LAWN_X - 7, GAME_H, 0, 0, 246, 500, 0);
-        if (water_scene && sprite_pixels[SPR_WATER_MAP]) {
-            sprite_crop(SPR_WATER_MAP, LAWN_X, LAWN_Y, COLS * CELL_W, CELL_H,
-                        274, 0, 226, 100, 0);
-            sprite_crop(SPR_WATER_MAP, LAWN_X, LAWN_Y + CELL_H,
-                        COLS * CELL_W, 2 * CELL_H, 274, 128, 226, 132, 0);
-            sprite_crop(SPR_WATER_MAP, LAWN_X, LAWN_Y + 3 * CELL_H,
-                        COLS * CELL_W, 2 * CELL_H, 274, 290, 226, 210, 0);
-        } else {
-            sprite_crop(SPR_MAP, LAWN_X, LAWN_Y, COLS * CELL_W, ROWS * CELL_H,
-                        274, 0, 226, 500, 0);
-        }
-        rect_blend(LAWN_X, LAWN_Y, GAME_W - 1, LAWN_Y + ROWS * CELL_H - 1,
-                   COL(35, 82, 30), 55); /* preserve the drawing, soften neon */
-    } else {
-        rect(0, 0, LAWN_X - 8, GAME_H - 1, COL(139, 84, 39));
-        rect(LAWN_X, LAWN_Y, LAWN_X + COLS * CELL_W - 1,
-             LAWN_Y + ROWS * CELL_H - 1, COL(108, 171, 73));
-    }
-    if (water_scene && !sprite_pixels[SPR_WATER_MAP])
-        rect(LAWN_X, LAWN_Y + CELL_H, LAWN_X + COLS * CELL_W - 1,
+    int id = water_scene && sprite_pixels[SPR_WATER_MAP] ? SPR_WATER_MAP : SPR_MAP;
+    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(108, 171, 73));
+    if (sprite_pixels[id]) {
+        int source_h = SPRITE_DATA[id].h;
+        if (water_scene && id == SPR_WATER_MAP) {
+            /* The original canal runs from about y=100..270 of the image.
+             * Stretch just these three artwork bands so the painted water
+             * coincides with the two rows that need a lily pad. */
+            int canal_y = source_h / 5, canal_end = source_h * 27 / 50;
+            int water_y = LAWN_Y + CELL_H, water_end = water_y + 2 * CELL_H;
+            draw_authored_map_band(id, 0, water_y, 0, canal_y);
+            draw_authored_map_band(id, water_y, water_end - water_y,
+                                   canal_y, canal_end - canal_y);
+            draw_authored_map_band(id, water_end, GAME_H - water_end,
+                                   canal_end, source_h - canal_end);
+        } else draw_authored_map_band(id, 0, GAME_H, 0, source_h);
+    } else if (water_scene) {
+        rect(LAWN_X, LAWN_Y + CELL_H, GAME_W - 1,
              LAWN_Y + 3 * CELL_H - 1, COL(26, 165, 193));
-    rect(LAWN_X - 7, 0, LAWN_X - 1, GAME_H - 1, COL(48, 85, 39));
-    /* Later levels keep their time-of-day tint without changing any cells. */
-    if (scene_level >= 4 && scene_level <= 6)
-        rect_blend(0, LAWN_Y, GAME_W - 1, LAWN_Y + ROWS * CELL_H - 1, COL(156, 94, 31), 32);
-    if (scene_level >= 7)
-        rect_blend(0, LAWN_Y, GAME_W - 1, LAWN_Y + ROWS * CELL_H - 1,
-                   COL(27, 44, 90), scene_level == 10 ? 75 : 42);
-    for (int r = 0; r < ROWS; r++)
-        for (int c = 0; c < COLS; c++) {
-            int x = LAWN_X + c * CELL_W, y = LAWN_Y + r * CELL_H;
-            if ((r + c) & 1)
-                rect_blend(x, y, x + CELL_W - 1, y + CELL_H - 1, COL(20, 69, 17), 23);
-            rect_blend(x, y, x + CELL_W - 1, y + 1, COL(28, 86, 20), 55);
-            rect_blend(x, y, x + 1, y + CELL_H - 1, COL(28, 86, 20), 55);
-        }
+    }
+    /* No generated bright-green tiles, square outlines, colour wash or
+     * divider: the original PNG is the map in offline, online and garden. */
 }
 
 static void draw_mowers(void) {
@@ -1610,18 +1603,10 @@ static void draw_book(void) {
         if (book_enemy_tab) {
             if (type == EN_ROBOT) sprite_draw(SPR_ROBOT, 183, y0 + 11, 67, 67, 0);
             else draw_duck_variant(183, y0 + 15, 63, type, 1);
-            draw_text(265, y0 + 9, 2, COL(75, 52, 33), EN_NAMES[type]);
-            draw_text(265, y0 + 38, 2, COL(100, 70, 39), "ЗДОРОВЬЕ:");
-            draw_int(423, y0 + 38, 2, COL(100, 70, 39), EN_BASE_HP[type]);
+            draw_text(265, y0 + 28, 2, COL(75, 52, 33), EN_NAMES[type]);
         } else {
             sprite_draw(PDEF[i].sprite, 183, y0 + 11, 67, 67, 0);
-            draw_text(265, y0 + 9, 2, COL(75, 52, 33), PDEF[i].short_name);
-            draw_text(265, y0 + 35, 2, COL(100, 70, 39), "ЦЕНА:");
-            draw_int(352, y0 + 35, 2, COL(100, 70, 39), PDEF[i].cost);
-            draw_text(265, y0 + 64, 2, COL(111, 75, 42),
-                      i == PT_PEA ? "АТАКА" : i == PT_WALL ? "ЗАЩИТА" :
-                      i == PT_JUMPER ? "ОТБРОС" :
-                      i == PT_LILY ? "ВОДА" : "МОНЕТЫ");
+            draw_text(265, y0 + 28, 2, COL(75, 52, 33), PDEF[i].short_name);
         }
     }
 
@@ -1632,24 +1617,12 @@ static void draw_book(void) {
         int title_size = 4;
         while (title_size > 2 && text_w(title_size, EN_NAMES[type]) > 565) title_size--;
         draw_text_c(865, 380, title_size, COL(71, 47, 39), EN_NAMES[type]);
-        draw_text(600, 430, 3, COL(88, 57, 36), "ЗДОРОВЬЕ:");
-        draw_int(815, 430, 3, COL(126, 76, 26), EN_BASE_HP[type]);
-        if (type != EN_ROBOT) {
-            draw_text(600, 475, 2, COL(88, 57, 36), "ОТПРАВИТЬ ОНЛАЙН:");
-            draw_int(916, 475, 2, COL(126, 76, 26), EN_ONLINE_COST[type]);
-            draw_text(974, 475, 2, COL(88, 57, 36), "МОНЕТ");
-        } else draw_text(600, 475, 2, COL(88, 57, 36), "ПОЯВЛЯЕТСЯ В КОНЦЕ УРОВНЯ 10");
-        rect(580, 524, 1150, 663, COL(147, 83, 45));
-        rect(585, 529, 1145, 658, COL(249, 193, 121));
-        draw_text(598, 541, 2, COL(78, 52, 33),
-                  type == EN_DUCK ? "НАРИСОВАННАЯ АВТОРОМ УТКА-ЗОМБИ." :
-                  type == EN_CONE ? "КОНУС ЗАЩИЩАЕТ ТУ ЖЕ УТКУ." :
-                  type == EN_HELMET ? "ШЛЕМ ДЕЛАЕТ ТУ ЖЕ УТКУ ЕЩЁ КРЕПЧЕ." :
-                                      "КОРОЛЕВА УПРАВЛЯЕТ БОЛЬШИМ РОБОТОМ.");
-        draw_text(598, 573, 2, COL(78, 52, 33),
-                  type == EN_ROBOT ? "МЕДЛЕННО ТОПЧЕТ РАСТЕНИЯ." :
-                                     "ЧЕМ ДАЛЬШЕ УРОВЕНЬ, ТЕМ БОЛЬШЕ ЗДОРОВЬЯ.");
-        draw_text(598, 618, 3, COL(116, 65, 36), "РИСУНОК АВТОРА");
+        GameBookEntry entry;
+        game_book_entry(1, book_enemy_selected, &entry);
+        rect(580, 438, 1150, 663, COL(147, 83, 45));
+        rect(585, 443, 1145, 658, COL(249, 193, 121));
+        draw_text(598, 473, 2, COL(78, 52, 33), entry.description);
+        draw_text(598, 542, 2, COL(78, 52, 33), entry.detail);
         return;
     }
 
@@ -1658,34 +1631,12 @@ static void draw_book(void) {
     int title_size = 4;
     while (title_size > 2 && text_w(title_size, p->name) > 565) title_size--;
     draw_text_c(865, 380, title_size, COL(71, 47, 39), p->name);
-    draw_text(600, 430, 3, COL(88, 57, 36), "ЦЕНА:");
-    draw_int(715, 430, 3, COL(126, 76, 26), p->cost);
-    draw_text(845, 430, 3, COL(88, 57, 36), "ЗДОРОВЬЕ:");
-    draw_int(1050, 430, 3, COL(126, 76, 26), p->hp);
-    draw_text(600, 469, 2, COL(88, 57, 36), "ПЕРЕЗАРЯДКА:");
-    int whole = (int)p->recharge;
-    draw_int(800, 469, 2, COL(126, 76, 26), whole);
-    if (p->recharge > whole) {
-        int x = 800 + (whole >= 10 ? 24 : 12);
-        draw_text(x, 469, 2, COL(126, 76, 26), ".");
-        draw_int(x + 12, 469, 2, COL(126, 76, 26),
-                 (int)(p->recharge * 10 + 0.5f) % 10);
-    }
-    draw_text(865, 469, 2, COL(88, 57, 36), "СЕК.");
-    if (book_selected == PT_SUNFLOWER) {
-        draw_text(600, 495, 2, COL(88, 57, 36), "МОНЕТЫ: +");
-        draw_int(745, 495, 2, COL(126, 76, 26), COIN_VALUE);
-        draw_text(787, 495, 2, COL(88, 57, 36), "КАЖДЫЕ");
-        draw_int(895, 495, 2, COL(126, 76, 26), (int)COIN_INTERVAL);
-        draw_text(925, 495, 2, COL(88, 57, 36), "СЕК.");
-    } else if (book_selected == PT_LILY) {
-        draw_text(600, 495, 2, COL(65, 81, 43), "УРОВЕНЬ 5: ВОДА В ДВУХ СРЕДНИХ РЯДАХ");
-    }
-    rect(580, 524, 1150, 663, COL(147, 83, 45));
-    rect(585, 529, 1145, 658, COL(249, 193, 121));
-    draw_text(598, 541, 2, COL(78, 52, 33), p->description);
-    draw_text(598, 573, 2, COL(78, 52, 33), p->detail);
-    draw_text(598, 618, 3, COL(116, 65, 36), "СОЗДАТЕЛЬ: КИРИЛЛ");
+    /* Only the drawing and its purpose belong on the book page. Combat
+     * prices, recharge times and small stat captions obscured the story. */
+    rect(580, 438, 1150, 663, COL(147, 83, 45));
+    rect(585, 443, 1145, 658, COL(249, 193, 121));
+    draw_text(598, 473, 2, COL(78, 52, 33), p->description);
+    draw_text(598, 542, 2, COL(78, 52, 33), p->detail);
 }
 
 static void draw_intro(void) {

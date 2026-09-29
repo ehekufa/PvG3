@@ -135,8 +135,9 @@ jobs:
           cp src/vendor/lvgl/src/libs/tiny_ttf/LICENSE.txt \
             staging/assets/licenses/LVGL-tiny-ttf-MIT.txt
           cp LICENSE staging/assets/licenses/PvG3-MIT.txt
-          mkdir -p staging/assets/music
+          mkdir -p staging/assets/music staging/assets/voice
           cp assets/music/kirill-pond-loop.wav staging/assets/music/
+          cp assets/voice/intro-{bread,dima,kirill}.wav staging/assets/voice/
 
           "$BT/aapt" package -f -M AndroidManifest.xml \
             -I "$SDK/platforms/android-34/android.jar" \
@@ -159,6 +160,9 @@ jobs:
           unzip -l PvG3.apk | grep 'assets/licenses/LVGL-MIT.txt'
           unzip -l PvG3.apk | grep 'assets/licenses/LVGL-tiny-ttf-MIT.txt'
           unzip -l PvG3.apk | grep 'assets/music/kirill-pond-loop.wav'
+          unzip -l PvG3.apk | grep 'assets/voice/intro-bread.wav'
+          unzip -l PvG3.apk | grep 'assets/voice/intro-dima.wav'
+          unzip -l PvG3.apk | grep 'assets/voice/intro-kirill.wav'
 
       - uses: actions/upload-artifact@v4
         with:

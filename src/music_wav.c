@@ -66,3 +66,24 @@ void music_wav_copy_loop(const MusicWav *wav, size_t *cursor,
         if (*cursor == wav->frame_count) *cursor = 0;
     }
 }
+
+void music_wav_overlay_voice(const MusicWav *voice, size_t *voice_cursor,
+                             uint8_t *music, size_t frame_count) {
+    if (!voice || !voice->frames || !voice_cursor ||
+        *voice_cursor >= voice->frame_count) return;
+    size_t count = voice->frame_count - *voice_cursor;
+    if (count > frame_count) count = frame_count;
+    const uint8_t *speech = voice->frames + *voice_cursor * 4;
+    for (size_t i = 0; i < count * 4; i += 2) {
+        /* Read/write bytes rather than unaligned int16_t; both Android ABIs
+         * are little-endian, and the parser has verified PCM16 above. */
+        int m = (int16_t)le16(music + i);
+        int v = (int16_t)le16(speech + i);
+        int mixed = m / 5 + v; /* voice in front, music at 20% */
+        if (mixed > 32767) mixed = 32767;
+        if (mixed < -32768) mixed = -32768;
+        music[i] = (uint8_t)mixed;
+        music[i + 1] = (uint8_t)((uint16_t)mixed >> 8);
+    }
+    *voice_cursor += count; /* do not repeat dialogue as the music loops */
+}

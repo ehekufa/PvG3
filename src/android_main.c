@@ -322,6 +322,7 @@ void android_main(struct android_app *app) {
     clock_gettime(CLOCK_MONOTONIC, &ts);
     double last = ts.tv_sec + ts.tv_nsec / 1e9;
     double last_save = last;
+    int voiced_intro_step = -1;
 
     static uint32_t fb[GAME_W * GAME_H];
 
@@ -353,6 +354,18 @@ void android_main(struct android_app *app) {
          * battlefield immediately instead of briefly uploading an old frame. */
         if (was_fullscreen_ui && !lvgl_ui_fullscreen(game_phase()))
             game_tick(0, fb);
+        /* Each visible story line is spoken once on entry/advance. Replaying
+         * level 0 restarts it; skipping/leaving silences the old line. */
+        int speak = -1;
+        if (game_phase() == GAME_INTRO) {
+            GameOfflineUIState state;
+            game_offline_ui_snapshot(&state);
+            speak = state.intro_step;
+        }
+        if (speak != voiced_intro_step) {
+            android_music_intro_line(speak);
+            voiced_intro_step = speak;
+        }
         if (engine.ui_ready) lvgl_ui_frame(dt, fb);
         engine_draw(&engine, fb);
         if (t - last_save >= 1.0) {
