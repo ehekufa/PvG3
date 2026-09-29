@@ -5,6 +5,7 @@
  * full-screen quad. Touch events are mapped to the game's virtual resolution.
  */
 #include "game.h"
+#include "game_view.h" /* GameOfflineUIState for voiced story lines */
 #include "lvgl_ui.h"
 #include "android_music.h"
 #include "android_online_http.h"
