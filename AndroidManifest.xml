@@ -9,7 +9,14 @@
 
     <application
         android:label="PvG3"
-        android:hasCode="false">
+        android:hasCode="true">
+
+        <activity
+            android:name="app.pvg3.MakerActivity"
+            android:configChanges="orientation|keyboardHidden|screenSize|screenLayout"
+            android:screenOrientation="landscape"
+            android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen"
+            android:exported="false" />
 
         <activity
             android:name="android.app.NativeActivity"

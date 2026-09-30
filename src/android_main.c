@@ -59,11 +59,8 @@ static Engine *G;
 static void campaign_save(struct android_app *app);
 static void garden_save(struct android_app *app);
 
-/* The native room screen hands the level maker off to Android's browser. The
- * editor is a static, account-free page pinned to the commit that contains it. */
-#define PVG3_MAKER_URL \
-    "https://rawcdn.githack.com/ehekufa/PvG3/caa491b8bd522431bd6bdf726b2ae1e7d8669098/online/maker.html"
-static void open_maker_external(void) {
+/* The native room screen opens the bundled maker Activity without leaving PvG3. */
+static void open_maker_in_game(void) {
     if (!G || !G->app || !G->app->activity ||
         !G->app->activity->vm || !G->app->activity->clazz) return;
     JavaVM *vm = G->app->activity->vm;
@@ -73,47 +70,43 @@ static void open_maker_external(void) {
         if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK) return;
         attached = 1;
     }
-    jclass intent_class = NULL, uri_class = NULL, activity_class = NULL;
-    jobject action_view = NULL, uri = NULL, intent = NULL;
-    jstring url_text = NULL;
-    jmethodID parse_uri = NULL, intent_ctor = NULL, start_activity = NULL;
+    jclass intent_class = NULL, activity_class = NULL;
+    jobject intent = NULL, configured_intent = NULL;
+    jstring package_name = NULL, activity_name = NULL;
+    jmethodID intent_ctor = NULL, set_class_name = NULL, start_activity = NULL;
 
     intent_class = (*env)->FindClass(env, "android/content/Intent");
-    uri_class = (*env)->FindClass(env, "android/net/Uri");
-    if (!intent_class || !uri_class || (*env)->ExceptionCheck(env)) goto done;
-    jfieldID action_field = (*env)->GetStaticFieldID(
-        env, intent_class, "ACTION_VIEW", "Ljava/lang/String;");
-    parse_uri = (*env)->GetStaticMethodID(
-        env, uri_class, "parse", "(Ljava/lang/String;)Landroid/net/Uri;");
-    intent_ctor = (*env)->GetMethodID(
-        env, intent_class, "<init>", "(Ljava/lang/String;Landroid/net/Uri;)V");
-    if (!action_field || !parse_uri || !intent_ctor ||
-        (*env)->ExceptionCheck(env)) goto done;
-    action_view = (*env)->GetStaticObjectField(env, intent_class, action_field);
-    url_text = (*env)->NewStringUTF(env, PVG3_MAKER_URL);
-    if (!action_view || !url_text || (*env)->ExceptionCheck(env)) goto done;
-    uri = (*env)->CallStaticObjectMethod(env, uri_class, parse_uri, url_text);
-    if (!uri || (*env)->ExceptionCheck(env)) goto done;
-    intent = (*env)->NewObject(env, intent_class, intent_ctor, action_view, uri);
-    if (!intent || (*env)->ExceptionCheck(env)) goto done;
+    if (!intent_class || (*env)->ExceptionCheck(env)) goto done;
+    intent_ctor = (*env)->GetMethodID(env, intent_class, "<init>", "()V");
+    set_class_name = (*env)->GetMethodID(
+        env, intent_class, "setClassName",
+        "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;");
+    if (!intent_ctor || !set_class_name || (*env)->ExceptionCheck(env)) goto done;
+    intent = (*env)->NewObject(env, intent_class, intent_ctor);
+    package_name = (*env)->NewStringUTF(env, "app.pvg3");
+    activity_name = (*env)->NewStringUTF(env, "app.pvg3.MakerActivity");
+    if (!intent || !package_name || !activity_name || (*env)->ExceptionCheck(env)) goto done;
+    configured_intent = (*env)->CallObjectMethod(
+        env, intent, set_class_name, package_name, activity_name);
+    if (!configured_intent || (*env)->ExceptionCheck(env)) goto done;
     activity_class = (*env)->GetObjectClass(env, G->app->activity->clazz);
     if (!activity_class || (*env)->ExceptionCheck(env)) goto done;
     start_activity = (*env)->GetMethodID(
         env, activity_class, "startActivity", "(Landroid/content/Intent;)V");
     if (!start_activity || (*env)->ExceptionCheck(env)) goto done;
-    (*env)->CallVoidMethod(env, G->app->activity->clazz, start_activity, intent);
+    (*env)->CallVoidMethod(env, G->app->activity->clazz,
+                           start_activity, configured_intent);
 
 done:
     if ((*env)->ExceptionCheck(env)) {
         (*env)->ExceptionClear(env);
-        LOGE("Could not open the level maker in an external browser");
+        LOGE("Could not open the in-game level maker Activity");
     }
     if (activity_class) (*env)->DeleteLocalRef(env, activity_class);
+    if (configured_intent) (*env)->DeleteLocalRef(env, configured_intent);
     if (intent) (*env)->DeleteLocalRef(env, intent);
-    if (uri) (*env)->DeleteLocalRef(env, uri);
-    if (url_text) (*env)->DeleteLocalRef(env, url_text);
-    if (action_view) (*env)->DeleteLocalRef(env, action_view);
-    if (uri_class) (*env)->DeleteLocalRef(env, uri_class);
+    if (package_name) (*env)->DeleteLocalRef(env, package_name);
+    if (activity_name) (*env)->DeleteLocalRef(env, activity_name);
     if (intent_class) (*env)->DeleteLocalRef(env, intent_class);
     if (attached) (*vm)->DetachCurrentThread(vm);
 }
@@ -372,7 +365,7 @@ void android_main(struct android_app *app) {
     game_init();
     garden_load(app);   /* keep reading the existing pvg3-garden.v1 */
     campaign_load(app);
-    lvgl_ui_set_maker_open_callback(open_maker_external);
+    lvgl_ui_set_maker_open_callback(open_maker_in_game);
     engine.ui_ready = lvgl_ui_init();
     game_set_lvgl_ui(engine.ui_ready);
     if (!engine.ui_ready) LOGE("LVGL could not start; using the original renderer");

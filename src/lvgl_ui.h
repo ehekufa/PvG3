@@ -3,7 +3,7 @@
 #include <stdint.h>
 
 /* Main-thread LVGL adapter: the game owns all gameplay, saves, and networking.
- * LVGL remains native; the maker action may hand off to the external browser. */
+ * LVGL remains native; the maker button launches the bundled in-app editor. */
 typedef void (*LvglUIMakerOpenCallback)(void);
 void lvgl_ui_set_maker_open_callback(LvglUIMakerOpenCallback callback);
 int lvgl_ui_init(void);

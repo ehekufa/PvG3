@@ -5,6 +5,7 @@ import {
 
 const $ = id => document.getElementById(id);
 const STORAGE_KEY = 'pvg3-maker-project-v1';
+const STORAGE_PLACE = window.PvG3Native ? 'в приложении' : 'в этом браузере';
 const TILE = 60;
 const canvas = $('stage');
 const ctx = canvas.getContext('2d');
@@ -54,7 +55,7 @@ function persistNow() {
   clearTimeout(saveTimer);
   try {
     localStorage.setItem(STORAGE_KEY, serializeProject(project));
-    saveLabel(`Сохранено в этом браузере · ${new Date().toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'})}`);
+    saveLabel(`Сохранено ${STORAGE_PLACE} · ${new Date().toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'})}`);
   } catch {
     saveLabel('Автосохранение недоступно — скачай TXT-файл', true);
   }
@@ -610,10 +611,17 @@ function stopTest() {
 
 function exportProject() {
   if (!project) {toast('Сначала создай или открой проект.');return;}
-  const blob = new Blob([serializeProject(project)], {type:'text/plain;charset=utf-8'});
+  const text = serializeProject(project);
+  const safeName = project.title.normalize('NFKD').replace(/[^\p{L}\p{N}-]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 50) || 'pvg3-level';
+  if (window.PvG3Native?.saveTxt) {
+    window.PvG3Native.saveTxt(`${safeName}.txt`, text);
+    saveLabel('Выбери место для TXT-файла.');
+    toast('Выбери папку и подтверди сохранение TXT-файла.');
+    return;
+  }
+  const blob = new Blob([text], {type:'text/plain;charset=utf-8'});
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
-  const safeName = project.title.normalize('NFKD').replace(/[^\p{L}\p{N}-]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 50) || 'pvg3-level';
   link.href = url;link.download = `${safeName}.txt`;
   document.body.append(link);link.click();link.remove();setTimeout(() => URL.revokeObjectURL(url), 1000);
   saveLabel('TXT-файл скачан — сохрани его отдельно от браузера.');
