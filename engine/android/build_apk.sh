@@ -44,7 +44,8 @@ python3 tools/pack_project.py
 ENGINE_SRC="engine/og_common.c engine/og_vm.c engine/og_image.c engine/og_node.c \
 engine/og_runtime.c engine/og_bind.c engine/og_scene.c engine/og_vfs.c \
 src/font.c engine/android/og_android.c"
-CFLAGS="-O3 -s -fPIC -std=c11 -Wall -Wextra -Werror -Iengine -Iengine/android -Isrc -I$GLUE_INC"
+CFLAGS="-O3 -fPIC -std=c11 -Wall -Wextra -Werror -Iengine -Iengine/android -Isrc -I$GLUE_INC"
+# -s (strip) даём только линковщику: при -c компилятор считает флаг лишним
 # native_app_glue — код NDK, его предупреждениями не управляем
 GLUE_CFLAGS="-O3 -fPIC -std=c11 -I$GLUE_INC"
 LIBS="-landroid -lEGL -lGLESv2 -llog -lm"
