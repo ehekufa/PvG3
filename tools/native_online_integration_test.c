@@ -180,6 +180,8 @@ static void screenshot(const char *name) {
 /* Exercises actual LVGL pointer events and the existing in-memory Firebase.
  * Also writes screenshots if PVG3_LVGL_SHOTS=1; never touches the live DB. */
 static uint32_t ui_pixels[GAME_W * GAME_H];
+static int maker_open_count;
+static void fake_open_maker(void) {maker_open_count++;}
 static void ui_snapshot(const char *name) {
     game_tick(0, lvgl_ui_fullscreen(game_phase()) ? NULL : ui_pixels);
     lvgl_ui_frame(.050f, ui_pixels);
@@ -222,6 +224,7 @@ static int run_lvgl_test(void) {
     static uint8_t before[20000], after[20000];
     size_t bytes = game_save_size();assert(bytes < sizeof before);
     game_init();assert(game_save_export(before, bytes));
+    lvgl_ui_set_maker_open_callback(fake_open_maker);
     assert(lvgl_ui_init());
     game_set_lvgl_ui(1);
     ui_snapshot("menu");
@@ -306,7 +309,9 @@ static int run_lvgl_test(void) {
     assert(game_save_export(before, bytes));
     ui_tap(1030, 611);assert(game_phase() == GAME_ONLINE_ROOMS);
     tick_pump(1);ui_snapshot("rooms_empty");
-    ui_tap(817, 209);ui_snapshot("search");
+    ui_tap(906, 210);
+    assert(maker_open_count == 1 && game_phase() == GAME_ONLINE_ROOMS);
+    ui_tap(727, 210);ui_snapshot("search");
     ui_tap(307, 313);ui_snapshot("search_typed");
     ui_tap(948, 234);ui_tap(948, 137);
     ui_tap(384, 219);ui_tap(1060, 207);
@@ -330,7 +335,7 @@ static int run_lvgl_test(void) {
     ui_snapshot("match_lily_cooldown");
     ui_tap(1141, 75);tick_pump(2);
     assert(game_phase() == GAME_ONLINE_ROOMS && !db.present);
-    /* List join remains distinct from '+' and the square search button. */
+    /* List join remains distinct from room creation, search, and the maker. */
     db.present = 1;db.map = 1;db.host_ping = epoch_ms();
     strcpy(db.room_id, "ABCDEF");strcpy(db.host_id, FAKE_HOST);
     db.host_role = ON_ROLE_PLANTS;db.guest_id[0] = 0;
@@ -359,8 +364,8 @@ static int run_lvgl_test(void) {
     db.host_ping = epoch_ms();
     on_net_refresh();tick_pump(2);
     ui_snapshot("rooms_after_guest");
-    ui_tap(818, 210);
-    /* The square search action is not '+': it accepts all six real keys. */
+    ui_tap(727, 210);
+    /* Search is separate from both the maker and room creation actions. */
     for (int i = 0; i < 6; ++i) ui_tap(316 + i * 78, 314);
     ui_snapshot("search_complete");
     ui_tap(640, 625);tick_pump(2);
@@ -375,7 +380,7 @@ static int run_lvgl_test(void) {
     lvgl_ui_shutdown();
     game_set_lvgl_ui(0);
     on_net_shutdown();
-    puts("LVGL uncluttered UI, drag planting, cooldown art, cancel, quick taps, both online roles and saves passed");
+    puts("LVGL UI, room-screen maker launch, drag planting, cooldown art, both online roles and saves passed");
     return 0;
 }
 #endif

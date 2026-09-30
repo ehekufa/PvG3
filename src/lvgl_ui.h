@@ -3,7 +3,9 @@
 #include <stdint.h>
 
 /* Main-thread LVGL adapter: the game owns all gameplay, saves, and networking.
- * No browser, WebView, internet images, or second UI thread is involved. */
+ * LVGL remains native; the maker action may hand off to the external browser. */
+typedef void (*LvglUIMakerOpenCallback)(void);
+void lvgl_ui_set_maker_open_callback(LvglUIMakerOpenCallback callback);
 int lvgl_ui_init(void);
 void lvgl_ui_shutdown(void);
 int lvgl_ui_fullscreen(int phase);

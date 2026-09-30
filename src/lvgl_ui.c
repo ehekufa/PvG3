@@ -28,7 +28,7 @@
 enum {
     U_MENU_PLAY = 1, U_MENU_LEVELS, U_MENU_GARDEN, U_MENU_BOOK, U_MENU_ONLINE,
     U_MENU_BACK, U_INTRO, U_MAP_LAWN, U_MAP_WATER, U_REFRESH,
-    U_CREATE, U_SEARCH, U_SEARCH_CLOSE, U_SEARCH_ERASE, U_SEARCH_GO,
+    U_CREATE, U_MAKER, U_SEARCH, U_SEARCH_CLOSE, U_SEARCH_ERASE, U_SEARCH_GO,
     U_ROOMS_BACK, U_LOBBY_EXIT, U_PLANTS, U_ZOMBIES, U_MATCH_BOOK,
     U_MATCH_EXIT, U_MATCH_FINISH, U_MATCH_RETURN,
     U_GARDEN_BOOK, U_GARDEN_EXIT, U_GARDEN_ERASE,
@@ -48,6 +48,7 @@ static lv_image_dsc_t pictures[PV_ART_COUNT];
 static uint32_t *layer;
 static uint8_t *drawbuf;
 static int active_phase = -1, page = 0, chosen_map = 1, search_open;
+static LvglUIMakerOpenCallback maker_open_callback;
 static int pointer_down, captured, touch_x, touch_y, dirty;
 /* A packet is dragged over the author's board. LVGL draws the packet and its
  * ghost; game.c still validates the drop, so invalid water/occupied cells and
@@ -61,6 +62,10 @@ static char search_code[ON_ROOM_ID_SIZE], local_notice[110];
 static char visible_ids[8][ON_ROOM_ID_SIZE];
 
 static const lv_font_t *f(int index) { return fonts[index] ? fonts[index] : LV_FONT_DEFAULT; }
+
+void lvgl_ui_set_maker_open_callback(LvglUIMakerOpenCallback callback) {
+    maker_open_callback = callback;
+}
 
 static void flush_pixels(lv_display_t *d, const lv_area_t *area, uint8_t *pixels) {
     int w = area->x2 - area->x1 + 1;
@@ -378,8 +383,9 @@ static void rooms_screen(lv_obj_t *root, const OnNetView *v) {
     lv_obj_set_style_border_width(chosen_map == 1 ? lawn : water, 2, 0);
     lv_obj_set_style_border_color(chosen_map == 1 ? lawn : water,
                                   C(779C73), 0);
-    button(root, 720, 179, 208, 62, "□  Поиск", 2, WHITE, INK, U_SEARCH);
-    button(root, 941, 179, 275, 62, "+  Создать", 2, GOLD, INK, U_CREATE);
+    button(root, 650, 179, 155, 62, "Поиск", 2, WHITE, INK, U_SEARCH);
+    button(root, 813, 179, 187, 62, "Мастерская", 2, SAGE, INK, U_MAKER);
+    button(root, 1008, 179, 208, 62, "+ Создать", 2, GOLD, INK, U_CREATE);
     box(root, 43, 271, 1195, 421, 23, PAPER, 1);
     label(root, 70, 286, 660, 52, "Свободные комнаты", 3, INK,
           LV_TEXT_ALIGN_LEFT);
@@ -804,6 +810,7 @@ static void pressed(lv_event_t *ev) {
     case U_MAP_WATER: chosen_map = 5;dirty = 1;break;
     case U_REFRESH: on_net_refresh();break;
     case U_CREATE: on_net_create(chosen_map);break;
+    case U_MAKER: if (maker_open_callback) maker_open_callback();break;
     case U_SEARCH: search_open = 1;search_code[0] = local_notice[0] = 0;
                    dirty = 1;break;
     case U_SEARCH_CLOSE: search_open = 0;search_code[0] = 0;dirty = 1;break;
