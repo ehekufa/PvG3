@@ -89,6 +89,7 @@ public final class MakerActivity extends Activity {
     }
 
     private WebResourceResponse serveBundledAsset(Uri uri) {
+        if ("content".equals(uri.getScheme())) return null;
         if (!"https".equals(uri.getScheme()) || !ORIGIN.equals(uri.getHost()))
             return emptyResponse(403);
         String path = uri.getPath();

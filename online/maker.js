@@ -26,6 +26,10 @@ let toastTimer = 0;
 let manualPressed = false;
 const keys = new Set();
 const firedTriggers = new Set();
+if (window.PvG3Native) {
+  const backLink = document.querySelector('.back-link');
+  if (backLink) backLink.textContent = '← В игру';
+}
 
 const TYPE_GLYPHS = {
   block: '▦', ground: '▰', hazard: '▲', coin: '●', enemy: '●',
