@@ -53,24 +53,39 @@ LIBS="-landroid -lEGL -lGLESv2 -llog -lm"
 mkdir -p staging_ogorod/lib/arm64-v8a staging_ogorod/lib/armeabi-v7a
 rm -rf build_ogorod   # объектники — вне staging, иначе попадут в APK
 
-# $1 — префикс компилятора NDK (arm64-v8a или armeabi-v7a), $2 — каталог ABI
+# Имя обёртки компилятора в NDK зависит от версии: у 32-битной ABI в
+# свежих NDK есть только androideabi21, у 64-битной — android29.
+cc_prefix() {
+    for name in "$@"; do
+        [ -x "$TC/$name-clang" ] && { echo "$name"; return 0; }
+    done
+    return 1
+}
+
+# $1 — каталог ABI, $2... — возможные префиксы компилятора
 build_abi() {
-    CC_ABI="$TC/$1-clang"
-    OBJ="build_ogorod/$2"
+    abi=$1
+    shift
+    prefix=$(cc_prefix "$@") || {
+        echo "::error::в NDK нет компилятора для $abi (пробовали: $*)"; exit 1; }
+    CC_ABI="$TC/$prefix-clang"
+    OBJ="build_ogorod/$abi"
     mkdir -p "$OBJ"
-    echo "==> $2: native_app_glue (код NDK)"
+    echo "==> $abi: native_app_glue (код NDK, $prefix)"
     "$CC_ABI" $GLUE_CFLAGS -c "$GLUE_SRC" -o "$OBJ/glue.o"
     for src in $ENGINE_SRC; do
         obj="$OBJ/$(echo "$src" | tr / _ | sed 's/\.c$/.o/')"
-        echo "==> $2: $src"
+        echo "==> $abi: $src"
         "$CC_ABI" $CFLAGS -c "$src" -o "$obj"
     done
-    echo "==> $2: линковка"
-    "$CC_ABI" -shared -s $OBJ/*.o $LIBS -o "staging_ogorod/lib/$2/libogorod.so"
+    echo "==> $abi: линковка"
+    "$CC_ABI" -shared -s $OBJ/*.o $LIBS -o "staging_ogorod/lib/$abi/libogorod.so"
 }
 
-build_abi aarch64-linux-android29 arm64-v8a
-build_abi armv7a-linux-androideabi armeabi-v7a
+build_abi arm64-v8a aarch64-linux-android29 aarch64-linux-android24 \
+                    aarch64-linux-android21
+build_abi armeabi-v7a armv7a-linux-androideabi29 armv7a-linux-androideabi24 \
+                       armv7a-linux-androideabi21 armv7a-linux-androideabi
 
 echo "==> лицензии и ассеты"
 mkdir -p staging_ogorod/assets/licenses staging_ogorod/assets/projects
