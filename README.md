@@ -272,6 +272,10 @@ engine/ogorod run projects/kirpichi --frames 4000 --shot 1200=game.bmp
 При запуске — окно 800×600 с меню: «ОБОРОНА ГРЯДКИ» и «КИРПИЧИ». Касание
 карточки запускает игру, `back` возвращает в меню. Ориентация —
 альбомная, Android 10+ (API 29), ABI `arm64-v8a` и `armeabi-v7a`.
+Приложение ставится как «Огород» с нарисованной иконкой ростка на грядке
+(`tools/make_ogorod_icon.py`, только стандартная библиотека Python).
+Внутри APK, кроме `libogorod.so`, лежат лицензии шрифта и исходники обеих
+игр в `assets/projects/` — их можно распаковать и править.
 
 ```sh
 python3 tools/pack_project.py --check   # заголовок проектов не устарел
@@ -280,10 +284,15 @@ engine/android/build_apk.sh             # -> OboronOgorod.apk (подписан 
 ```
 
 Нужны Android SDK (`platforms/android-34`) и NDK; в GitHub Actions они уже
-есть, локально укажи `ANDROID_HOME` и `ANDROID_NDK_ROOT`. Готовый APK
-собирает workflow **Огород: APK (NativeActivity, arm64 + arm32)**, артефакт
-`OboronOgorod-APK`. Подпись тестовая, поэтому APK из разных сборок между
-собой не обновляются — сначала удалите прежний.
+есть, локально укажи `ANDROID_HOME` и `ANDROID_NDK_ROOT`.
+
+Скачать готовый APK: вкладка **Actions** → последний прогон workflow
+**«Огород: APK (NativeActivity, arm64 + arm32)»** → **Artifacts** →
+`OboronOgorod-APK` → `OboronOgorod.apk` (≈2,2 МБ). Установить на телефон
+или эмулятор: `adb install OboronOgorod.apk` либо просто открыть файл на
+устройстве (понадобится разрешение на установку из неизвестных источников).
+Подпись тестовая, поэтому APK из разных сборок между собой не
+обновляются — сначала удалите прежний.
 
 Тот же Android-хост проверяется на ПК без устройства и без NDK:
 `make -C engine android_host_test` гоняет `engine/android/og_android.c` на

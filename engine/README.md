@@ -236,9 +236,10 @@ EGL/GLES2, программный кадр движка загружается �
 пересчитывается в координаты проекта. Java-кода нет вообще.
 
 ```sh
-python3 tools/pack_project.py --check   # проекты совпадают с заголовком
-python3 tools/pack_project.py           # переупаковать projects/ в .h
-engine/android/build_apk.sh             # подписанный OboronOgorod.apk
+python3 tools/pack_project.py --check    # проекты совпадают с заголовком
+python3 tools/pack_project.py            # переупаковать projects/ в .h
+python3 tools/make_ogorod_icon.py --check # иконка и имя приложения актуальны
+engine/android/build_apk.sh              # подписанный OboronOgorod.apk
 ```
 
 * `tools/pack_project.py` кладёт `projects/oborona` и `projects/kirpichi`
@@ -249,6 +250,9 @@ engine/android/build_apk.sh             # подписанный OboronOgorod.ap
   движок по-прежнему работает с папкой проекта.
 * `engine/android/AndroidManifest.xml` — пакет `app.ogorod`,
   `hasCode="false"`, ландшафт, minSdk 29 / targetSdk 34.
+* `tools/make_ogorod_icon.py` рисует `engine/android/res`: имя «Огород» и
+  иконку ростка на грядке для всех плотностей (PNG пишется вручную через
+  zlib, зависимостей нет); `--check` проверяет актуальность файлов.
 * `engine/android/build_apk.sh` — clang NDK под обе ABI, aapt, zipalign,
   подпись тестовым ключом; нужны `ANDROID_HOME` (platforms/android-34) и
   `ANDROID_NDK_ROOT`.
