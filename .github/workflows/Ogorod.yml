@@ -31,6 +31,7 @@ jobs:
           set -e
           # --check падает, если projects/ разошёлся с og_project_data.h
           python3 tools/pack_project.py --check
+          python3 tools/make_ogorod_icon.py --check
           make -C engine clean
           make -C engine test
           # Android-хост под санитайзерами: тот же файл, что в библиотеке
@@ -42,7 +43,8 @@ jobs:
             engine/og_bind.c engine/og_scene.c engine/og_vfs.c src/font.c \
             -o /tmp/ogorod-android-asan -lm
           (cd engine && /tmp/ogorod-android-asan)
-          git diff --exit-code -- engine/android/og_project_data.h
+          git diff --exit-code -- engine/android/og_project_data.h \
+                            engine/android/res
 
       - name: Собрать, подписать и проверить APK
         run: engine/android/build_apk.sh

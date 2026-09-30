@@ -38,8 +38,9 @@ GLUE_INC=$(dirname "$GLUE_HDR")
 TC="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
 
 cd "$ROOT"
-echo "==> упаковываем игры в заголовок"
+echo "==> упаковываем игры и иконку"
 python3 tools/pack_project.py
+python3 tools/make_ogorod_icon.py
 
 ENGINE_SRC="engine/og_common.c engine/og_vm.c engine/og_image.c engine/og_node.c \
 engine/og_runtime.c engine/og_bind.c engine/og_scene.c engine/og_vfs.c \
@@ -97,6 +98,7 @@ cp -r projects/oborona projects/kirpichi staging_ogorod/assets/projects/
 
 echo "==> пакет"
 "$BT/aapt" package -f -0 so -M engine/android/AndroidManifest.xml \
+    -S engine/android/res \
     -I "$SDK/platforms/android-34/android.jar" -F unsigned_ogorod.apk ./staging_ogorod/
 "$BT/zipalign" -f 4 unsigned_ogorod.apk aligned_ogorod.apk
 
@@ -113,7 +115,12 @@ for want in lib/arm64-v8a/libogorod.so lib/armeabi-v7a/libogorod.so \
     unzip -l OboronOgorod.apk | grep -q "$want" || {
         echo "::error::в APK нет $want"; exit 1; }
 done
-"$BT/aapt" dump badging OboronOgorod.apk | head -5
+BADGING=$("$BT/aapt" dump badging OboronOgorod.apk)
+echo "$BADGING" | head -8
+echo "$BADGING" | grep -q "package: name='app.ogorod'" || {
+    echo "::error::в APK нет пакета app.ogorod"; exit 1; }
+echo "$BADGING" | grep -q "application-label:'Огород'" || {
+    echo "::error::в APK нет имени приложения Огород"; exit 1; }
 
 echo
 echo "Готово: $ROOT/OboronOgorod.apk"
