@@ -3,16 +3,82 @@ name: Build PvG3 (Android APK, arm64 + arm32)
 on:
   push:
   workflow_dispatch:
+    inputs:
+      firebase_smoke:
+        description: 'Probe Firebase CORS and temporarily create/remove a test room'
+        type: boolean
+        default: false
 
 jobs:
   build:
     name: Android APK (arm64-v8a + armeabi-v7a, Android 10+)
-    runs-on: ubuntu-latest
+    # Pinned runner has Android SDK 34, build-tools 34.0.0 and NDK installed.
+    runs-on: ubuntu-24.04
 
     steps:
       - uses: actions/checkout@v4
 
-      - uses: android-actions/setup-android@v3
+      - name: Check preinstalled Android toolchain
+        run: |
+          test -f "$ANDROID_HOME/platforms/android-34/android.jar"
+          test -x "$ANDROID_HOME/build-tools/34.0.0/aapt"
+          test -d "$ANDROID_NDK_ROOT"
+          echo "SDK=$ANDROID_HOME NDK=$ANDROID_NDK_ROOT"
+
+      - name: Verify artwork, licensed font, UI, saves and gameplay
+        run: |
+          python3 tools/pack_sprites.py
+          python3 tools/pack_font.py
+          python3 tools/check_art_roles.py
+          python3 tools/compose_music.py --check
+          git diff --exit-code -- src/sprites_data.h src/font_data.h
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -Isrc \
+            src/music_wav.c tools/music_test.c -o music_test -lm
+          ./music_test
+          node --test online/test/*.test.js
+          test -s online/index.html && test -s online/style.css
+          test -s assets/fonts/OFL.txt
+          test -s assets/licenses/stb_truetype-MIT.txt
+          test -s src/vendor/lvgl/LICENCE.txt
+          test -s src/vendor/lvgl/src/libs/tiny_ttf/LICENSE.txt
+          node tools/emit_online_fixture.mjs > /tmp/pvg3-browser-state.json
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -Isrc \
+            src/online_rules.c src/online_protocol.c tools/native_online_test.c \
+            -o native_online_test -lm
+          ./native_online_test /tmp/pvg3-browser-state.json
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -DGAME_TEST -DON_NET_MANUAL -Isrc \
+            src/game.c src/font.c src/online_rules.c src/online_protocol.c \
+            src/online_net.c tools/fake_online_http.c tools/sim_test.c \
+            -o sim_test -lm -pthread
+          ./sim_test
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -DON_NET_MANUAL -Isrc \
+            src/game.c src/font.c src/online_rules.c src/online_protocol.c \
+            src/online_net.c tools/native_online_integration_test.c \
+            -o native_online_integration_test -lm -pthread
+          ./native_online_integration_test
+          # Compile our LVGL adapter strictly; vendor C is built with its own
+          # configuration and exercised by native pointer + fake-REST tests.
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -Isrc -Isrc/vendor/lvgl \
+            -c src/lvgl_ui.c -o /tmp/pvg3-lvgl-ui.o
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -Isrc -Isrc/vendor/lvgl \
+            -DPVG3_LVGL_TEST -DGAME_TEST -c tools/native_online_integration_test.c \
+            -o /tmp/pvg3-lvgl-ui-test.o
+          LVGL_SOURCES="$(find src/vendor/lvgl/src -name '*.c' | LC_ALL=C sort)"
+          gcc -std=c11 -O1 -D_POSIX_C_SOURCE=200809L -DON_NET_MANUAL \
+            -DPVG3_LVGL_TEST -DGAME_TEST -Isrc -Isrc/vendor/lvgl \
+            src/game.c src/font.c src/online_rules.c src/online_protocol.c \
+            src/online_net.c src/lvgl_ui.c tools/native_online_integration_test.c \
+            $LVGL_SOURCES -o lvgl_ui_test -lm -pthread
+          PVG3_LVGL_TEST=1 ./lvgl_ui_test
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -Isrc \
+            src/online_rules.c src/online_protocol.c src/online_net.c \
+            tools/native_online_thread_test.c -o native_online_thread_test -lm -pthread
+          ./native_online_thread_test
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -DON_NET_MANUAL -Isrc \
+            src/game.c src/font.c src/online_rules.c src/online_protocol.c \
+            src/online_net.c tools/fake_online_http.c tools/host_test.c \
+            -o host_test -lm -pthread
+          ./host_test
 
       - name: Build native library (both ABIs)
         run: |
@@ -38,9 +104,14 @@ jobs:
 
           TC="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
           mkdir -p staging/lib/arm64-v8a staging/lib/armeabi-v7a
-          SRC="src/game.c src/android_main.c $GLUE_SRC"
-          CFLAGS="-O3 -s -fPIC -Isrc -I$GLUE_INC"
-          LIBS="-landroid -llog -lEGL -lGLESv2 -lm"
+          LVGL_SOURCES="$(find src/vendor/lvgl/src -name '*.c' | LC_ALL=C sort)"
+          SRC="src/game.c src/font.c src/lvgl_ui.c src/music_wav.c src/android_music.c src/android_main.c src/online_rules.c src/online_protocol.c src/online_net.c src/android_online_http.c $GLUE_SRC $LVGL_SOURCES"
+          CFLAGS="-O3 -s -fPIC -pthread -Isrc -Isrc/vendor/lvgl -I$GLUE_INC"
+          LIBS="-landroid -laaudio -llog -lEGL -lGLESv2 -lm"
+
+          echo ":: Checking native Android HTTPS/JNI with strict warnings"
+          "$TC/aarch64-linux-android29-clang" -std=c11 -Wall -Wextra -Werror \
+            -Isrc -c src/android_online_http.c -o /tmp/pvg3-android-online-http.o
 
           echo ":: Compiling arm64-v8a (64-bit)"
           "$TC/aarch64-linux-android29-clang" $CFLAGS -shared $SRC $LIBS \
@@ -56,6 +127,18 @@ jobs:
           SDK="$ANDROID_HOME"
           BT="$SDK/build-tools/34.0.0"
 
+          # The embedded PT Sans and stb_truetype travel with their notices.
+          mkdir -p staging/assets/licenses
+          cp assets/fonts/OFL.txt staging/assets/licenses/PT_Sans-OFL.txt
+          cp assets/licenses/stb_truetype-MIT.txt staging/assets/licenses/stb_truetype-MIT.txt
+          cp src/vendor/lvgl/LICENCE.txt staging/assets/licenses/LVGL-MIT.txt
+          cp src/vendor/lvgl/src/libs/tiny_ttf/LICENSE.txt \
+            staging/assets/licenses/LVGL-tiny-ttf-MIT.txt
+          cp LICENSE staging/assets/licenses/PvG3-MIT.txt
+          mkdir -p staging/assets/music staging/assets/voice
+          cp assets/music/kirill-pond-loop.wav staging/assets/music/
+          cp assets/voice/intro-{bread,dima,kirill}.wav staging/assets/voice/
+
           "$BT/aapt" package -f -M AndroidManifest.xml \
             -I "$SDK/platforms/android-34/android.jar" \
             -F unsigned.apk ./staging/
@@ -68,8 +151,28 @@ jobs:
 
           "$BT/apksigner" sign --ks pvg3.keystore --ks-pass pass:android \
             --out PvG3.apk aligned.apk
+          "$BT/apksigner" verify --verbose PvG3.apk
+          "$BT/aapt" dump permissions PvG3.apk | grep 'android.permission.INTERNET'
+          unzip -l PvG3.apk | grep 'lib/arm64-v8a/libpvg3.so'
+          unzip -l PvG3.apk | grep 'lib/armeabi-v7a/libpvg3.so'
+          unzip -l PvG3.apk | grep 'assets/licenses/PT_Sans-OFL.txt'
+          unzip -l PvG3.apk | grep 'assets/licenses/stb_truetype-MIT.txt'
+          unzip -l PvG3.apk | grep 'assets/licenses/LVGL-MIT.txt'
+          unzip -l PvG3.apk | grep 'assets/licenses/LVGL-tiny-ttf-MIT.txt'
+          unzip -l PvG3.apk | grep 'assets/music/kirill-pond-loop.wav'
+          unzip -l PvG3.apk | grep 'assets/voice/intro-bread.wav'
+          unzip -l PvG3.apk | grep 'assets/voice/intro-dima.wav'
+          unzip -l PvG3.apk | grep 'assets/voice/intro-kirill.wav'
 
       - uses: actions/upload-artifact@v4
         with:
           name: PvG3-Android-arm64-arm32
           path: PvG3.apk
+
+      # Never touch the real database on ordinary pushes. A manually opted-in
+      # run (or the one-off [firebase-smoke] push) creates and removes only its
+      # own random test room. Run AFTER uploading the APK so failures don't
+      # prevent downloading the build.
+      - name: Probe live Firebase (explicit opt-in only)
+        if: (github.event_name == 'workflow_dispatch' && inputs.firebase_smoke) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[firebase-smoke]'))
+        run: node online/test/live-smoke.mjs --write

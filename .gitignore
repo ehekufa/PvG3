@@ -1,6 +1,11 @@
 # build / generated artifacts
 host_test
 sim_test
+music_test
+native_online_test
+native_online_integration_test
+native_online_thread_test
+lvgl_ui_test
 *.o
 *.so
 *.apk
@@ -9,3 +14,4 @@ unsigned.apk
 staging/
 build/
 shots/
+node_modules/

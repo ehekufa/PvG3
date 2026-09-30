@@ -1,12 +1,15 @@
-/* host_test.c — compiles game.c on a desktop and writes BMP screenshots so the
- * renderer/logic can be verified without an Android device. Not part of the APK.
- *
- *   gcc -O2 -Wall -Isrc src/game.c tools/host_test.c -o host_test -lm
+/* Desktop screenshots: menu, book, Zen Garden, canal/lily, waves and robot.
+ * gcc -O2 -Wall -Wextra -Werror -Isrc src/game.c src/font.c \
+ *     tools/host_test.c -o host_test -lm && ./host_test
  */
+#include <assert.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <sys/stat.h>
 #include "game.h"
+#include "online_net.h"
 
 static void write_bmp(const char *path, int w, int h, const uint32_t *rgba) {
     FILE *f = fopen(path, "wb");
@@ -22,6 +25,7 @@ static void write_bmp(const char *path, int w, int h, const uint32_t *rgba) {
     hdr[26] = 1; hdr[28] = 24;
     fwrite(hdr, 1, 54, f);
     unsigned char *buf = (unsigned char *)malloc(imgsize);
+    if (!buf) { fprintf(stderr, "out of memory writing %s\n", path); fclose(f); return; }
     for (int y = 0; y < h; y++) {
         const uint32_t *src = rgba + (h - 1 - y) * w; /* BMP is bottom-up */
         unsigned char *dst = buf + y * row;
@@ -39,17 +43,116 @@ static void write_bmp(const char *path, int w, int h, const uint32_t *rgba) {
 }
 
 int main(void) {
+    if (mkdir("shots", 0755) != 0 && errno != EEXIST) {
+        perror("shots");
+        return 1;
+    }
     static uint32_t fb[GAME_W * GAME_H];
-
-    /* Title screen. */
     game_init();
     game_tick(0.016f, fb);
+    assert(game_phase() == GAME_MENU);
+    /* A neutral gray background replaces the old menu's Queen robot. */
+    assert(fb[365 * GAME_W + 1165] == 0xFFADB0ADu);
     write_bmp("shots/menu.bmp", GAME_W, GAME_H, fb);
+    game_input_press(1058, 615);            /* native room browser */
+    on_net_pump_once();                      /* desktop fake: no rooms */
+    game_tick(0, fb);
+    assert(game_phase() == GAME_ONLINE_ROOMS);
+    write_bmp("shots/online_rooms.bmp", GAME_W, GAME_H, fb);
+    game_input_press(785, 180);             /* square opens search */
+    game_tick(0, fb);
+    write_bmp("shots/online_search.bmp", GAME_W, GAME_H, fb);
+    game_input_press(950, 133);
+    game_input_press(1140, 55);             /* back to offline menu */
+    game_input_press(235, 100);             /* УРОВНИ */
+    game_tick(0, fb);
+    write_bmp("shots/select.bmp", GAME_W, GAME_H, fb);
+    game_input_press(640, 600);             /* level 0: replayable story */
+    game_tick(0, fb);
+    write_bmp("shots/intro_replay.bmp", GAME_W, GAME_H, fb);
+    game_input_press(1150, 50);             /* skip -> selector */
+    game_input_press(1130, 50);             /* back to menu */
 
-    /* A populated play scene. */
-    game_debug_snapshot();
+    game_input_press(1080, 85);             /* САД ДЗЕН */
+    game_input_press(580, 70);              /* Kirill's blue coin sunflower */
+    game_input_press(421, 176);
+    game_input_press(320, 70);              /* peashooter */
+    game_input_press(535, 400);
+    game_input_press(450, 70);              /* walnut */
+    game_input_press(763, 512);
+    game_input_press(710, 70);              /* illustrated Jumper Fighter */
+    game_input_press(877, 512);
+    game_input_press(840, 70);              /* new two-eyed lily pad */
+    game_input_press(991, 288);
+    game_tick(0, fb);
+    assert(game_phase() == GAME_GARDEN);
+    write_bmp("shots/garden.bmp", GAME_W, GAME_H, fb);
+    game_input_press(985, 50);              /* book from garden */
+    game_input_press(320, 160 + 3 * 99 + 44); /* Jumper's page */
+    game_tick(0, fb);
+    assert(game_phase() == GAME_BOOK);
+    /* The index page is parchment; the selected plant's page is orange. */
+    assert(fb[350 * GAME_W + 125] == 0xFFC8E9F6u);
+    assert(fb[350 * GAME_W + 1155] == 0xFF4F8EDFu);
+    write_bmp("shots/book.bmp", GAME_W, GAME_H, fb);
+    game_input_press(320, 160 + 2 * 99 + 44); /* sunflower's page */
+    game_tick(0, fb);
+    write_bmp("shots/book_sunflower.bmp", GAME_W, GAME_H, fb);
+    game_input_press(320, 160 + 4 * 99 + 44); /* lily's page */
+    game_tick(0, fb);
+    write_bmp("shots/book_lily.bmp", GAME_W, GAME_H, fb);
+    game_input_press(450, 141);             /* enemy tab */
+    game_input_press(320, 160 + 1 * 99 + 44); /* cone duck */
+    game_tick(0, fb);
+    write_bmp("shots/book_cone.bmp", GAME_W, GAME_H, fb);
+    game_input_press(320, 160 + 2 * 99 + 44); /* helmet duck */
+    game_tick(0, fb);
+    write_bmp("shots/book_helmet.bmp", GAME_W, GAME_H, fb);
+    game_input_press(250, 141);             /* back to the plant tab */
+    game_input_press(1130, 50);             /* garden */
+    game_input_press(1160, 60);             /* menu */
+
+    game_input_press(640, 600);             /* СТАРТ -> intro */
+    game_tick(1.5f, fb);
+    write_bmp("shots/intro.bmp", GAME_W, GAME_H, fb);
+    game_input_press(640, 600);             /* Dima's line */
+    game_tick(0, fb);
+    write_bmp("shots/dima.bmp", GAME_W, GAME_H, fb);
+    game_input_press(640, 600);             /* Kirill's line */
+    game_tick(0, fb);
+    write_bmp("shots/kirill.bmp", GAME_W, GAME_H, fb);
+    game_input_press(640, 600);             /* first level */
+    game_tick(0, fb);
+    assert(game_phase() == GAME_PLAY);
+    /* The first playable row starts immediately below the top HUD. */
+    assert(fb[125 * GAME_W + 960] != fb[90 * GAME_W + 960]);
+    write_bmp("shots/level1.bmp", GAME_W, GAME_H, fb);
+    game_input_press(125, 401);             /* buy Kirill's sunflower (left rack) */
+    game_input_press(421, 176);
+    game_tick(6.3f, fb);                    /* first coin appears beside it */
+    write_bmp("shots/coin.bmp", GAME_W, GAME_H, fb);
+
+    game_debug_snapshot();                 /* final level, queen in robot */
     for (int i = 0; i < 30; i++) game_tick(0.016f, fb);
     write_bmp("shots/play.bmp", GAME_W, GAME_H, fb);
+    game_debug_armored_snapshot();
+    game_tick(0, fb);
+    write_bmp("shots/armored_ducks.bmp", GAME_W, GAME_H, fb);
 
+    game_init();
+    game_input_press(235, 100);            /* level selector */
+    game_input_press(1070, 270);           /* level 5: author's water map */
+    assert(game_phase() == GAME_PLAY && game_level() == 5);
+    game_tick(0, fb);
+    uint32_t water = fb[285 * GAME_W + 700];
+    uint32_t land = fb[175 * GAME_W + 700];
+    assert(((water >> 16) & 255u) > ((land >> 16) & 255u) + 20u);
+    write_bmp("shots/water_empty.bmp", GAME_W, GAME_H, fb);
+    game_input_press(125, 615);            /* lily packet */
+    game_input_press(535, 288);            /* water row 2, column 3 */
+    game_input_press(125, 187);            /* peashooter packet */
+    game_input_press(535, 288);            /* peashooter on lily */
+    game_tick(0, fb);
+    write_bmp("shots/water_planted.bmp", GAME_W, GAME_H, fb);
     return 0;
 }

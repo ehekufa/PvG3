@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#273a33">
+  <meta name="description" content="PvG3 Онлайн: играй за растения Кирилла или отправляй уток-зомби другу. Комнаты через Firebase.">
+  <title>PvG3 Онлайн — растения против уток</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark"><img src="../assets/art/khlebushek.png" alt="Хлебушек"></span>
+        <span><strong>PvG3</strong><small>онлайн-арена Кирилла</small></span></div>
+      <div class="top-actions"><span class="connection" id="connection"><span class="dot"></span>Подключение…</span>
+        <button class="small-button" id="music" type="button" aria-label="Включить музыку">♫ Музыка</button>
+        <button class="small-button" id="book" type="button">📖 Книга</button></div>
+    </header>
+
+    <main>
+      <section class="screen" id="rooms-screen" aria-labelledby="rooms-title">
+        <div class="hero">
+          <span class="eyebrow">ИГРА ПО СЕТИ · 1 НА 1</span>
+          <h1 id="rooms-title">Собери растения.<br><em>Или отправь уток.</em></h1>
+          <p>Создай комнату для друга или зайди в свободную. После подключения каждый сам выберет сторону: растения Кирилла или утки-зомби.</p>
+          <div class="hero-icons"><img src="../assets/art/peashooter.png" alt="Горохострел"><span>vs</span><img src="../assets/art/zombie-duck.png" alt="Нарисованная утка-зомби"></div>
+        </div>
+        <div class="columns">
+          <section class="panel create-panel" aria-labelledby="create-title">
+            <div class="panel-title"><span class="round-icon">＋</span><div><span class="overline">ПРИГЛАСИ ДРУГА</span><h2 id="create-title">Новая комната</h2></div></div>
+            <p class="muted">Хозяин комнаты запускает бой на своём устройстве. Второй игрок увидит его поле и сможет отправлять команды.</p>
+            <div class="map-picker" role="group" aria-label="Выбор карты"><button type="button" class="map-card active" data-map="1"><img src="../assets/art/lawn-map.png" alt="Газон"><span>Газон</span></button>
+              <button type="button" class="map-card" data-map="5"><img src="../assets/art/water-map.png" alt="Водная карта"><span>Вода + кувшинки</span></button></div>
+            <button class="primary-button" id="create" type="button"><span class="plus">＋</span> Создать комнату</button>
+          </section>
+          <section class="panel list-panel" aria-labelledby="list-title">
+            <div class="panel-title"><span class="round-icon outline">▦</span><div><span class="overline">ВЫБЕРИ КОМНАТУ</span><h2 id="list-title">Свободные комнаты</h2></div>
+              <button class="refresh" id="refresh" type="button" title="Обновить список">↻</button></div>
+            <div class="room-list" id="room-list"><p class="muted">Ищем открытые комнаты…</p></div>
+            <p class="hint">Друг может поделиться ссылкой с кодом комнаты. Закрытые и занятые комнаты в список не попадают.</p>
+          </section>
+        </div>
+        <div class="footer-note">Без входа и чата · Только комнаты и игровые ходы · Кампания в APK остаётся отдельно</div>
+      </section>
+
+      <section class="screen hidden" id="lobby-screen" aria-labelledby="lobby-title">
+        <button type="button" class="back-link" id="leave-lobby">← Выйти из комнаты</button>
+        <div class="lobby-top"><div><span class="eyebrow">ВЫ В КОМНАТЕ</span><h1 id="lobby-title">Выбери сторону</h1><p class="muted" id="lobby-subtitle">Ждём соперника…</p></div>
+          <div class="code-panel"><span class="overline">КОД КОМНАТЫ</span><strong id="room-code">------</strong><button type="button" id="share">Скопировать ссылку ↗</button></div></div>
+        <div class="sides"><button type="button" class="side-card plant-side" data-side="plants"><div class="side-art"><img src="../assets/art/peashooter.png" alt="Горохострел"><img src="../assets/art/coin-sunflower.png" alt="Подсолнух"></div><span class="overline">ЗАЩИТА</span><h2>Растения</h2><p>Сажай растения Кирилла, подбирай монеты и не дай уткам пройти к дому.</p><b id="plants-taken">Свободно</b></button>
+          <button type="button" class="side-card duck-side" data-side="zombies"><div class="side-art"><img src="../assets/art/zombie-duck.png" alt="Утка-зомби"><span class="cone-emoji">▲</span></div><span class="overline">НАСТУПЛЕНИЕ</span><h2>Зомби-утки</h2><p>Покупай уток, выбирай ряд и прорвись через растения. Конус и шлем дают больше здоровья.</p><b id="zombies-taken">Свободно</b></button></div>
+        <div class="lobby-bottom" id="lobby-status">Оба игрока выбирают разные стороны. Бой начнётся автоматически.</div>
+      </section>
+
+      <section class="screen hidden" id="match-screen" aria-label="Онлайн-бой">
+        <div class="match-heading"><div><span class="eyebrow">КОМНАТА <span id="match-code"></span></span><h2 id="match-title">Онлайн-бой</h2></div><button type="button" class="back-link" id="leave-match">Выйти из боя ×</button></div>
+        <div class="canvas-wrap"><canvas id="battle" width="1280" height="720" aria-label="Игровое поле. Выбери карточку слева, затем клетку или ряд." role="img"></canvas></div>
+        <div class="match-controls"><span id="match-hint">Выбери карточку слева и коснись поля.</span><button type="button" id="finish-wave" class="small-button hidden">Закончить волну</button></div>
+      </section>
+    </main>
+  </div>
+
+  <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
+  <dialog id="book-dialog" class="book-dialog"><form method="dialog"><button class="book-close" aria-label="Закрыть" type="submit">×</button></form>
+    <span class="eyebrow">УМНАЯ КНИГА КИРИЛЛА</span><h2>Растения и противники</h2>
+    <div class="book-columns"><div><h3>Растения Кирилла</h3><div id="book-plants"></div></div><div><h3>Утки-зомби</h3><div id="book-ducks"></div></div></div>
+    <p class="book-footer">Конус и шлем нарисованы поверх <strong>того же рисунка утки</strong> — это не новые персонажи.</p>
+  </dialog>
+  <audio id="soundtrack" src="../assets/music/kirill-pond-loop.wav" preload="none" loop></audio>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
