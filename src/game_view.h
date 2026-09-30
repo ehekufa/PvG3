@@ -9,9 +9,10 @@
  * Byte order in memory is RGBA; the LVGL adapter converts to ARGB8888 once. */
 enum {
     PV_ART_BREAD, PV_ART_DIMA, PV_ART_KIRILL, PV_ART_DUCK,
-    PV_ART_ROBOT, PV_ART_PEA, PV_ART_WALNUT, PV_ART_SUNFLOWER,
+    PV_ART_DUCK_CONE, PV_ART_DUCK_BUCKET, PV_ART_ROBOT,
+    PV_ART_PEA, PV_ART_WALNUT, PV_ART_SUNFLOWER,
     PV_ART_JUMPER, PV_ART_LILY, PV_ART_LAWN, PV_ART_WATER, PV_ART_MOWER,
-    PV_ART_COUNT
+    PV_ART_COIN, PV_ART_COUNT
 };
 const uint32_t *game_art_rgba(int id, int *width, int *height);
 
@@ -36,7 +37,7 @@ typedef struct {
     int art_id, cost, hp, enemy_variant;
     float recharge;
 } GameBookEntry;
-/* 5 plants; 4 enemies (duck, cone duck, helmet duck, queen/robot). */
+/* 5 plants; 4 enemies (duck, cone duck, bucket duck, queen/robot). */
 int game_book_entry(int enemy_tab, int index, GameBookEntry *out);
 
 #endif

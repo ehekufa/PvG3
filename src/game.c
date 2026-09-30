@@ -1,7 +1,8 @@
 /* game.c — lane defence, platform-independent simulation and software renderer.
  * The original PNG artwork is packed into sprites_data.h at build time (see
  * tools/pack_sprites.py). All characters and plants use the author's drawings;
- * the PT Sans font, coin tokens and attack effects are drawn in code.
+ * the PT Sans font and attack effects are rendered in code; a shared gold
+ * coin illustration is used for both the HUD and collectible currency.
  * The Android host only blits our RGBA framebuffer.
  */
 
@@ -113,8 +114,11 @@ static void ellipse(int cx, int cy, int rx, int ry, uint32_t c) {
 typedef struct { int w, h; const uint64_t *runs; unsigned nruns; } SpritePacked;
 #include "sprites_data.h"
 _Static_assert((int)PV_ART_BREAD == (int)SPR_KHLEBUSHEK &&
+               (int)PV_ART_DUCK_CONE == (int)SPR_DUCK_CONE &&
+               (int)PV_ART_DUCK_BUCKET == (int)SPR_DUCK_BUCKET &&
                (int)PV_ART_PEA == (int)SPR_PEA &&
                (int)PV_ART_MOWER == (int)SPR_MOWER &&
+               (int)PV_ART_COIN == (int)SPR_COIN &&
                (int)PV_ART_COUNT == (int)SPR_COUNT,
                "LVGL art IDs must match the PNG packer");
 static uint32_t *sprite_pixels[SPR_COUNT];
@@ -263,15 +267,15 @@ enum { PT_NONE = -1, PT_PEA = 0, PT_WALL, PT_SUNFLOWER, PT_JUMPER,
        PT_LILY, PT_COUNT };
 _Static_assert(PT_JUMPER == 3 && PT_LILY == 4,
                "existing garden plant IDs must not change");
-/* Save IDs 0/1 were already used by the duck and the final robot. The cone
- * and helmet are protective gear on the author's SAME duck drawing. */
-enum { EN_DUCK = 0, EN_ROBOT = 1, EN_CONE = 2, EN_HELMET = 3, EN_COUNT };
+/* Save IDs 0/1 remain the original duck and final robot; the cone and
+ * bucket variants keep stable IDs 2/3 so existing campaign saves still load. */
+enum { EN_DUCK = 0, EN_ROBOT = 1, EN_CONE = 2, EN_BUCKET = 3, EN_COUNT };
 static const int EN_BASE_HP[EN_COUNT] = { 180, 5500, 420, 750 };
 static const int EN_ONLINE_COST[EN_COUNT] = { 50, 0, 100, 175 };
 static const char *const EN_NAMES[EN_COUNT] = {
-    "УТКА-ЗОМБИ", "РОБОТ КОРОЛЕВЫ", "УТКА С КОНУСОМ", "УТКА В ШЛЕМЕ"
+    "УТКА-ЗОМБИ", "РОБОТ КОРОЛЕВЫ", "УТКА С КОНУСОМ", "УТКА С ВЕДРОМ"
 };
-static const int BOOK_ENEMIES[] = { EN_DUCK, EN_CONE, EN_HELMET, EN_ROBOT };
+static const int BOOK_ENEMIES[] = { EN_DUCK, EN_CONE, EN_BUCKET, EN_ROBOT };
 #define BOOK_ENEMY_COUNT 4
 
 typedef struct {
@@ -321,8 +325,8 @@ int game_book_entry(int enemy_tab, int index, GameBookEntry *out) {
         out->enemy_variant = type;
         out->description = type == EN_DUCK ? "НАРИСОВАННАЯ АВТОРОМ УТКА-ЗОМБИ." :
                            type == EN_CONE ? "КОНУС ЗАЩИЩАЕТ ТУ ЖЕ УТКУ." :
-                           type == EN_HELMET ? "ШЛЕМ ДЕЛАЕТ ТУ ЖЕ УТКУ ЕЩЁ КРЕПЧЕ." :
-                                             "КОРОЛЕВА УПРАВЛЯЕТ БОЛЬШИМ РОБОТОМ.";
+                           type == EN_BUCKET ? "ВЕДРО ЗАЩИЩАЕТ УТКУ ОТ УДАРОВ." :
+                                              "КОРОЛЕВА УПРАВЛЯЕТ БОЛЬШИМ РОБОТОМ.";
         out->detail = type == EN_ROBOT ? "ПОЯВЛЯЕТСЯ В КОНЦЕ УРОВНЯ 10. ДВИЖЕТСЯ МЕДЛЕННО." :
                                          "ЧЕМ ДАЛЬШЕ УРОВЕНЬ, ТЕМ БОЛЬШЕ ЗДОРОВЬЯ.";
     }
@@ -449,14 +453,10 @@ static void draw_parts(void) {
 /* drawing: entities                                                  */
 /* ------------------------------------------------------------------ */
 
-/* A simple game token, not a new character or a substitute for any PNG. */
+/* One polished coin token is shared by the HUD, packets and collectible drops. */
 static void draw_coin_icon(int cx, int cy, int r) {
-    disc(cx + 2, cy + 3, r + 1, COL(90, 61, 25));
-    disc(cx, cy, r, COL(163, 102, 26));
-    disc(cx, cy, r - 3, COL(247, 184, 48));
-    disc(cx, cy, r - 7, COL(255, 224, 103));
-    int size = r >= 24 ? 4 : 3;
-    draw_text_c(cx, cy - 7 * size / 2, size, COL(144, 85, 23), "М");
+    if (r <= 0) return;
+    sprite_draw(SPR_COIN, cx - r, cy - r, 2 * r, 2 * r, 0);
 }
 
 static void draw_lily(int cx, int cy) {
@@ -477,34 +477,12 @@ static void draw_plant(int cx, int cy, int type, float sway) {
 /* author's duck-zombie and the Duck Queen's piloted robot            */
 /* ------------------------------------------------------------------ */
 
-/* The zombie variants use the *same* user-drawn duck. Only their protective
- * cone/helmet are UI geometry; no replacement or invented character art. */
+/* Use the author's complete drawing for each duck. In particular, do not
+ * stack a procedural hat on top of the cone/bucket illustrations. */
 static void draw_duck_variant(int x, int y, int size, int type, int flip) {
-    sprite_draw(SPR_DUCK, x, y, size, size, flip);
-    int cx = x + size * (flip ? 46 : 54) / 100;
-    int brim = y + size * 34 / 100;
-    if (type == EN_CONE) {
-        int tip = brim - size * 52 / 100;
-        int half = size * 25 / 100;
-        for (int py = tip; py < brim; py++) {
-            int w = 2 + (py - tip) * half / (brim - tip);
-            rect(cx - w, py, cx + w, py, COL(238, 111, 28));
-            if (w > 6) rect(cx - w + 3, py, cx - w + 5, py, COL(255, 193, 71));
-        }
-        rect(cx - half - 4, brim - size / 15, cx + half + 4, brim,
-             COL(181, 70, 24));
-        rect(cx - half + 2, brim - size / 15, cx + half - 2,
-             brim - size / 15 + 3, COL(255, 192, 65));
-    } else if (type == EN_HELMET) {
-        ellipse(cx, brim - size / 10, size * 29 / 100, size * 20 / 100,
-                COL(84, 106, 123));
-        ellipse(cx - size / 13, brim - size / 6, size / 12, size / 15,
-                COL(157, 179, 185));
-        rect(cx - size * 33 / 100, brim - size / 20,
-             cx + size * 33 / 100, brim + size / 35, COL(47, 69, 81));
-        rect(cx - size * 28 / 100, brim - size / 20,
-             cx + size * 28 / 100, brim - size / 40, COL(179, 192, 188));
-    }
+    int sprite = type == EN_CONE ? SPR_DUCK_CONE :
+                 type == EN_BUCKET ? SPR_DUCK_BUCKET : SPR_DUCK;
+    sprite_draw(sprite, x, y, size, size, flip);
 }
 
 static void draw_enemy(const Zombie *z) {
@@ -533,7 +511,7 @@ static int spawn_zombie(void) {
             z->row = (int)(rndf() * ROWS);
             z->x = GAME_W + 30 + rndf() * 60;
             float roll = rndf();
-            z->type = level >= 6 && roll < 0.12f ? EN_HELMET :
+            z->type = level >= 6 && roll < 0.12f ? EN_BUCKET :
                       level >= 3 && roll < 0.38f ? EN_CONE : EN_DUCK;
             /* The same duck gains real HP from its gear; not merely a hat. */
             float base = (180 + 35 * (level - 1)) *
@@ -680,8 +658,8 @@ void game_debug_armored_snapshot(void) {
     game_debug_snapshot();
     zomb[0].type = EN_CONE;
     zomb[0].hp = zomb[0].maxhp = EN_BASE_HP[EN_CONE];
-    zomb[1].type = EN_HELMET;
-    zomb[1].hp = zomb[1].maxhp = EN_BASE_HP[EN_HELMET];
+    zomb[1].type = EN_BUCKET;
+    zomb[1].hp = zomb[1].maxhp = EN_BASE_HP[EN_BUCKET];
 }
 
 /* ------------------------------------------------------------------ */
@@ -2252,7 +2230,7 @@ int game_save_import(const void *src, size_t length) {
             if (z->active != 0 && z->active != 1) return 0;
             if (z->active && (z->row < 0 || z->row >= ROWS ||
                 z->type < EN_DUCK ||
-                z->type > (s.version >= SAVE_VERSION ? EN_HELMET : EN_ROBOT) ||
+                z->type > (s.version >= SAVE_VERSION ? EN_BUCKET : EN_ROBOT) ||
                 !isfinite(z->x) || !isfinite(z->hp) || !isfinite(z->maxhp) ||
                 !isfinite(z->speed) || !isfinite(z->anim))) return 0;
         }
@@ -2356,7 +2334,7 @@ void game_debug_spawn_duck(int row, float x) {
         }
 }
 void game_debug_spawn_armored_duck(int row, float x, int type) {
-    if (row < 0 || row >= ROWS || (type != EN_CONE && type != EN_HELMET)) return;
+    if (row < 0 || row >= ROWS || (type != EN_CONE && type != EN_BUCKET)) return;
     for (int i = 0; i < ZMAX; i++)
         if (!zomb[i].active) {
             Zombie *z = &zomb[i];

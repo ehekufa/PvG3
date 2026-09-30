@@ -252,7 +252,7 @@ static int run_lvgl_test(void) {
     GameOfflineUIState offline;
     game_offline_ui_snapshot(&offline);
     assert(offline.book_enemy_tab == 1 && offline.book_selection == 2);
-    ui_snapshot("book_helmet");
+    ui_snapshot("book_bucket");
     ui_tap(225, 525);ui_snapshot("book_robot");
     ui_tap(1150, 76);assert(game_phase() == GAME_GARDEN);
     ui_tap(1150, 44);assert(game_phase() == GAME_MENU);

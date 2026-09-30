@@ -148,31 +148,12 @@ static void art(lv_obj_t *parent, int id, int cx, int cy, int scaled) {
     lv_obj_remove_flag(o, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
 }
 
-/* Same original duck with simple cone/helmet geometry on top, as in the
- * legacy renderer. These are protective items, never separate characters. */
+/* Each protected duck is its own complete user drawing, shared by packets,
+ * the picture book, drag previews and battlefield sprites. */
 static void duck_art(lv_obj_t *parent, int cx, int cy, int size, int variant) {
-    art(parent, PV_ART_DUCK, cx, cy, size);
-    if (variant != ON_CONE && variant != ON_HELMET) return;
-    int brim = cy - size / 2 + size * 34 / 100;
-    int head = cx + size * 4 / 100;
-    if (variant == ON_CONE) {
-        int tip = brim - size * 52 / 100;
-        for (int i = 0; i < 10; ++i) {
-            int y = tip + i * (brim - tip) / 10;
-            int half = 2 + i * size * 25 / 1000;
-            box(parent, head - half, y, 2 * half, (brim - tip) / 10 + 1,
-                0, C(EB782C), 0);
-        }
-        box(parent, head - size * 29 / 100, brim - size / 17,
-            size * 58 / 100, size / 13, 1, C(A84929), 0);
-    } else {
-        box(parent, head - size * 30 / 100, brim - size * 27 / 100,
-            size * 60 / 100, size * 27 / 100, size / 7, C(647887), 0);
-        box(parent, head - size * 24 / 100, brim - size * 22 / 100,
-            size * 24 / 100, size / 20 + 2, size / 22, C(A6B8B8), 0);
-        box(parent, head - size * 33 / 100, brim - size / 23,
-            size * 66 / 100, size / 13, 2, C(354F5D), 0);
-    }
+    int image_id = variant == ON_CONE ? PV_ART_DUCK_CONE :
+                   variant == ON_BUCKET ? PV_ART_DUCK_BUCKET : PV_ART_DUCK;
+    art(parent, image_id, cx, cy, size);
 }
 
 static void header(lv_obj_t *root, const char *title, const char *back,
@@ -333,8 +314,7 @@ static void play_screen(lv_obj_t *root) {
     box(root, 0, 118, 1280, 3, 0, GOLD, 0);
     lv_obj_t *rail = box(root, 0, 121, 246, 599, 0, C(24382E), 0);
     lv_obj_set_style_bg_opa(rail, 115, 0); /* author's wood stays visible */
-    box(root, 22, 64, 36, 36, 18, GOLD, 0);
-    label(root, 26, 68, 29, 29, "М", 1, INK, LV_TEXT_ALIGN_CENTER);
+    art(root, PV_ART_COIN, 40, 82, 40);
     char coins[25];snprintf(coins, sizeof coins, "%d", state.coins);
     label(root, 72, 53, 157, 58, coins, 3, WHITE, LV_TEXT_ALIGN_LEFT);
     char title[100];
@@ -524,8 +504,7 @@ static void match_screen(lv_obj_t *root, const OnNetView *v) {
     box(root, 0, 118, 1280, 3, 0, GOLD, 0);
     lv_obj_t *rail = box(root, 0, 121, 246, 599, 0, C(24382E), 0);
     lv_obj_set_style_bg_opa(rail, 115, 0);
-    box(root, 22, 64, 36, 36, 18, GOLD, 0);
-    label(root, 26, 68, 29, 29, "М", 1, INK, LV_TEXT_ALIGN_CENTER);
+    art(root, PV_ART_COIN, 40, 82, 40);
     char cash[24];
     snprintf(cash, sizeof cash, "%d", plants ? state.plant_cash : state.zombie_cash);
     label(root, 72, 53, 157, 58, cash, 3, WHITE, LV_TEXT_ALIGN_LEFT);
@@ -926,8 +905,9 @@ int lvgl_ui_init(void) {
         lvgl_ui_shutdown();return 0;
     }
     const int art_ids[] = {PV_ART_BREAD, PV_ART_DIMA, PV_ART_KIRILL,
-                           PV_ART_DUCK, PV_ART_ROBOT, PV_ART_PEA, PV_ART_WALNUT,
-                           PV_ART_SUNFLOWER, PV_ART_JUMPER, PV_ART_LILY};
+                           PV_ART_DUCK, PV_ART_DUCK_CONE, PV_ART_DUCK_BUCKET,
+                           PV_ART_ROBOT, PV_ART_PEA, PV_ART_WALNUT, PV_ART_SUNFLOWER,
+                           PV_ART_JUMPER, PV_ART_LILY, PV_ART_COIN};
     for (size_t j = 0; j < sizeof art_ids / sizeof art_ids[0]; j++) {
         int id = art_ids[j], w = 0, h = 0;
         const uint32_t *original = game_art_rgba(id, &w, &h);

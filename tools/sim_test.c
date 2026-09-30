@@ -136,13 +136,13 @@ int main(void) {
     assert(game_debug_book_plant() == 3);    /* Jumper's picture and 250 coins */
     game_input_press(320, book_row_y(4));
     assert(game_debug_book_plant() == 4);    /* lily's picture and 25 coins */
-    game_input_press(450, 141);              /* enemy tab, same illustrated duck */
+    game_input_press(450, 141);              /* enemy tab: duck variants and boss */
     game_input_press(320, book_row_y(0));
     assert(game_debug_book_enemy() == 0);    /* original duck: 180 HP */
     game_input_press(320, book_row_y(1));
     assert(game_debug_book_enemy() == 2);    /* cone duck: 420 HP */
     game_input_press(320, book_row_y(2));
-    assert(game_debug_book_enemy() == 3);    /* helmet duck: 750 HP */
+    assert(game_debug_book_enemy() == 3);    /* bucket duck: 750 HP */
     game_input_press(320, book_row_y(3));
     assert(game_debug_book_enemy() == 1);    /* Queen's final robot */
     game_input_press(250, 141);              /* return to illustrated plants */
@@ -552,7 +552,7 @@ int main(void) {
     seed_at(0, 1, 2);                         /* water becomes ordinary grass */
     assert(game_debug_plant_type(1, 2) == 0);
 
-    /* Cone and helmet are tougher versions of the SAME illustrated duck;
+    /* The cone and bucket have separate artwork and are tougher than the base duck;
      * both count toward the wave and survive a V6 campaign save/load. */
     game_init();
     game_input_press(235, 100); game_input_press(190, 270);
@@ -580,6 +580,6 @@ int main(void) {
     for (int i = 0; i < 12 * 60; i++) game_tick(1.0f / 60, NULL);
     assert(game_phase() == GAME_PLAY && game_level() == 1);
 
-    puts("OK: water/lilies, cone and helmet ducks, enemy book, V1-V6 saves and Cyrillic font");
+    puts("OK: water/lilies, cone and bucket ducks, enemy book, V1-V6 saves and Cyrillic font");
     return 0;
 }

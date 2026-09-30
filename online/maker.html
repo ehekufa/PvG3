@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#182b26">
+  <meta name="description" content="PvG3 Maker — локальный редактор платформерных уровней с сохранением и экспортом TXT.">
+  <title>PvG3 Maker — мастерская уровней</title>
+  <link rel="stylesheet" href="./maker.css">
+</head>
+<body>
+  <header class="maker-topbar">
+    <div class="maker-brand">
+      <a class="back-link" href="./index.html">← Онлайн</a>
+      <div><span class="eyebrow">PVG3 · ТВОРЧЕСКАЯ МАСТЕРСКАЯ</span><h1>Редактор уровней</h1></div>
+    </div>
+    <div class="maker-actions">
+      <button class="quiet-button" id="new-project" type="button">＋ Новый проект</button>
+      <label class="file-button quiet-button" for="project-file">↑ Открыть TXT</label>
+      <input id="project-file" type="file" accept=".txt,.json,application/json,text/plain" hidden>
+      <button class="save-button" id="download-project" type="button">↓ Скачать TXT</button>
+      <button class="test-button" id="playtest" type="button">▶ Проверить уровень</button>
+    </div>
+  </header>
+
+  <main class="maker-main">
+    <section class="project-strip" aria-label="Свойства проекта">
+      <label class="title-field"><span>Название уровня</span><input id="project-title" maxlength="80" value="Новый платформер"></label>
+      <div class="template-chip"><span>ШАБЛОН</span><strong id="template-name">Классический платформер</strong></div>
+      <div class="save-state" id="save-state" role="status"><span class="save-dot"></span><span id="save-label">Локальное автосохранение включено</span></div>
+    </section>
+
+    <nav class="maker-tabs" role="tablist" aria-label="Режим редактора">
+      <button type="button" role="tab" aria-selected="true" class="active" data-tab="level">🧱 Уровень</button>
+      <button type="button" role="tab" aria-selected="false" data-tab="objects">↗ Объекты</button>
+      <button type="button" role="tab" aria-selected="false" data-tab="triggers">⚡ Триггеры</button>
+      <span class="tab-hint" id="tab-hint">Ставь блоки на сетку, выбирай объект и редактируй его справа.</span>
+    </nav>
+
+    <section class="maker-layout">
+      <aside class="palette-panel panel" aria-label="Палитра объектов">
+        <div class="panel-heading"><div><span class="eyebrow">ИНСТРУМЕНТЫ</span><h2>Палитра</h2></div><span class="panel-number">01</span></div>
+        <div class="tool-grid">
+          <button class="tool-button active" type="button" data-tool="select"><span class="tool-icon">↖</span><span>Выбрать</span></button>
+          <button class="tool-button erase-tool" type="button" data-tool="erase"><span class="tool-icon">⌫</span><span>Ластик</span></button>
+        </div>
+        <div class="palette-label" id="palette-label">ОБЪЕКТЫ УРОВНЯ</div>
+        <div class="tool-list">
+          <button type="button" class="tool-button object-tool" data-tool="block"><span class="object-icon icon-block"></span><span>Блок</span><kbd>B</kbd></button>
+          <button type="button" class="tool-button object-tool" data-tool="ground"><span class="object-icon icon-ground"></span><span>Платформа</span><kbd>P</kbd></button>
+          <button type="button" class="tool-button object-tool" data-tool="hazard"><span class="object-icon icon-hazard">▲</span><span>Шипы</span><kbd>H</kbd></button>
+          <button type="button" class="tool-button object-tool" data-tool="coin"><span class="object-icon icon-coin">●</span><span>Монета</span><kbd>C</kbd></button>
+          <button type="button" class="tool-button object-tool" data-tool="enemy"><span class="object-icon icon-enemy">●</span><span>Противник</span><kbd>E</kbd></button>
+          <button type="button" class="tool-button object-tool" data-tool="player"><span class="object-icon icon-player">◆</span><span>Старт игрока</span><kbd>S</kbd></button>
+          <button type="button" class="tool-button object-tool" data-tool="goal"><span class="object-icon icon-goal">⚑</span><span>Финиш</span><kbd>F</kbd></button>
+          <button type="button" class="tool-button object-tool trigger-tool" data-tool="trigger"><span class="object-icon icon-trigger">⚡</span><span>Триггер</span><kbd>T</kbd></button>
+        </div>
+        <div class="palette-note" id="palette-note">Щёлкни объект, затем клетку уровня. Переключись на «Объекты», чтобы двигать и вращать свободно.</div>
+        <div class="object-list-wrap hidden" id="list-wrap">
+          <div class="palette-label" id="list-title">ОБЪЕКТЫ</div>
+          <div class="object-list" id="object-list"></div>
+        </div>
+      </aside>
+
+      <section class="stage-panel panel" aria-label="Редактор уровня">
+        <div class="stage-heading">
+          <div><span class="eyebrow" id="stage-kicker">СЦЕНА · 16 × 10</span><h2 id="stage-title">Поле уровня</h2></div>
+          <div class="stage-options"><label class="check-option"><input id="show-ids" type="checkbox"><span>Показывать ID</span></label><span class="zoom-chip">100%</span></div>
+        </div>
+        <div class="canvas-frame" id="canvas-frame">
+          <canvas id="stage" width="960" height="600" aria-label="Сетка уровня 16 на 10. Выбирай объект слева и щёлкай по сетке."></canvas>
+          <div class="test-hud hidden" id="test-hud"><span>ТЕСТ · ← → двигаться · ПРОБЕЛ прыгать · E триггер</span><button id="stop-test" type="button">■ В редактор</button></div>
+        </div>
+        <div class="stage-footer"><span><i class="legend-dot legend-solid"></i> платформа</span><span><i class="legend-dot legend-logic"></i> логика</span><span class="coordinates" id="coordinates">x: — · y: —</span></div>
+      </section>
+
+      <aside class="inspector-panel panel" aria-label="Параметры выбранного объекта">
+        <div class="panel-heading"><div><span class="eyebrow">СВОЙСТВА</span><h2>Инспектор</h2></div><span class="panel-number">02</span></div>
+        <div class="empty-inspector" id="empty-inspector"><div class="empty-orbit">✳</div><strong>Выбери объект</strong><p>Щёлкни по объекту на сцене или добавь его из палитры.</p></div>
+        <form class="inspector-form hidden" id="inspector-form" autocomplete="off">
+          <div class="selected-object"><span class="selected-type-icon" id="selected-type-icon">▦</span><div><span class="eyebrow">ВЫБРАН</span><strong id="selected-type">Блок</strong></div><button class="icon-danger" type="button" id="delete-selected" aria-label="Удалить выбранный объект" title="Удалить">×</button></div>
+          <label class="field-label">Имя объекта<input id="object-name" type="text" maxlength="48"></label>
+          <div class="field-row two-col">
+            <label class="field-label">ID объекта<input id="object-id" type="number" min="1" max="1000000" step="1"></label>
+            <label class="field-label">Число<input id="object-number" type="number" min="0" max="9999" step="1"></label>
+          </div>
+          <label class="field-label color-field">Цвет объекта<span class="color-picker-row"><input id="object-color" type="color" value="#ad7449"><span id="color-value">#AD7449</span></span></label>
+          <div class="inspector-divider"></div>
+          <div class="field-caption">ПОЛОЖЕНИЕ И ФОРМА</div>
+          <div class="field-row two-col">
+            <label class="field-label">X<input id="object-x" type="number" min="0" max="16" step="0.25"></label>
+            <label class="field-label">Y<input id="object-y" type="number" min="0" max="10" step="0.25"></label>
+          </div>
+          <div class="field-row two-col">
+            <label class="field-label">Ширина<input id="object-w" type="number" min="0.25" max="16" step="0.25"></label>
+            <label class="field-label">Высота<input id="object-h" type="number" min="0.25" max="10" step="0.25"></label>
+          </div>
+          <label class="field-label rotation-field">Поворот <span id="rotation-value">0°</span><input id="object-angle" type="range" min="0" max="359" value="0"></label>
+          <div class="quick-rotate"><button type="button" data-rotate="-15">↶ −15°</button><button type="button" data-rotate="15">+15° ↷</button><button type="button" id="reset-rotation">Сбросить</button></div>
+          <section class="trigger-settings hidden" id="trigger-settings" aria-label="Настройки триггера">
+            <div class="inspector-divider"></div>
+            <div class="field-caption trigger-caption">⚡ ЛОГИКА ТРИГГЕРА</div>
+            <label class="field-label">Событие<select id="trigger-event"><option value="touch">Касание игроком</option><option value="coin">Сбор монеты</option><option value="manual">Клавиша E рядом</option></select></label>
+            <label class="field-label">Действие<select id="trigger-action"><option value="toggle">Показать / скрыть объект</option><option value="move">Сдвинуть объект по X</option><option value="recolor">Изменить цвет объекта</option><option value="number">Задать число объекту</option></select></label>
+            <label class="field-label">ID объекта-цели<input id="trigger-target" type="number" min="0" max="1000000" step="1"><small>Укажи ID в инспекторе справа. 0 — цель не выбрана.</small></label>
+            <div class="field-row two-col"><label class="field-label">Значение<input id="trigger-value" type="number" min="-100" max="100" step="1"></label><label class="field-label">Новый цвет<input id="trigger-color" type="color" value="#f4bd4e"></label></div>
+            <p class="trigger-help">В тесте триггер срабатывает один раз: при касании, сборе монеты или на клавишу E рядом.</p>
+          </section>
+        </form>
+      </aside>
+    </section>
+
+    <footer class="maker-footnote"><span>🔒 Без аккаунта и пароля.</span><span>Автосохранение остаётся в этом браузере; кнопка «Скачать TXT» создаёт переносимый файл проекта.</span></footer>
+  </main>
+
+  <dialog id="template-dialog" class="template-dialog">
+    <div class="dialog-top"><div><span class="eyebrow">НАЧНИ СО СВОЕЙ ИДЕИ</span><h2>Какой уровень создаём?</h2><p>Это стартовые заготовки платформеров. Блоки, цвета, ID и триггеры можно менять.</p></div><button class="dialog-close" id="close-template-dialog" type="button" aria-label="Закрыть окно">×</button></div>
+    <div class="template-cards" id="template-cards">
+      <button type="button" class="template-card active" data-template="classic"><span class="template-art classic-art">▰<i>●</i>⚑</span><strong>Классический платформер</strong><small>Прыжки, монеты, платформы и финиш.</small></button>
+      <button type="button" class="template-card" data-template="puzzle"><span class="template-art puzzle-art">⚡<i>▰ ▰</i></span><strong>Платформер-головоломка</strong><small>Триггер включает мост и меняет путь.</small></button>
+      <button type="button" class="template-card" data-template="adventure"><span class="template-art adventure-art">◆<i>▲ ●</i>⚑</span><strong>Приключенческий платформер</strong><small>Высоты, противник, опасности и сбор.</small></button>
+    </div>
+    <div class="dialog-footer"><span>Чтобы хранить готовые проекты отдельно, скачай их как TXT.</span><button id="create-project" class="test-button" type="button">Создать уровень →</button></div>
+  </dialog>
+  <div class="maker-toast hidden" id="maker-toast" role="status" aria-live="polite"></div>
+  <script type="module" src="./maker.js"></script>
+</body>
+</html>

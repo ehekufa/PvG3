@@ -2,8 +2,8 @@
 import {W, H, ROWS, COLS, X, Y, CW, CH, PLANTS, DUCKS, WAVE} from './rules.js';
 const art = {};
 const pictures = [
-  'lawn-map.png','water-map.png','lawnmower.png','zombie-duck.png',
-  ...PLANTS.map(p => p.image),
+  'lawn-map.png','water-map.png','lawnmower.png','coin-token.png',
+  ...DUCKS.map(d => d.image), ...PLANTS.map(p => p.image),
 ];
 export function preloadArtwork() {
   return Promise.all([...new Set(pictures)].map(file => new Promise(resolve => {
@@ -30,21 +30,8 @@ function label(ctx, text, x, y, size = 20, color = '#fff2ce', align = 'left') {
   ctx.font = `bold ${size}px PTSans, sans-serif`;ctx.fillText(text, x, y);
 }
 function duck(ctx, x, y, size, type, flip = true) {
-  image(ctx, 'zombie-duck.png', x, y, size, size, flip);
-  const cx = x + size * (flip ? .46 : .54), brim = y + size * .34;
-  if (type === 2) {
-    ctx.fillStyle = '#ef791e';ctx.beginPath();ctx.moveTo(cx, brim - size * .52);
-    ctx.lineTo(cx + size * .25, brim);ctx.lineTo(cx - size * .25, brim);ctx.closePath();ctx.fill();
-    ctx.strokeStyle = '#ffd07a';ctx.lineWidth = size * .03;ctx.beginPath();
-    ctx.moveTo(cx - size * .19, brim - size * .07);ctx.lineTo(cx + size * .19, brim - size * .07);ctx.stroke();
-    box(ctx, cx - size * .29, brim - size * .06, size * .58, size * .055, '#ab521e');
-  } else if (type === 3) {
-    ctx.fillStyle = '#667f8c';ctx.beginPath();ctx.ellipse(cx, brim - size * .1,
-      size * .29, size * .20, 0, Math.PI, 0);ctx.fill();
-    ctx.fillStyle = '#a4b7b8';ctx.beginPath();ctx.ellipse(cx - size * .08,
-      brim - size * .17, size * .07, size * .06, 0, 0, Math.PI * 2);ctx.fill();
-    box(ctx, cx - size * .33, brim - size * .04, size * .66, size * .06, '#334d5c');
-  }
+  const file = DUCKS.find(d => d.id === type)?.image || 'zombie-duck.png';
+  image(ctx, file, x, y, size, size, flip);
 }
 function background(ctx, s) {
   box(ctx, 0, 0, W, H, '#4c7439');
@@ -66,8 +53,9 @@ function background(ctx, s) {
 function cards(ctx, s, role, selected, pending) {
   box(ctx, 0, 0, X - 7, 130, '#45352ce0');
   label(ctx, role === 'plants' ? 'МОНЕТЫ РАСТЕНИЙ' : 'МОНЕТЫ ЗОМБИ', 14, 17, 20);
-  label(ctx, 'Ⓜ', 22, 55, 48, '#f9c35d');
-  label(ctx, String(role === 'plants' ? s.plantCash : s.zombieCash), 80, 56, 47, '#fff3dc');
+  image(ctx, 'coin-token.png', 8, 50, 46, 46);
+  label(ctx, String(role === 'plants' ? s.plantCash : s.zombieCash),
+    62, 56, 45, '#fff3dc');
   const defs = role === 'plants' ? PLANTS : DUCKS;
   defs.forEach((d, i) => {
     const y = role === 'plants' ? 137 + i*107 : 169 + i*155;
@@ -82,7 +70,9 @@ function cards(ctx, s, role, selected, pending) {
     let text = d.name.toUpperCase();
     if (text.length > 17) text = text.slice(0, 16) + '…';
     label(ctx, text, 32, y+12, role === 'plants' ? 16 : 18, '#4b3626');
-    label(ctx, `Ⓜ ${d.cost}  ·  ${role === 'plants' ? d.hp : d.hp+' HP'}`, 34, y+h-35, 18, '#604532');
+    image(ctx, 'coin-token.png', 31, y+h-34, 22, 22);
+    label(ctx, `${d.cost}  ·  ${role === 'plants' ? d.hp : d.hp+' HP'}`,
+      59, y+h-33, 17, '#604532');
     const cool = role === 'plants' ? s.plantCooldown[i] : s.duckCooldown[i];
     if (!available) box(ctx, 20, y+5, 207, h-10, '#121a27a0');
     if (cool > 0) label(ctx, `${cool.toFixed(1)} с`, 32, y+40, 18, '#fff2c8');
@@ -113,8 +103,8 @@ export function drawGame(canvas, s, {role, selected, pending = false, id = '', l
     }
   }
   ctx.fillStyle='#a8e664';for (const p of s.peas){ctx.beginPath();ctx.arc(p.x,p.y,9,0,7);ctx.fill();}
-  for (const c of s.coins){ctx.fillStyle='#9d6c26';ctx.beginPath();ctx.arc(c.x+2,c.y+2,24,0,7);ctx.fill();
-    ctx.fillStyle='#f6c450';ctx.beginPath();ctx.arc(c.x,c.y,21,0,7);ctx.fill();label(ctx,'М',c.x,c.y-15,30,'#9f6922','center');}
+  for (const c of s.coins)
+    image(ctx, 'coin-token.png', c.x - 22, c.y - 22, 44, 44);
   box(ctx, X, 0, W-X, Y-1, '#33291fc9');
   label(ctx, `ОНЛАЙН • ${id}`, 271, 19, 25, '#ffe6ab');
   label(ctx, role === 'plants' ? 'ТЫ: РАСТЕНИЯ' : 'ТЫ: ЗОМБИ-УТКИ', 635, 22, 23);
