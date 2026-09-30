@@ -1,0 +1,12 @@
+# Горошина: летит вправо, пока не попадёт (попадание считает игра).
+
+var row = 0
+var speed = 320
+
+func _ready():
+    self.visible = true
+
+func _process(dt):
+    self.x = self.x + speed * dt
+    if self.x > 1320:
+        self.free()

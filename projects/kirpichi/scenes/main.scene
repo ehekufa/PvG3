@@ -1,0 +1,91 @@
+[node]
+name = Root
+script = scripts/game.og
+
+[node]
+name = Protos
+parent = Root
+
+[node]
+name = BrickProto
+parent = Protos
+type = Rect
+rw = 66
+rh = 28
+visible = false
+script = scripts/brick.og
+
+[node]
+name = Bricks
+parent = Root
+
+[node]
+name = Trail
+parent = Root
+type = Circle
+rw = 6
+fill = #ffd76e
+visible = false
+
+[node]
+name = Ball
+parent = Root
+type = Circle
+rw = 8
+fill = #f2f5ff
+script = scripts/ball.og
+
+[node]
+name = Paddle
+parent = Root
+type = Rect
+x = 320
+y = 552
+rw = 96
+rh = 16
+fill = #5ac8fa
+script = scripts/paddle.og
+
+[node]
+name = Title
+parent = Root
+type = Label
+x = 400
+y = 18
+size = 4
+center = true
+color = #ffffff
+text = КИРПИЧИ
+
+[node]
+name = Score
+parent = Root
+type = Label
+x = 24
+y = 26
+size = 3
+color = #ffd76e
+text = ОЧКИ: 0
+
+[node]
+name = Left
+parent = Root
+type = Label
+x = 24
+y = 560
+size = 2
+color = #8892a6
+text = ТЯНИ ПЛАНКУ МЫШЬЮ
+
+[node]
+name = Msg
+parent = Root
+type = Label
+x = 400
+y = 280
+size = 6
+center = true
+visible = false
+color = #fff3b0
+z = 100
+text =

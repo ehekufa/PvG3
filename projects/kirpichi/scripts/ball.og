@@ -1,0 +1,21 @@
+# Мяч: узел хранит скорость, игрок её применяет.
+var vx = 0
+var vy = 0
+var rw = 8
+
+func _ready():
+    self.visible = true
+
+func launch(dx, dy):
+    vx = dx
+    vy = dy
+    self.x = 400
+    self.y = 480
+
+func _process(dt):
+    self.x = self.x + vx * dt
+    self.y = self.y + vy * dt
+
+func lost():
+    self.launch(-140, -230)
+    get_node("/Root").ball_lost()

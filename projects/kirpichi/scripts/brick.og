@@ -1,0 +1,28 @@
+# Кирпич: своя прочность и цвет по «тинту» (0 — красный, 1 — жёлтый,
+# 2 — синий). Цвет задаёт игра сразу после spawn(), поэтому он
+# применяется методом paint(), а не только в _ready.
+var hp = 1
+var maxhp = 1
+var tint = 0
+
+func _ready():
+    self.visible = true
+    paint(tint)
+
+func paint(t):
+    tint = t
+    if tint == 0:
+        self.fill = #d95555
+    if tint == 1:
+        self.fill = #d9a455
+    if tint == 2:
+        self.fill = #55b6d9
+
+func hit():
+    hp -= 1
+    if hp <= 0:
+        get_node("/Root").brick_gone(self)
+        self.free()
+    elif hp == 1:
+        self.fill = #7a7f8c
+    play_sound("осколок")

@@ -1,0 +1,33 @@
+# Утка-противник: идёт влево, ест растения, умирает от гороха.
+
+var hp = 100
+var speed = 30
+var row = 0
+var dead = false
+
+func _ready():
+    self.visible = true
+
+func _process(dt):
+    if dead:
+        return
+    var g = get_node("/Root")
+    if g.over:
+        return
+    var front = self.x + 15
+    var p = g.plant_in_front(row, front)
+    if p != null:
+        p.hp = p.hp - 50 * dt
+        return
+    self.x = self.x - speed * dt
+    if self.x < 235:
+        g.duck_reached_home(self)
+
+func hurt(d):
+    if dead:
+        return
+    hp -= d
+    if hp <= 0:
+        dead = true
+        get_node("/Root").duck_died(self)
+        self.free()

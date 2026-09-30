@@ -15,3 +15,11 @@ staging/
 build/
 shots/
 node_modules/
+
+# ОГОРОД: движок, его тесты и временный проект engine_test
+engine/ogorod
+engine/vm_test
+engine/engine_test
+engine/demo_test
+engine/*_asan
+engine/tmp_proj/

@@ -1,0 +1,253 @@
+# Главная сцена «Обороны грядки».
+# Прототипы (внутри Protos) — это префабы: их клонирует функция spawn().
+
+[node]
+name = Root
+script = scripts/game.og
+
+# Карта автора растянута как в оригинале: левая половина картинки —
+# дорожка, правая — газон.
+[node]
+name = BGLeft
+parent = Root
+type = Sprite
+sprite = map
+x = 0
+y = 0
+w = 250
+h = 720
+sx = 0
+sy = 0
+sw = 250
+sh = 500
+z = -5
+
+[node]
+name = BGRight
+parent = Root
+type = Sprite
+sprite = map
+x = 250
+y = 0
+w = 1030
+h = 720
+sx = 250
+sy = 0
+sw = 250
+sh = 500
+z = -5
+
+[node]
+name = Protos
+parent = Root
+
+[node]
+name = DuckProto
+parent = Protos
+type = Sprite
+sprite = duck
+visible = false
+w = 90
+h = 90
+script = scripts/duck.og
+
+[node]
+name = PeaProto
+parent = Protos
+type = Circle
+visible = false
+rw = 7
+fill = #4db34d
+script = scripts/pea.og
+
+[node]
+name = PlantProto
+parent = Protos
+type = Sprite
+sprite = pea
+visible = false
+w = 90
+h = 90
+script = scripts/plant.og
+
+[node]
+name = CoinProto
+parent = Protos
+type = Circle
+visible = false
+rw = 15
+fill = #f7c948
+script = scripts/coin.og
+
+[node]
+name = MowerProto
+parent = Protos
+type = Sprite
+sprite = mower
+visible = false
+w = 80
+h = 80
+script = scripts/mower.og
+
+[node]
+name = Plants
+parent = Root
+
+[node]
+name = Enemies
+parent = Root
+
+[node]
+name = Shots
+parent = Root
+
+[node]
+name = Coins
+parent = Root
+
+[node]
+name = Mowers
+parent = Root
+
+[node]
+name = Panel
+parent = Root
+type = Rect
+x = 12
+y = 120
+rw = 216
+rh = 400
+fill = #262b33
+
+[node]
+name = Title
+parent = Root
+type = Label
+x = 700
+y = 22
+size = 4
+center = true
+color = #ffffff
+text = ОБОРОНА ГРЯДКИ
+
+[node]
+name = CoinIcon
+parent = Root
+type = Circle
+x = 45
+y = 88
+rw = 13
+fill = #f7c948
+
+[node]
+name = CoinsLabel
+parent = Root
+type = Label
+x = 66
+y = 72
+size = 3
+color = #ffffff
+text = 500
+
+[node]
+name = WaveLabel
+parent = Root
+type = Label
+x = 1050
+y = 72
+size = 3
+color = #ffffff
+text = ВРАГОВ: 8
+
+[node]
+name = CardPea
+parent = Root
+type = Sprite
+sprite = pea
+x = 25
+y = 150
+w = 90
+h = 90
+script = scripts/card.og
+var_kind = 0
+var_cost = 100
+
+[node]
+name = PricePea
+parent = CardPea
+type = Label
+x = 8
+y = 94
+size = 2
+color = #ffd76e
+text = "100 монет"
+
+[node]
+name = CardWall
+parent = Root
+type = Sprite
+sprite = wall
+x = 25
+y = 270
+w = 90
+h = 90
+script = scripts/card.og
+var_kind = 1
+var_cost = 50
+
+[node]
+name = PriceWall
+parent = CardWall
+type = Label
+x = 8
+y = 94
+size = 2
+color = #ffd76e
+text = "50 монет"
+
+[node]
+name = CardSun
+parent = Root
+type = Sprite
+sprite = sunflower
+x = 25
+y = 390
+w = 90
+h = 90
+script = scripts/card.og
+var_kind = 2
+var_cost = 50
+
+[node]
+name = PriceSun
+parent = CardSun
+type = Label
+x = 8
+y = 94
+size = 2
+color = #ffd76e
+text = "50 монет"
+
+[node]
+name = Ghost
+parent = Root
+type = Sprite
+sprite = pea
+visible = false
+w = 80
+h = 80
+alpha = 0.6
+z = 90
+
+[node]
+name = Msg
+parent = Root
+type = Label
+x = 640
+y = 320
+size = 8
+center = true
+visible = false
+color = #fff3b0
+z = 100
+text =

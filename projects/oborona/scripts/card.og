@@ -1,0 +1,26 @@
+# Карточка растения: зажми и перетащи на газон (как в оригинальном бою).
+
+var kind = 0
+var cost = 100
+var dragging = false
+
+func _press(x, y):
+    var g = get_node("/Root")
+    if g.over or g.coins < cost:
+        return false
+    dragging = true
+    g.ghost_on(kind, x, y)
+    return true
+
+func _move(x, y):
+    if dragging:
+        get_node("/Root").ghost_move(x, y)
+
+func _release(x, y):
+    if not dragging:
+        return
+    dragging = false
+    var g = get_node("/Root")
+    g.ghost_off()
+    if g.try_plant(kind, x, y):
+        play_sound("посадка")

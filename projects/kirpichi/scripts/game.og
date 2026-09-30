@@ -1,0 +1,173 @@
+# «Кирпичи» — правила. Мяч живёт в узле Ball, но полётом управляет
+# игра: так же устроен любой физический объект без отдельной системы
+# физики в движке.
+
+var COLS = 7
+var ROWS = 4
+var BW = 96      # шаг кирпичей по X
+var BH = 44      # шаг кирпичей по Y
+var X0 = 112     # левый край поля кирпичей
+var Y0 = 90
+var LEFT = 20
+var RIGHT = 780
+var TOP = 60
+var BOTTOM = 552
+
+var score = 0
+var lives = 3
+var over = false
+var won = false
+var bricks_left = 0
+var autopilot = true
+var end_t = 0
+
+func _ready():
+    var protos = get_node("Protos")
+    for i in range(child_count(protos)):
+        get_child(protos, i).visible = false
+    for r in range(ROWS):
+        for c in range(COLS):
+            var hp = 1 + floor(r / 2)   # верхние крепче
+            var b = spawn("BrickProto", get_node("Bricks"))
+            b.paint((r + c) % 3)
+            b.hp = hp
+            b.maxhp = hp
+            b.rw = 66
+            b.rh = 28
+            b.x = X0 + c * BW
+            b.y = Y0 + r * BH
+    bricks_left = COLS * ROWS
+    get_node("Ball").launch(-165, -250)
+    update_hud()
+
+func _process(dt):
+    if over:
+        if time() >= end_t + 3:
+            quit()
+        return
+    if autopilot:
+        follow_ball()
+    check_walls()
+    check_bricks()
+    if bricks_left <= 0:
+        win()
+
+# Мяч и платка — узлы; игра двигает их по правилам.
+func follow_ball():
+    var ball = get_node("Ball")
+    var pad = get_node("Paddle")
+    # целимся не под сам мяч, а со сдвигом: иначе отскок строго
+    # вертикальный и мяч застревает, не задевая кирпичи
+    var lead = 0
+    if ball.vx > 20:
+        lead = -34
+    elif ball.vx < -20:
+        lead = 34
+    var want = ball.x - 48 + lead
+    if want < LEFT + 4:
+        want = LEFT + 4
+    if want > RIGHT - 100:
+        want = RIGHT - 100
+    pad.x = pad.x + (want - pad.x) * 0.5   # платка догоняет мяч
+
+func check_walls():
+    var ball = get_node("Ball")
+    if ball.y - ball.rw < TOP:
+        ball.vy = -ball.vy
+    if ball.x - ball.rw < LEFT:
+        ball.vx = -ball.vx
+        ball.x = LEFT + ball.rw
+    if ball.x + ball.rw > RIGHT:
+        ball.vx = -ball.vx
+        ball.x = RIGHT - ball.rw
+    var pad = get_node("Paddle")
+    if ball.vy > 0 and ball.y + ball.rw > pad.y and
+       ball.y - ball.rw < pad.y + pad.rh and
+       ball.x > pad.x - 10 and ball.x < pad.x + pad.rw + 10:
+        # отскок всегда даёт полноценный угол: иначе мяч скользит по
+        # планке и выкатывается в угол
+        # отскок под фиксированным углом: левая половина планки — влево,
+        # правая — вправо. Так мяч гарантированно мечется по полю
+        var off = ball.x - (pad.x + pad.rw / 2)
+        var vx = 165
+        if off > 0:
+            vx = -vx
+        ball.vx = vx
+        ball.vy = -sqrt(295 * 295 - vx * vx)
+        ball.y = pad.y - ball.rw - 1
+        play_sound("удар")
+    if ball.y - ball.rw > BOTTOM:
+        ball.lost()
+
+func check_bricks():
+    var ball = get_node("Ball")
+    var wall = get_node("Bricks")
+    var i = 0
+    while i < child_count(wall):
+        var b = get_child(wall, i)
+        i += 1
+        if b.dead:
+            continue
+        if not overlaps(ball, b):
+            continue
+        b.hit()
+        # отскок по оси наименьшего перекрытия плюс небольшой случайный
+        # сдвиг: иначе траектория периодична и последние кирпичи
+        # мяч может обходить по кругу
+        var ox = min(ball.x + ball.rw - b.x, b.x + b.rw - (ball.x - ball.rw))
+        var oy = min(ball.y + ball.rw - b.y, b.y + b.rh - (ball.y - ball.rw))
+        if ox < oy:
+            ball.vx = -ball.vx
+            ball.vy = ball.vy + rand(-45, 45)
+        else:
+            ball.vy = -ball.vy
+            ball.vx = ball.vx + rand(-45, 45)
+        keep_speed(ball)
+
+# После отскока от кирпича скорость мяча не должна падать почти до нуля
+# по вертикали: иначе он скользит между рядами и игра зависает.
+func keep_speed(ball):
+    var sp = sqrt(ball.vx * ball.vx + ball.vy * ball.vy)
+    if sp < 1:
+        ball.vx = 165
+        ball.vy = -250
+        return
+    ball.vx = ball.vx * 295 / sp
+    ball.vy = ball.vy * 295 / sp
+    if ball.vy > -100:
+        ball.vy = -100
+    if ball.vy < -250:
+        ball.vy = -250
+
+func brick_gone(b):
+    bricks_left -= 1
+    score += 10 * b.hp
+    update_hud()
+
+func ball_lost():
+    lives -= 1
+    update_hud()
+    if lives <= 0:
+        lose()
+    else:
+        get_node("Ball").launch(-165, -250)
+
+func win():
+    over = true
+    won = true
+    autopilot = false
+    end_t = time()
+    var msg = get_node("Msg")
+    msg.text = "ВСЕ КИРПИЧИ РАЗБИТЫ"
+    msg.visible = true
+
+func lose():
+    over = true
+    autopilot = false
+    end_t = time()
+    var msg = get_node("Msg")
+    msg.text = "МЯЧ УПАЛ"
+    msg.visible = true
+
+func update_hud():
+    get_node("Score").text = "ОЧКИ: " + str(score) + "   ЖИЗНИ: " + str(lives)

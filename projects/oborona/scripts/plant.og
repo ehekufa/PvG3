@@ -1,0 +1,41 @@
+# Растение: 0 — горохострел, 1 — орех, 2 — подсолнух.
+# Внешний вид и параметры задаёт игра через setup().
+
+var kind = 0
+var hp = 300
+var row = 0
+var col = 0
+var fire_t = 0.8
+var coin_t = 5.0
+
+func _ready():
+    self.visible = true
+
+func setup(k, r, c, cx, cy):
+    kind = k
+    row = r
+    col = c
+    self.x = cx - 45
+    self.y = cy - 45
+    if kind == 1:
+        self.sprite = "wall"
+        hp = 1500
+    if kind == 2:
+        self.sprite = "sunflower"
+
+func _process(dt):
+    var g = get_node("/Root")
+    if kind == 0:
+        fire_t += dt
+        if fire_t >= 1.5:
+            if g.enemy_in_row(row, self.x):
+                fire_t = 0
+                g.fire_pea(row, self.x + 60, self.y + 40)
+    if kind == 2:
+        coin_t -= dt
+        if coin_t <= 0:
+            coin_t = 8.0
+            g.drop_coin(self.x + 80, self.y + 30)
+    if hp <= 0:
+        g.plant_died(row, col)
+        self.free()

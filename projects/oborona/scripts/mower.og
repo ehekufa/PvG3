@@ -1,0 +1,19 @@
+# Газонокосилка: последний рубеж ряда. Срабатывает один раз.
+
+var row = 0
+var active = false
+var used = false
+
+func _ready():
+    self.visible = true
+
+func start():
+    active = true
+    used = true
+    play_sound("косилка")
+
+func _process(dt):
+    if active:
+        self.x = self.x + 520 * dt
+        if self.x > 1350:
+            self.free()

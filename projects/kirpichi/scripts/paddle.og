@@ -1,0 +1,25 @@
+# Планка: едет за указателем, пока он зажат.
+var held = false
+
+func _ready():
+    self.visible = true
+
+func _press(x, y):
+    if y < self.y - 40:
+        return false
+    held = true
+    move_to(x)
+    return true
+
+func _move(x, y):
+    if held:
+        move_to(x)
+
+func _release(x, y):
+    held = false
+
+func move_to(x):
+    var g = get_node("/Root")
+    if g.autopilot:
+        g.autopilot = false   # человек перехватил платку
+    self.x = clamp(x - 48, 22, 758)

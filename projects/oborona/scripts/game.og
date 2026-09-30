@@ -1,0 +1,290 @@
+# «Оборона грядки» — правила боя.
+# 5 рядов по 9 клеток, как в оригинальном бою PvG3.
+# Типы растений: 0 — горохострел, 1 — орех, 2 — подсолнух.
+
+var ROWS = 5
+var COLS = 9
+var LX = 250
+var LY = 120
+var CW = 114
+var CH = 112
+
+var COST_PEA = 100
+var COST_WALL = 50
+var COST_SUN = 50
+
+var coins = 500
+var grid = []
+var wave_total = 8
+var wave_left = 8
+var spawned = 0
+var spawn_t = 4.0
+var over = false
+var won = false
+
+var autopilot = true   # автопилот сам сажает растения (демонстрация)
+var plan = []
+var plan_i = 0
+var end_t = 0
+
+func _ready():
+    for r in range(ROWS):
+        var row = []
+        for c in range(COLS):
+            push(row, null)
+        push(grid, row)
+    # прототипы — это префабы, они не должны жить сами
+    var protos = get_node("Protos")
+    for i in range(child_count(protos)):
+        var p = get_child(protos, i)
+        p.visible = false
+    for i in range(ROWS):
+        var m = spawn("MowerProto", get_node("Mowers"))
+        m.row = i
+        m.x = 175
+        m.y = LY + i * CH + 16
+    # план автопилота: [время, тип, ряд, колонка]
+    push(plan, [0.2, 2, 2, 0])
+    push(plan, [0.3, 2, 0, 0])
+    push(plan, [0.4, 0, 2, 1])
+    push(plan, [0.5, 0, 0, 1])
+    push(plan, [0.6, 0, 1, 1])
+    push(plan, [0.7, 0, 3, 1])
+    push(plan, [0.8, 2, 4, 0])
+    push(plan, [0.9, 0, 4, 1])
+    push(plan, [12.0, 1, 2, 2])
+    push(plan, [20.0, 2, 1, 0])
+    push(plan, [26.0, 0, 2, 3])
+    push(plan, [30.0, 0, 0, 2])
+    update_hud()
+
+func _process(dt):
+    if over:
+        # дать финальному кадру постоять и мягко остановить движок
+        if end_t > 0 and time() >= end_t + 3:
+            quit()
+        return
+    if not over:
+        autopilot_think()
+        if spawned < wave_total:
+            spawn_t -= dt
+            if spawn_t <= 0:
+                spawn_t = 4.0
+                var r = randi(0, ROWS - 1)
+                var d = spawn("DuckProto", get_node("Enemies"))
+                d.row = r
+                d.x = 1270
+                d.y = LY + r * CH + 10
+                spawned += 1
+                update_hud()
+    combat()
+    mowers_sweep()
+    collect_old_coins()
+
+# ---------------------------------------------------------------- бой
+
+func combat():
+    var shots = get_node("Shots")
+    var foes = get_node("Enemies")
+    var si = 0
+    while si < child_count(shots):
+        var pea = get_child(shots, si)
+        si += 1
+        var ei = 0
+        while ei < child_count(foes):
+            var duck = get_child(foes, ei)
+            ei += 1
+            if duck.dead or duck.row != pea.row:
+                continue
+            if overlaps(pea, duck):
+                duck.hurt(20)
+                pea.free()
+                break
+
+func mowers_sweep():
+    var ms = get_node("Mowers")
+    var foes = get_node("Enemies")
+    var mi = 0
+    while mi < child_count(ms):
+        var m = get_child(ms, mi)
+        mi += 1
+        if not m.active:
+            continue
+        var ei = 0
+        while ei < child_count(foes):
+            var duck = get_child(foes, ei)
+            ei += 1
+            if duck.dead:
+                continue
+            if duck.row == m.row and duck.x < m.x + 50:
+                duck.hurt(9999)
+
+func enemy_in_row(row, from_x):
+    var foes = get_node("Enemies")
+    var i = 0
+    while i < child_count(foes):
+        var d = get_child(foes, i)
+        i += 1
+        if d.dead:
+            continue
+        if d.row == row and d.x > from_x:
+            return true
+    return false
+
+func fire_pea(row, x, y):
+    var p = spawn("PeaProto", get_node("Shots"))
+    p.row = row
+    p.x = x
+    p.y = y
+    play_sound("выстрел")
+
+func plant_in_front(row, front_x):
+    var c = floor((front_x - LX) / CW)
+    if c < 0 or c >= COLS:
+        return null
+    return grid[row][c]
+
+func plant_died(row, col):
+    grid[row][col] = null
+
+func duck_died(d):
+    wave_left -= 1
+    update_hud()
+    if wave_left <= 0 and spawned >= wave_total:
+        win()
+
+func duck_reached_home(d):
+    if d.dead:
+        return
+    var ms = get_node("Mowers")
+    var i = 0
+    while i < child_count(ms):
+        var m = get_child(ms, i)
+        i += 1
+        if m.row == d.row and not m.used and not m.active:
+            m.start()
+            return
+    lose()
+
+# ---------------------------------------------------------------- монеты
+
+func drop_coin(x, y):
+    var c = spawn("CoinProto", get_node("Coins"))
+    c.x = x
+    c.y = y
+
+func collect_coin(c):
+    coins += 25
+    free_node(c)
+    play_sound("монета")
+    update_hud()
+
+func collect_old_coins():
+    if not autopilot:
+        return
+    var cs = get_node("Coins")
+    var i = 0
+    while i < child_count(cs):
+        var c = get_child(cs, i)
+        i += 1
+        if c.t > 0.6:
+            c.collect()
+
+# ---------------------------------------------------------------- посадка
+
+func cell_at(x, y):
+    if x < LX or y < LY:
+        return null
+    var c = floor((x - LX) / CW)
+    var r = floor((y - LY) / CH)
+    if r < 0 or r >= ROWS or c < 0 or c >= COLS:
+        return null
+    return [r, c]
+
+func cost_of(kind):
+    if kind == 0:
+        return COST_PEA
+    if kind == 1:
+        return COST_WALL
+    return COST_SUN
+
+func try_plant(kind, x, y):
+    if over:
+        return false
+    var rc = cell_at(x, y)
+    if rc == null:
+        return false
+    var r = rc[0]
+    var c = rc[1]
+    if grid[r][c] != null:
+        return false
+    var cost = cost_of(kind)
+    if coins < cost:
+        return false
+    coins -= cost
+    var cx = LX + c * CW + CW / 2
+    var cy = LY + r * CH + CH / 2
+    var p = spawn("PlantProto", get_node("Plants"))
+    p.setup(kind, r, c, cx, cy)
+    grid[r][c] = p
+    update_hud()
+    return true
+
+func autopilot_think():
+    if not autopilot:
+        return
+    if plan_i >= len(plan):
+        return
+    var entry = plan[plan_i]
+    if time() < entry[0]:
+        return
+    var r = entry[2]
+    var c = entry[3]
+    var cx = LX + c * CW + CW / 2
+    var cy = LY + r * CH + CH / 2
+    if try_plant(entry[1], cx, cy):
+        plan_i += 1
+
+# ---------------------------------------------------------------- исход
+
+func win():
+    over = true
+    won = true
+    autopilot = false
+    end_t = time()
+    var msg = get_node("Msg")
+    msg.text = "ПОБЕДА!"
+    msg.visible = true
+
+func lose():
+    over = true
+    autopilot = false
+    end_t = time()
+    var msg = get_node("Msg")
+    msg.text = "УТКИ ПРОРВАЛИСЬ"
+    msg.visible = true
+
+# ---------------------------------------------------------------- интерфейс
+
+func ghost_on(kind, x, y):
+    var g = get_node("Ghost")
+    if kind == 0:
+        g.sprite = "pea"
+    if kind == 1:
+        g.sprite = "wall"
+    if kind == 2:
+        g.sprite = "sunflower"
+    g.visible = true
+    ghost_move(x, y)
+
+func ghost_move(x, y):
+    var g = get_node("Ghost")
+    g.x = x - 40
+    g.y = y - 40
+
+func ghost_off():
+    get_node("Ghost").visible = false
+
+func update_hud():
+    get_node("CoinsLabel").text = str(coins)
+    get_node("WaveLabel").text = "ВРАГОВ: " + str(wave_left)
