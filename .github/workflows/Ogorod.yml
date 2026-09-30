@@ -1,4 +1,4 @@
-name: Огород: APK (NativeActivity, arm64 + arm32)
+name: "Огород: APK (NativeActivity, arm64 + arm32)"
 
 on:
   push:
@@ -34,7 +34,7 @@ jobs:
           make -C engine clean
           make -C engine test
           # Android-хост под санитайзерами: тот же файл, что в библиотеке
-          gcc -std=c11 -O1 -g -fsanitize=address,undefined -I../src -Iengine \
+          gcc -std=c11 -O1 -g -fsanitize=address,undefined -Isrc -Iengine \
             -Iengine/tests/android_fake -Iengine/android -DOG_HOST_TEST \
             engine/tests/android_host_test.c engine/tests/android_fake.c \
             engine/android/og_android.c engine/og_common.c engine/og_vm.c \
