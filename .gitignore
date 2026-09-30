@@ -26,6 +26,7 @@ engine/*_asan
 engine/tmp_proj/
 
 # ОГОРОД: сборка APK движка
+build_ogorod/
 staging_ogorod/
 unsigned_ogorod.apk
 aligned_ogorod.apk
