@@ -220,9 +220,41 @@ func hurt(d):
 * `demo_test` — сквозные прогоны обеих демо-игр: «Оборона грядки»
   выигрывается автопилотом, посадка перетаскиванием карточки работает,
   «Кирпичи» выигрываются за ~63 секунды.
+* `android_host_test` — Android-хост из APK на заглушках
+  `engine/tests/android_fake*`: окно 1280×720, кадры меню, касание
+  запускает нужную игру, обе игры читаются из встроенных в библиотеку
+  файлов (тест делает `chdir("/")`), ошибок в логе нет.
 
-Все три собираются с `-Wall -Wextra -Werror` и проходят без утечек под
+Все четыре собираются с `-Wall -Wextra -Werror` и проходят без утечек под
 AddressSanitizer/UndefinedBehaviorSanitizer.
+
+## Android: APK и виртуальная файловая система
+
+`engine/android/og_android.c` — хост движка на Android: `NativeActivity`,
+EGL/GLES2, программный кадр движка загружается в одну текстуру
+`GL_TEXTURE_2D`, окно 800×600 вписывается в альбомный экран, касание
+пересчитывается в координаты проекта. Java-кода нет вообще.
+
+```sh
+python3 tools/pack_project.py --check   # проекты совпадают с заголовком
+python3 tools/pack_project.py           # переупаковать projects/ в .h
+engine/android/build_apk.sh             # подписанный OboronOgorod.apk
+```
+
+* `tools/pack_project.py` кладёт `projects/oborona` и `projects/kirpichi`
+  (16 файлов: `.og`, `.scene`, `.cfg`, `.txt`) в
+  `engine/android/og_project_data.h` — детерминированно, без зависимостей.
+* `engine/og_vfs.c` (`og_read_file`) сначала ищет файл во встроенной
+  таблице, потом на диске: в APK игра читается из библиотеки, а на ПК
+  движок по-прежнему работает с папкой проекта.
+* `engine/android/AndroidManifest.xml` — пакет `app.ogorod`,
+  `hasCode="false"`, ландшафт, minSdk 29 / targetSdk 34.
+* `engine/android/build_apk.sh` — clang NDK под обе ABI, aapt, zipalign,
+  подпись тестовым ключом; нужны `ANDROID_HOME` (platforms/android-34) и
+  `ANDROID_NDK_ROOT`.
+* Тест хоста собирается обычным `cc` с `-Itests/android_fake`:
+  `make -C engine android_host_test` — тот же `og_android.c`, что попадает
+  в `libogorod.so`, но с заглушками вместо Android.
 
 ## Игры
 

@@ -259,6 +259,38 @@ engine/ogorod run projects/kirpichi --frames 4000 --shot 1200=game.bmp
 * `demo_test` прогоняет обе игры целиком и требует победы: движок умеет
   играть сам и проверять игры без человека.
 
+### Движок ОГОРОД как APK для Android
+
+`engine/android/` собирает из того же движка **устанавливаемый APK**:
+`NativeActivity` + EGL/GLES2, без единой строки Java и Kotlin. Обе игры
+лежат **внутри библиотеки**: `tools/pack_project.py` превращает
+`projects/` в заголовок `engine/android/og_project_data.h`, движок читает
+файлы через виртуальную ФС `engine/og_vfs.c` (а если в APK появится папка с
+настоящими файлами — читает и её). Ничего не распаковывается, ничего не
+качается из сети, интернет-разрешения у APK нет.
+
+При запуске — окно 800×600 с меню: «ОБОРОНА ГРЯДКИ» и «КИРПИЧИ». Касание
+карточки запускает игру, `back` возвращает в меню. Ориентация —
+альбомная, Android 10+ (API 29), ABI `arm64-v8a` и `armeabi-v7a`.
+
+```sh
+python3 tools/pack_project.py --check   # заголовок проектов не устарел
+python3 tools/pack_project.py           # переупаковать после правок игр
+engine/android/build_apk.sh             # -> OboronOgorod.apk (подписан тестово)
+```
+
+Нужны Android SDK (`platforms/android-34`) и NDK; в GitHub Actions они уже
+есть, локально укажи `ANDROID_HOME` и `ANDROID_NDK_ROOT`. Готовый APK
+собирает workflow **Огород: APK (NativeActivity, arm64 + arm32)**, артефакт
+`OboronOgorod-APK`. Подпись тестовая, поэтому APK из разных сборок между
+собой не обновляются — сначала удалите прежний.
+
+Тот же Android-хост проверяется на ПК без устройства и без NDK:
+`make -C engine android_host_test` гоняет `engine/android/og_android.c` на
+заглушках Android/EGL/GLES2 (`engine/tests/android_fake*`) — окно, меню,
+касание, запуск обеих игр из встроенных файлов (тест делает `chdir("/")`,
+чтобы игра физически не могла прочитать файлы с диска).
+
 Документация языка, форматов сцен и команд запуска — в
 [engine/README.md](engine/README.md).
 

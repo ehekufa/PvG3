@@ -1,0 +1,53 @@
+name: Огород: APK (NativeActivity, arm64 + arm32)
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  ogorod:
+    name: Движок ОГОРОД — APK (arm64-v8a + armeabi-v7a, Android 10+)
+    # На раннере предустановлены Android SDK 34, build-tools 34.0.0 и NDK.
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Проверить Android SDK, build-tools и NDK
+        run: |
+          set -e
+          test -f "$ANDROID_HOME/platforms/android-34/android.jar"
+          test -x "$ANDROID_HOME/build-tools/34.0.0/aapt"
+          NDK="${ANDROID_NDK_ROOT:-${ANDROID_NDK_LATEST_HOME:-}}"
+          if [ -z "$NDK" ]; then
+            NDK=$(ls -d "$ANDROID_HOME"/ndk/* 2>/dev/null | head -1)
+          fi
+          test -d "$NDK"
+          echo "NDK=$NDK"
+          echo "ANDROID_NDK_ROOT=$NDK" >> "$GITHUB_ENV"
+
+      - name: Заголовок проектов актуален, тесты движка зелёные
+        run: |
+          set -e
+          # --check падает, если projects/ разошёлся с og_project_data.h
+          python3 tools/pack_project.py --check
+          make -C engine clean
+          make -C engine test
+          # Android-хост под санитайзерами: тот же файл, что в библиотеке
+          gcc -std=c11 -O1 -g -fsanitize=address,undefined -I../src -Iengine \
+            -Iengine/tests/android_fake -Iengine/android -DOG_HOST_TEST \
+            engine/tests/android_host_test.c engine/tests/android_fake.c \
+            engine/android/og_android.c engine/og_common.c engine/og_vm.c \
+            engine/og_image.c engine/og_node.c engine/og_runtime.c \
+            engine/og_bind.c engine/og_scene.c engine/og_vfs.c src/font.c \
+            -o /tmp/ogorod-android-asan -lm
+          (cd engine && /tmp/ogorod-android-asan)
+          git diff --exit-code -- engine/android/og_project_data.h
+
+      - name: Собрать, подписать и проверить APK
+        run: engine/android/build_apk.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OboronOgorod-APK
+          path: OboronOgorod.apk

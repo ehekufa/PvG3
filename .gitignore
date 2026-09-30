@@ -21,5 +21,13 @@ engine/ogorod
 engine/vm_test
 engine/engine_test
 engine/demo_test
+engine/android_host_test
 engine/*_asan
 engine/tmp_proj/
+
+# ОГОРОД: сборка APK движка
+staging_ogorod/
+unsigned_ogorod.apk
+aligned_ogorod.apk
+OboronOgorod.apk
+ogorod.keystore
