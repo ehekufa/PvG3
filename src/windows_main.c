@@ -141,6 +141,7 @@ static void garden_load(void) {
 }
 
 static void atomic_write(const wchar_t *path, const void *bytes, size_t size) {
+    if (!path || !path[0] || (!bytes && size)) return;
     wchar_t temporary[PATH_CAP];
     int n = swprintf(temporary, PATH_CAP, L"%ls.tmp", path);
     if (n <= 0 || n >= PATH_CAP) return;
@@ -347,6 +348,8 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
     case WM_KILLFOCUS:
         focused = 0;
         mouse_cancel();
+        key_left = key_right = key_jump = key_trigger = 0;
+        update_custom_keys();
         save_all();
         set_music(0);
         return 0;
@@ -418,8 +421,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous,
     wc.style = CS_HREDRAW | CS_VREDRAW;
     wc.lpfnWndProc = window_proc;
     wc.hInstance = instance;
-    wc.hCursor = LoadCursorW(NULL, IDC_ARROW);
-    wc.hIcon = LoadIconW(NULL, IDI_APPLICATION);
+    wc.hCursor = LoadCursorW(NULL, MAKEINTRESOURCEW(32512));
+    wc.hIcon = LoadIconW(NULL, MAKEINTRESOURCEW(32512));
     wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
     wc.lpszClassName = APP_CLASS;
     if (!RegisterClassExW(&wc)) {
