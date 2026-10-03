@@ -16,18 +16,17 @@
 #include <string.h>
 
 #define C(hex) lv_color_hex(0x##hex)
-#define DARK C(284735)
-#define INK C(304537)
-#define PAPER C(FAF5E3)
-#define WHITE C(FFFDF3)
-#define SAGE C(D8E9BF)
-#define GOLD C(F3BC6C)
-#define MUTED C(667965)
-#define BLUE C(C8E7E9)
+#define DARK C(242424)
+#define INK C(111111)
+#define PAPER C(E7E7E7)
+#define WHITE C(FFFFFF)
+#define LIGHT_GRAY C(D7D7D7)
+#define MUTED C(555555)
+#define BUTTON_WHITE C(FFFFFF)
 #define BUTTON_GRAY C(BDBDBD)
+#define BUTTON_BLACK C(000000)
 #define BUTTON_TEXT C(111111)
-#define GARDEN_GRAY BUTTON_GRAY
-#define GARDEN_TEXT BUTTON_TEXT
+#define BUTTON_LIGHT_TEXT C(FFFFFF)
 
 enum {
     U_MENU_PLAY = 1, U_MENU_LEVELS, U_MENU_GARDEN, U_MENU_BOOK, U_MENU_ONLINE,
@@ -125,27 +124,57 @@ static lv_obj_t *label(lv_obj_t *parent, int x, int y, int w, int h,
 
 static void pressed(lv_event_t *ev);
 
+static void button_palette(int action, lv_color_t *face, lv_color_t *text) {
+    *face = BUTTON_GRAY;
+    *text = BUTTON_TEXT;
+    switch (action) {
+    case U_MENU_BACK: case U_SEARCH_CLOSE: case U_ROOMS_BACK:
+    case U_LOBBY_EXIT: case U_MATCH_EXIT: case U_MATCH_RETURN:
+    case U_GARDEN_EXIT:
+    case U_BOOK_BACK: case U_INTRO_SKIP:
+    case U_RESULT_MENU: case U_CUSTOM_BACK:
+        *face = BUTTON_BLACK;
+        *text = BUTTON_LIGHT_TEXT;
+        return;
+    case U_MENU_PLAY: case U_MENU_ONLINE: case U_INTRO:
+    case U_CREATE: case U_SEARCH_GO: case U_MATCH_FINISH:
+    case U_GARDEN_BOOK: case U_OFFLINE_MENU:
+    case U_RESULT_NEXT: case U_RESULT_RETRY:
+        *face = BUTTON_WHITE;
+        return;
+    default:
+        break;
+    }
+    if (action >= U_LEVEL_BASE)
+        *face = BUTTON_WHITE;
+}
+
+static void button_fill(lv_obj_t *o, lv_color_t color) {
+    lv_obj_set_style_bg_color(o, color, 0);
+    lv_obj_set_style_bg_color(o, color, LV_STATE_PRESSED);
+}
+
 static lv_obj_t *button(lv_obj_t *parent, int x, int y, int w, int h,
-                        const char *name, int size, lv_color_t face,
-                        lv_color_t text_color, int action) {
+                        const char *name, int size, int action) {
     lv_obj_t *o = lv_button_create(parent);
     lv_obj_remove_style_all(o);
     lv_obj_set_pos(o, x, y);
     lv_obj_set_size(o, w, h);
-    (void)face;
-    (void)text_color;
-    lv_obj_set_style_bg_color(o, BUTTON_GRAY, 0);
+    /* Action roles choose the neutral face and text colors centrally. */
+    lv_color_t button_face, button_text;
+    button_palette(action, &button_face, &button_text);
+    lv_obj_set_style_bg_color(o, button_face, 0);
     lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(o, 5, 0);
     lv_obj_set_style_border_width(o, 3, 0);
     lv_obj_set_style_border_color(o, C(000000), 0);
     lv_obj_set_style_border_opa(o, LV_OPA_COVER, 0);
     lv_obj_set_style_shadow_width(o, 0, 0);
-    lv_obj_set_style_bg_color(o, BUTTON_GRAY, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(o, button_face, LV_STATE_PRESSED);
     lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLLABLE);
     if (name && name[0])
         label(o, 7, (h - font_sizes[size] - 3) / 2, w - 14, font_sizes[size] + 6,
-              name, size, BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
+              name, size, button_text, LV_TEXT_ALIGN_CENTER);
     if (action) lv_obj_add_event_cb(o, pressed, LV_EVENT_CLICKED,
                                      (void *)(intptr_t)action);
     return o;
@@ -172,31 +201,30 @@ static void duck_art(lv_obj_t *parent, int cx, int cy, int size, int variant) {
 static void header(lv_obj_t *root, const char *title, const char *back,
                    int action) {
     /* One large heading instead of three stacked lines of tiny explanations. */
-    box(root, 0, 0, GAME_W, 148, 0, DARK, 0);
-    box(root, 0, 145, GAME_W, 4, 0, GOLD, 0);
-    label(root, 70, 46, back ? 940 : 1120, 71, title, 4, WHITE,
-          LV_TEXT_ALIGN_LEFT);
-    if (back) button(root, 1065, 48, 175, 62, back, 2, C(476750),
-                     WHITE, action);
+    box(root, 0, 0, GAME_W, 148, 0, back ? BUTTON_GRAY : DARK, 0);
+    box(root, 0, 145, GAME_W, 4, 0, back ? BUTTON_BLACK : LIGHT_GRAY, 0);
+    label(root, 70, 46, back ? 940 : 1120, 71, title, 4,
+          back ? INK : WHITE, LV_TEXT_ALIGN_LEFT);
+    if (back) button(root, 1065, 48, 175, 62, back, 2, action);
 }
 
 static void menu_screen(lv_obj_t *root) {
     header(root, "Растения против гусей 3", NULL, 0);
-    button(root, 411, 51, 292, 64, "Уровни игроков", 2, C(476750), WHITE,
+    button(root, 411, 51, 292, 64, "Уровни игроков", 2,
            U_USER_LEVELS);
-    button(root, 730, 51, 220, 64, "Кампания", 2, C(476750), WHITE, U_MENU_LEVELS);
-    button(root, 971, 51, 270, 64, "Сад Дзен", 2, C(476750), WHITE, U_MENU_GARDEN);
+    button(root, 730, 51, 220, 64, "Кампания", 2, U_MENU_LEVELS);
+    button(root, 971, 51, 270, 64, "Сад Дзен", 2, U_MENU_GARDEN);
     /* The characters stand together on the lawn, not in three square frames. */
-    box(root, 55, 176, 1170, 355, 34, C(E5EFD9), 0);
+    box(root, 55, 176, 1170, 355, 34, C(E5E5E5), 0);
     art(root, PV_ART_BREAD, 250, 322, 228);
     art(root, PV_ART_DIMA, 640, 324, 230);
     art(root, PV_ART_KIRILL, 1029, 322, 225);
     label(root, 93, 448, 310, 55, "Хлебушек", 2, INK, LV_TEXT_ALIGN_CENTER);
     label(root, 482, 448, 310, 55, "Дима в маске", 2, INK, LV_TEXT_ALIGN_CENTER);
     label(root, 871, 448, 310, 55, "Кирилл", 2, INK, LV_TEXT_ALIGN_CENTER);
-    button(root, 90, 563, 280, 94, "Умная книга", 2, WHITE, INK, U_MENU_BOOK);
-    button(root, 410, 548, 445, 125, "Начать игру", 3, GOLD, INK, U_MENU_PLAY);
-    button(root, 895, 563, 295, 94, "Играть вдвоём", 2, SAGE, INK, U_MENU_ONLINE);
+    button(root, 90, 563, 280, 94, "Умная книга", 2, U_MENU_BOOK);
+    button(root, 410, 548, 445, 125, "Начать игру", 3, U_MENU_PLAY);
+    button(root, 895, 563, 295, 94, "Играть вдвоём", 2, U_MENU_ONLINE);
 }
 
 static void levels_screen(lv_obj_t *root) {
@@ -204,8 +232,8 @@ static void levels_screen(lv_obj_t *root) {
     for (int n = 1; n <= 10; n++) {
         int col = (n - 1) % 5, row = (n - 1) / 5;
         int x = 84 + col * 225, y = 194 + row * 188;
-        lv_obj_t *o = button(root, x, y, 206, 153, "", 2,
-                             BUTTON_GRAY, BUTTON_TEXT, U_LEVEL_BASE + n);
+        lv_obj_t *o = button(root, x, y, 206, 153, "", 2, U_LEVEL_BASE + n);
+        button_fill(o, n == game_resume_level() ? BUTTON_GRAY : BUTTON_WHITE);
         lv_obj_set_style_border_width(o, n == game_resume_level() ? 5 : 3, 0);
         char num[30];
         snprintf(num, sizeof num, "%02d", n);
@@ -214,8 +242,7 @@ static void levels_screen(lv_obj_t *root) {
             label(o, 18, 91, 180, 48, n == 5 ? "Вода" : "Финал",
                   2, BUTTON_TEXT, LV_TEXT_ALIGN_LEFT);
     }
-    button(root, 414, 590, 452, 67, "Уровень 0 · история", 2,
-           GOLD, INK, U_INTRO);
+    button(root, 414, 590, 452, 67, "Уровень 0 · история", 2, U_INTRO);
 }
 
 /* Offline navigation and HUD share the same real LVGL widgets as online. The
@@ -224,19 +251,17 @@ static void levels_screen(lv_obj_t *root) {
 static void garden_screen(lv_obj_t *root) {
     GameOfflineUIState state;
     game_offline_ui_snapshot(&state);
-    box(root, 0, 0, 1280, 121, 0, DARK, 0);
+    box(root, 0, 0, 1280, 121, 0, BUTTON_GRAY, 0);
     box(root, 0, 118, 1280, 3, 0, C(777777), 0);
-    label(root, 12, 3, 232, 36, "Сад Дзен", 2, WHITE, LV_TEXT_ALIGN_LEFT);
-    lv_obj_t *plants = button(root, 6, 42, 112, 31, "Растения", 0,
-                              GARDEN_GRAY, GARDEN_TEXT, U_GARDEN_PLANTS);
-    lv_obj_t *geese = button(root, 128, 42, 112, 31, "Гуси", 0,
-                             GARDEN_GRAY, GARDEN_TEXT, U_GARDEN_GEESE);
-    lv_obj_t *lawn = button(root, 6, 78, 112, 31, "Газон", 0,
-                            GARDEN_GRAY, GARDEN_TEXT, U_GARDEN_LAWN);
-    lv_obj_t *water = button(root, 128, 78, 112, 31, "Вода", 0,
-                             GARDEN_GRAY, GARDEN_TEXT, U_GARDEN_WATER);
-    /* Keep every garden control grayscale; the chosen option gets a stronger
-     * black outline instead of a colored fill or a yellow glow. */
+    label(root, 12, 3, 232, 36, "Сад Дзен", 2, INK, LV_TEXT_ALIGN_LEFT);
+    lv_obj_t *plants = button(root, 6, 42, 112, 31, "Растения", 0, U_GARDEN_PLANTS);
+    lv_obj_t *geese = button(root, 128, 42, 112, 31, "Гуси", 0, U_GARDEN_GEESE);
+    lv_obj_t *lawn = button(root, 6, 78, 112, 31, "Газон", 0, U_GARDEN_LAWN);
+    lv_obj_t *water = button(root, 128, 78, 112, 31, "Вода", 0, U_GARDEN_WATER);
+    button_fill(plants, state.garden_mode == 0 ? BUTTON_GRAY : BUTTON_WHITE);
+    button_fill(geese, state.garden_mode == 1 ? BUTTON_GRAY : BUTTON_WHITE);
+    button_fill(lawn, state.garden_map == 1 ? BUTTON_GRAY : BUTTON_WHITE);
+    button_fill(water, state.garden_map == 5 ? BUTTON_GRAY : BUTTON_WHITE);
     if (state.garden_mode == 0) lv_obj_set_style_border_width(plants, 5, 0);
     else lv_obj_set_style_border_width(geese, 5, 0);
     if (state.garden_map == 1) lv_obj_set_style_border_width(lawn, 5, 0);
@@ -249,8 +274,8 @@ static void garden_screen(lv_obj_t *root) {
         int x = 260 + (state.garden_mode ? 130 : 0) + i * 130;
         int active = state.garden_selection == i ||
                      (drag_phase == GAME_GARDEN && drag_index == i);
-        lv_obj_t *slot = button(root, x, 15, 120, 100, "", 0,
-                                GARDEN_GRAY, GARDEN_TEXT, 0);
+        lv_obj_t *slot = button(root, x, 15, 120, 100, "", 0, 0);
+        button_fill(slot, active ? BUTTON_GRAY : BUTTON_WHITE);
         lv_obj_set_style_shadow_width(slot, 0, 0);
         if (active) lv_obj_set_style_border_width(slot, 5, 0);
         if (state.garden_mode)
@@ -258,12 +283,9 @@ static void garden_screen(lv_obj_t *root) {
         else
             art(slot, entry.art_id, 60, 49, 85);
     }
-    button(root, 918, 22, 145, 44, "Книга", 2,
-           GARDEN_GRAY, GARDEN_TEXT, U_GARDEN_BOOK);
-    button(root, 1079, 22, 179, 44, "В меню", 2,
-           GARDEN_GRAY, GARDEN_TEXT, U_GARDEN_EXIT);
-    lv_obj_t *erase = button(root, 918, 77, 340, 39, "Убрать", 2,
-                             GARDEN_GRAY, GARDEN_TEXT, U_GARDEN_ERASE);
+    button(root, 918, 22, 145, 44, "Книга", 2, U_GARDEN_BOOK);
+    button(root, 1079, 22, 179, 44, "В меню", 2, U_GARDEN_EXIT);
+    lv_obj_t *erase = button(root, 918, 77, 340, 39, "Убрать", 2, U_GARDEN_ERASE);
     if (state.garden_selection == 5) lv_obj_set_style_border_width(erase, 5, 0);
 }
 
@@ -273,18 +295,18 @@ static void book_screen(lv_obj_t *root) {
     header(root, "Умная книга", "Назад", U_BOOK_BACK);
     box(root, 63, 179, 513, 505, 22, PAPER, 1);
     box(root, 596, 179, 633, 505, 22, WHITE, 1);
-    lv_obj_t *plants = button(root, 84, 194, 220, 54, "Растения", 2,
-                              BUTTON_GRAY, BUTTON_TEXT, U_BOOK_PLANTS);
-    lv_obj_t *enemies = button(root, 314, 194, 226, 54, "Противники", 2,
-                               BUTTON_GRAY, BUTTON_TEXT, U_BOOK_ENEMIES);
+    lv_obj_t *plants = button(root, 84, 194, 220, 54, "Растения", 2, U_BOOK_PLANTS);
+    lv_obj_t *enemies = button(root, 314, 194, 226, 54, "Противники", 2, U_BOOK_ENEMIES);
+    button_fill(plants, state.book_enemy_tab ? BUTTON_WHITE : BUTTON_GRAY);
+    button_fill(enemies, state.book_enemy_tab ? BUTTON_GRAY : BUTTON_WHITE);
     lv_obj_set_style_border_width(state.book_enemy_tab ? enemies : plants, 5, 0);
     int count = state.book_enemy_tab ? 4 : 5;
     for (int i = 0; i < count; ++i) {
         GameBookEntry entry;
         if (!game_book_entry(state.book_enemy_tab, i, &entry)) continue;
         int y = 259 + i * 79;
-        lv_obj_t *card = button(root, 83, y, 472, 68, "", 0,
-                                BUTTON_GRAY, BUTTON_TEXT, U_BOOK_ENTRY_BASE + i);
+        lv_obj_t *card = button(root, 83, y, 472, 68, "", 0, U_BOOK_ENTRY_BASE + i);
+        button_fill(card, state.book_selection == i ? BUTTON_GRAY : BUTTON_WHITE);
         lv_obj_set_style_border_width(card, state.book_selection == i ? 5 : 3, 0);
         if (state.book_enemy_tab && entry.art_id == PV_ART_DUCK)
             duck_art(card, 42, 34, 50, entry.enemy_variant);
@@ -301,7 +323,7 @@ static void book_screen(lv_obj_t *root) {
           LV_TEXT_ALIGN_CENTER);
     /* A picture book, not a tiny stats table: prices, timers and HP live in
      * the combat rules, while these two large lines explain the characters. */
-    box(root, 616, 477, 594, 186, 23, C(F7E7CD), 0);
+    box(root, 616, 477, 594, 186, 23, C(E7E7E7), 0);
     label(root, 642, 494, 542, 77, entry.description, 2, INK,
           LV_TEXT_ALIGN_CENTER);
     label(root, 642, 575, 542, 78, entry.detail, 2, INK,
@@ -311,16 +333,14 @@ static void book_screen(lv_obj_t *root) {
 static void intro_screen(lv_obj_t *root) {
     GameOfflineUIState state;
     game_offline_ui_snapshot(&state);
-    lv_obj_t *advance = button(root, 0, 121, 1280, 599, "", 0,
-                               DARK, WHITE, U_INTRO_NEXT);
+    lv_obj_t *advance = button(root, 0, 121, 1280, 599, "", 0, U_INTRO_NEXT);
     lv_obj_set_style_bg_opa(advance, LV_OPA_TRANSP, 0);
     lv_obj_set_style_shadow_width(advance, 0, 0);
-    box(root, 0, 0, 1280, 121, 0, DARK, 0);
-    box(root, 0, 118, 1280, 3, 0, GOLD, 0);
+    box(root, 0, 0, 1280, 121, 0, BUTTON_GRAY, 0);
+    box(root, 0, 118, 1280, 3, 0, BUTTON_BLACK, 0);
     label(root, 69, 40, 872, 57, "Уровень 0 · история Кирилла", 3,
-          WHITE, LV_TEXT_ALIGN_LEFT);
-    button(root, 1018, 43, 238, 66, "Пропустить", 2,
-           C(476750), WHITE, U_INTRO_SKIP);
+          INK, LV_TEXT_ALIGN_LEFT);
+    button(root, 1018, 43, 238, 66, "Пропустить", 2, U_INTRO_SKIP);
     box(root, 93, 533, 1094, 149, 22, PAPER, 1);
     const char *speaker = state.intro_step == 0 ? "ХЛЕБУШЕК" :
                           state.intro_step == 1 ? "ДИМА" : "КИРИЛЛ";
@@ -336,8 +356,8 @@ static void intro_screen(lv_obj_t *root) {
  * visible throughout cooldown; only its caption changes to "Подождите". */
 static void packet(lv_obj_t *root, int y, int image_id, int duck_variant,
                    int waiting, int dragging) {
-    lv_obj_t *slot = button(root, 12, y, 223, 100, "", 0,
-                            BUTTON_GRAY, BUTTON_TEXT, 0);
+    lv_obj_t *slot = button(root, 12, y, 223, 100, "", 0, 0);
+    button_fill(slot, dragging ? BUTTON_GRAY : BUTTON_WHITE);
     if (dragging) lv_obj_set_style_border_width(slot, 5, 0);
     lv_obj_set_style_shadow_width(slot, 0, 0);
     if (dragging) {
@@ -357,8 +377,8 @@ static void play_screen(lv_obj_t *root) {
     GameOfflineUIState state;
     game_offline_ui_snapshot(&state);
     box(root, 0, 0, 1280, 121, 0, DARK, 0);
-    box(root, 0, 118, 1280, 3, 0, GOLD, 0);
-    lv_obj_t *rail = box(root, 0, 121, 246, 599, 0, C(24382E), 0);
+    box(root, 0, 118, 1280, 3, 0, LIGHT_GRAY, 0);
+    lv_obj_t *rail = box(root, 0, 121, 246, 599, 0, C(2A2A2A), 0);
     lv_obj_set_style_bg_opa(rail, 115, 0); /* author's wood stays visible */
     art(root, PV_ART_COIN, 40, 82, 40);
     char coins[25];snprintf(coins, sizeof coins, "%d", state.coins);
@@ -373,9 +393,9 @@ static void play_screen(lv_obj_t *root) {
     label(root, 271, 75, 652, 42,
           drag_notice_left > 0 ? drag_notice : state.level == 5 ?
           "Тяни кувшинку на воду" : "Тяни растение на клетку",
-          2, drag_notice_left > 0 ? GOLD : C(C4D9BB), LV_TEXT_ALIGN_LEFT);
-    button(root, 929, 43, 150, 64, "Книга", 2, C(476750), WHITE, U_OFFLINE_BOOK);
-    button(root, 1094, 43, 165, 64, "В меню", 2, C(476750), WHITE, U_OFFLINE_MENU);
+          2, drag_notice_left > 0 ? LIGHT_GRAY : C(D0D0D0), LV_TEXT_ALIGN_LEFT);
+    button(root, 929, 43, 150, 64, "Книга", 2, U_OFFLINE_BOOK);
+    button(root, 1094, 43, 165, 64, "В меню", 2, U_OFFLINE_MENU);
     for (int i = 0; i < 5; ++i) {
         if (i == 4 && state.level != 5) continue; /* no unused lily on dry levels */
         GameBookEntry entry;
@@ -386,7 +406,7 @@ static void play_screen(lv_obj_t *root) {
 }
 
 static void result_screen(lv_obj_t *root, int phase) {
-    lv_obj_t *veil = box(root, 0, 0, 1280, 720, 0, C(14251E), 0);
+    lv_obj_t *veil = box(root, 0, 0, 1280, 720, 0, C(222222), 0);
     lv_obj_set_style_bg_opa(veil, LV_OPA_80, 0);
     box(root, 307, 157, 666, 487, 27, PAPER, 1);
     const char *title = phase == GAME_LEVEL_CLEAR ? "Уровень пройден!" :
@@ -399,17 +419,13 @@ static void result_screen(lv_obj_t *root, int phase) {
           "Попробуй снова — сохранение не пропало.",
           2, MUTED, LV_TEXT_ALIGN_CENTER);
     if (phase == GAME_LEVEL_CLEAR) {
-        button(root, 392, 461, 496, 98, "Следующий уровень", 2,
-               GOLD, INK, U_RESULT_NEXT);
-        button(root, 480, 581, 320, 63, "В меню", 1,
-               WHITE, INK, U_RESULT_MENU);
+        button(root, 392, 461, 496, 98, "Следующий уровень", 2, U_RESULT_NEXT);
+        button(root, 480, 581, 320, 63, "В меню", 1, U_RESULT_MENU);
     } else if (phase == GAME_WIN)
-        button(root, 425, 464, 430, 100, "В меню", 2, GOLD, INK, U_RESULT_MENU);
+        button(root, 425, 464, 430, 100, "В меню", 2, U_RESULT_MENU);
     else {
-        button(root, 335, 460, 310, 104, "Повторить", 2,
-               GOLD, INK, U_RESULT_RETRY);
-        button(root, 660, 460, 315, 104, "В меню", 2,
-               WHITE, INK, U_RESULT_MENU);
+        button(root, 335, 460, 310, 104, "Повторить", 2, U_RESULT_RETRY);
+        button(root, 660, 460, 315, 104, "В меню", 2, U_RESULT_MENU);
     }
 }
 
@@ -417,20 +433,20 @@ static void result_screen(lv_obj_t *root, int phase) {
 static void rooms_screen(lv_obj_t *root, const OnNetView *v) {
     header(root, "Играем вместе", "В меню", U_ROOMS_BACK);
     box(root, 43, 162, 1195, 89, 19, PAPER, 1);
-    lv_obj_t *lawn = button(root, 64, 191, 207, 54, "Газон", 2,
-                             chosen_map == 1 ? SAGE : WHITE, INK, U_MAP_LAWN);
-    lv_obj_t *water = button(root, 282, 191, 210, 54, "Вода", 2,
-                              chosen_map == 5 ? BLUE : WHITE, INK, U_MAP_WATER);
+    lv_obj_t *lawn = button(root, 64, 191, 207, 54, "Газон", 2, U_MAP_LAWN);
+    lv_obj_t *water = button(root, 282, 191, 210, 54, "Вода", 2, U_MAP_WATER);
+    button_fill(lawn, chosen_map == 1 ? BUTTON_GRAY : BUTTON_WHITE);
+    button_fill(water, chosen_map == 5 ? BUTTON_GRAY : BUTTON_WHITE);
     lv_obj_set_style_border_width(chosen_map == 1 ? lawn : water, 5, 0);
     lv_obj_set_style_border_color(chosen_map == 1 ? lawn : water,
                                   C(000000), 0);
-    button(root, 650, 179, 187, 62, "Поиск", 2, WHITE, INK, U_SEARCH);
-    button(root, 856, 179, 208, 62, "+ Создать", 2, GOLD, INK, U_CREATE);
+    button(root, 650, 179, 187, 62, "Поиск", 2, U_SEARCH);
+    button(root, 856, 179, 208, 62, "+ Создать", 2, U_CREATE);
     box(root, 43, 271, 1195, 421, 23, PAPER, 1);
     label(root, 70, 286, 660, 52, "Свободные комнаты", 3, INK,
           LV_TEXT_ALIGN_LEFT);
-    button(root, 1027, 284, 193, 48, "Обновить", 2, WHITE, INK, U_REFRESH);
-    box(root, 69, 341, 1142, 2, 0, C(D9DDC5), 0);
+    button(root, 1027, 284, 193, 48, "Обновить", 2, U_REFRESH);
+    box(root, 69, 341, 1142, 2, 0, C(BDBDBD), 0);
     if (v->room_count == 0) {
         art(root, PV_ART_PEA, 544, 417, 118);
         art(root, PV_ART_DUCK, 740, 418, 116);
@@ -443,7 +459,7 @@ static void rooms_screen(lv_obj_t *root, const OnNetView *v) {
                   C(A1513B), LV_TEXT_ALIGN_CENTER);
         button(root, 479, 587, 322, 66,
                v->notice[0] ? "Повторить поиск" : "+ Создать комнату", 2,
-               GOLD, INK, v->notice[0] ? U_REFRESH : U_CREATE);
+               v->notice[0] ? U_REFRESH : U_CREATE);
     } else {
         if (page * 8 >= v->room_count) page = 0;
         memset(visible_ids, 0, sizeof visible_ids);
@@ -454,7 +470,7 @@ static void rooms_screen(lv_obj_t *root, const OnNetView *v) {
             int y = two_columns ? 349 + (i / 2) * 77 : 349 + i * 81;
             int width = two_columns ? 550 : 1138;
             snprintf(visible_ids[i], sizeof visible_ids[i], "%s", v->rooms[idx].id);
-            lv_obj_t *card = button(root, x, y, width, 71, "", 1, WHITE, INK,
+            lv_obj_t *card = button(root, x, y, width, 71, "", 1,
                                     U_ROOM_BASE + i);
             label(card, 29, 14, 217, 48, v->rooms[idx].id, 2, INK,
                   LV_TEXT_ALIGN_LEFT);
@@ -465,46 +481,47 @@ static void rooms_screen(lv_obj_t *root, const OnNetView *v) {
                   BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
         }
         if (v->room_count > 8) {
-            button(root, 77, 660, 168, 43, "Назад", 1, WHITE, INK, U_ROOM_BASE + 8);
-            button(root, 1035, 660, 168, 43, "Дальше", 1, WHITE, INK,
+            button(root, 77, 660, 168, 43, "Назад", 1, U_ROOM_BASE + 8);
+            button(root, 1035, 660, 168, 43, "Дальше", 1,
                    U_ROOM_BASE + 9);
         }
     }
     if (!search_open) return;
-    lv_obj_t *veil = box(root, 0, 0, 1280, 720, 0, C(14251E), 0);
+    lv_obj_t *veil = box(root, 0, 0, 1280, 720, 0, C(222222), 0);
     lv_obj_set_style_bg_opa(veil, LV_OPA_80, 0);
     box(root, 216, 72, 848, 611, 26, PAPER, 1);
     label(root, 259, 111, 590, 58, "Найти комнату по коду", 3, INK,
           LV_TEXT_ALIGN_LEFT);
 
-    button(root, 895, 111, 126, 51, "Назад", 1, WHITE, INK, U_SEARCH_CLOSE);
+    button(root, 895, 111, 126, 51, "Назад", 1, U_SEARCH_CLOSE);
     size_t len = strlen(search_code);
     for (int i = 0; i < 6; ++i) {
         int x = 287 + i * 88;
         box(root, x, 207, 75, 64, 12, WHITE, 0);
         char letter[2] = {i < (int)len ? search_code[i] : ' ', 0};
         label(root, x, 216, 75, 51, letter, 3, INK, LV_TEXT_ALIGN_CENTER);
-        if (i >= (int)len) box(root, x + 27, 260, 22, 2, 0, C(B9C6AF), 0);
+        if (i >= (int)len) box(root, x + 27, 260, 22, 2, 0, C(777777), 0);
     }
-    button(root, 844, 207, 148, 64, "Стереть", 1, WHITE, INK, U_SEARCH_ERASE);
+    button(root, 844, 207, 148, 64, "Стереть", 1, U_SEARCH_ERASE);
     const char *keys = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     for (int i = 0; i < 32; ++i) {
         char ch[2] = {keys[i], 0};
         int x = 286 + (i % 9) * 78, y = 286 + (i / 9) * 67;
         if (i >= 27) x += 156; /* centre the last, shorter row */
-        button(root, x, y, 68, 55, ch, 2, WHITE, INK, U_KEY_BASE + i);
+        button(root, x, y, 68, 55, ch, 2, U_KEY_BASE + i);
     }
     if (local_notice[0])
         label(root, 331, 558, 620, 33, local_notice, 1,
               C(A1513B), LV_TEXT_ALIGN_CENTER);
-    button(root, 395, 599, 490, 64, "Войти в комнату", 2,
-           len == 6 ? GOLD : WHITE, INK, U_SEARCH_GO);
+    lv_obj_t *join = button(root, 395, 599, 490, 64,
+                            "Войти в комнату", 2, U_SEARCH_GO);
+    if (len != 6) button_fill(join, BUTTON_GRAY);
 }
 
 static void custom_levels_screen(lv_obj_t *root, const OnNetView *v) {
     header(root, "Уровни игроков", "В меню", U_CUSTOM_BACK);
     box(root, 43, 165, 1195, 94, 20, PAPER, 1);
-    label(root, 68, 179, 770, 34, "ОПУБЛИКОВАНО ИЗ БРАУЗЕРНОЙ МАСТЕРСКОЙ",
+    label(root, 68, 179, 770, 34, "ПУБЛИЧНЫЙ КАТАЛОГ УРОВНЕЙ",
           1, MUTED, LV_TEXT_ALIGN_LEFT);
     label(root, 68, 213, 830, 33,
           v->levels_busy ? "Подключаемся к каталогу…" :
@@ -512,7 +529,7 @@ static void custom_levels_screen(lv_obj_t *root, const OnNetView *v) {
           v->level_count ? "Выбери уровень, чтобы запустить его в C-игре." :
                            "Пока нет опубликованных уровней.",
           2, v->levels_notice[0] ? C(A1513B) : INK, LV_TEXT_ALIGN_LEFT);
-    button(root, 1015, 185, 193, 54, "↻ Обновить", 2, WHITE, INK,
+    button(root, 1015, 185, 193, 54, "↻ Обновить", 2,
            U_CUSTOM_REFRESH);
     memset(visible_level_ids, 0, sizeof visible_level_ids);
     int pages = (v->level_count + 7) / 8;
@@ -524,7 +541,7 @@ static void custom_levels_screen(lv_obj_t *root, const OnNetView *v) {
             int y = 280 + (i / 2) * 91;
             snprintf(visible_level_ids[i], sizeof visible_level_ids[i], "%s",
                      v->levels[index].id);
-            lv_obj_t *card = button(root, x, y, 548, 78, "", 1, WHITE, INK,
+            lv_obj_t *card = button(root, x, y, 548, 78, "", 1,
                                     U_CUSTOM_LEVEL_BASE + i);
             lv_obj_set_style_border_width(card, 3, 0);
             lv_obj_set_style_border_color(card, C(000000), 0);
@@ -548,18 +565,18 @@ static void custom_levels_screen(lv_obj_t *root, const OnNetView *v) {
               1, MUTED, LV_TEXT_ALIGN_LEFT);
     }
     if (pages > 1) {
-        button(root, 69, 658, 170, 43, "‹ Назад", 1, WHITE, INK, U_CUSTOM_PREV);
+        button(root, 69, 658, 170, 43, "‹ Назад", 1, U_CUSTOM_PREV);
         char page_text[40];
         snprintf(page_text, sizeof page_text, "%d / %d", custom_level_page + 1, pages);
         label(root, 514, 659, 252, 40, page_text, 1, MUTED, LV_TEXT_ALIGN_CENTER);
-        button(root, 1040, 658, 170, 43, "Дальше ›", 1, WHITE, INK, U_CUSTOM_NEXT);
+        button(root, 1040, 658, 170, 43, "Дальше ›", 1, U_CUSTOM_NEXT);
     }
 }
 
 static void custom_platformer_screen(lv_obj_t *root) {
     lv_obj_set_style_bg_opa(root, LV_OPA_TRANSP, 0);
-    lv_obj_t *bar = box(root, 0, 0, GAME_W, 103, 0, DARK, 0);
-    lv_obj_set_style_bg_opa(bar, LV_OPA_70, 0);
+    lv_obj_t *bar = box(root, 0, 0, GAME_W, 103, 0, BUTTON_GRAY, 0);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
     char title[ON_LEVEL_TITLE_SIZE + 28];
     snprintf(title, sizeof title, "ID %s  ·  %s", "", "");
     OnNetView view;
@@ -567,8 +584,8 @@ static void custom_platformer_screen(lv_obj_t *root) {
     snprintf(title, sizeof title, "ID %s  ·  %s",
              view.loaded_level.id[0] ? view.loaded_level.id : "—",
              view.loaded_level.title[0] ? view.loaded_level.title : "Уровень");
-    label(root, 27, 18, 920, 66, title, 2, WHITE, LV_TEXT_ALIGN_LEFT);
-    button(root, 1033, 21, 215, 62, "К уровням", 2, C(476750), WHITE,
+    label(root, 27, 18, 920, 66, title, 2, INK, LV_TEXT_ALIGN_LEFT);
+    button(root, 1033, 21, 215, 62, "К уровням", 2,
            U_CUSTOM_BACK);
     lv_obj_t *pad = box(root, 58, 480, 222, 222, 111, BUTTON_GRAY, 0);
     lv_obj_set_style_border_width(pad, 3, 0);
@@ -580,7 +597,7 @@ static void custom_platformer_screen(lv_obj_t *root) {
     custom_stick_knob = box(root, 137, 559, 66, 66, 33, BUTTON_GRAY, 1);
     lv_obj_set_style_border_width(custom_stick_knob, 2, 0);
     lv_obj_set_style_border_color(custom_stick_knob, C(000000), 0);
-    lv_obj_t *trigger = box(root, 910, 567, 128, 99, 19, BUTTON_GRAY, 1);
+    lv_obj_t *trigger = box(root, 910, 567, 128, 99, 19, BUTTON_WHITE, 1);
     lv_obj_set_style_border_width(trigger, 2, 0);
     lv_obj_set_style_border_color(trigger, C(000000), 0);
     label(trigger, 0, 11, 128, 38, "⚡ E", 2, BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
@@ -608,8 +625,8 @@ static void lobby_screen(lv_obj_t *root, const OnNetView *v) {
         int x = side == ON_ROLE_PLANTS ? 90 : 663;
         int chosen = mine == side, taken = other == side;
         lv_obj_t *card = button(root, x, 268, 527, 317, "", 1,
-                                BUTTON_GRAY, BUTTON_TEXT,
                                 side == ON_ROLE_PLANTS ? U_PLANTS : U_ZOMBIES);
+        button_fill(card, chosen ? BUTTON_GRAY : BUTTON_WHITE);
         lv_obj_set_style_border_width(card, chosen ? 5 : 3, 0);
         lv_obj_set_style_shadow_width(card, 0, 0);
         art(card, side == ON_ROLE_PLANTS ? PV_ART_PEA : PV_ART_DUCK,
@@ -629,7 +646,7 @@ static void lobby_screen(lv_obj_t *root, const OnNetView *v) {
                          !mine ? "Выбери сторону" : !other ?
                          "Ждём выбор друга" : "Начинаем бой...";
     label(root, 138, 623, 1004, 49, status, 2,
-          v->notice[0] ? GOLD : WHITE, LV_TEXT_ALIGN_CENTER);
+          v->notice[0] ? LIGHT_GRAY : WHITE, LV_TEXT_ALIGN_CENTER);
 }
 
 static void match_screen(lv_obj_t *root, const OnNetView *v) {
@@ -638,29 +655,28 @@ static void match_screen(lv_obj_t *root, const OnNetView *v) {
     char hint[110];float hint_left = 0;
     game_online_ui_snapshot(&state, &role, NULL, hint, sizeof hint, &hint_left);
     int plants = role == ON_ROLE_PLANTS;
-    box(root, 0, 0, 1280, 120, 0, DARK, 0);
-    box(root, 0, 118, 1280, 3, 0, GOLD, 0);
-    lv_obj_t *rail = box(root, 0, 121, 246, 599, 0, C(24382E), 0);
+    box(root, 0, 0, 1280, 120, 0, BUTTON_GRAY, 0);
+    box(root, 0, 118, 1280, 3, 0, BUTTON_BLACK, 0);
+    lv_obj_t *rail = box(root, 0, 121, 246, 599, 0, C(2A2A2A), 0);
     lv_obj_set_style_bg_opa(rail, 115, 0);
     art(root, PV_ART_COIN, 40, 82, 40);
     char cash[24];
     snprintf(cash, sizeof cash, "%d", plants ? state.plant_cash : state.zombie_cash);
-    label(root, 72, 53, 157, 58, cash, 3, WHITE, LV_TEXT_ALIGN_LEFT);
+    label(root, 72, 53, 157, 58, cash, 3, INK, LV_TEXT_ALIGN_LEFT);
     char title[86];
     snprintf(title, sizeof title, "Комната %s  ·  осталось: %d",
              v->room_id, state.left + state.duck_count);
-    label(root, 272, 32, 634, 45, title, 2, WHITE, LV_TEXT_ALIGN_LEFT);
+    label(root, 272, 32, 634, 45, title, 2, INK, LV_TEXT_ALIGN_LEFT);
     const char *message = drag_notice_left > 0 ? drag_notice :
                           hint_left > 0 ? hint : v->notice[0] ? v->notice :
                           v->pending ? "Ждём ход..." : !v->guest_id[0] ?
                           "Друг вышел" : plants && state.map == 5 ?
                           "Тяни кувшинку на воду" : plants ?
                           "Тяни растение на клетку" : "Тяни утку на ряд";
-    label(root, 272, 75, 655, 42, message, 2,
-          drag_notice_left > 0 || hint_left > 0 || v->notice[0] ?
-          GOLD : C(C4D9BB), LV_TEXT_ALIGN_LEFT);
-    button(root, 930, 43, 150, 66, "Книга", 2, C(476750), WHITE, U_MATCH_BOOK);
-    button(root, 1094, 43, 165, 66, "Выйти", 2, C(476750), WHITE, U_MATCH_EXIT);
+    label(root, 272, 75, 655, 42, message, 2, MUTED,
+          LV_TEXT_ALIGN_LEFT);
+    button(root, 930, 43, 150, 66, "Книга", 2, U_MATCH_BOOK);
+    button(root, 1094, 43, 165, 66, "Выйти", 2, U_MATCH_EXIT);
     static const int arts[5] = {PV_ART_PEA, PV_ART_WALNUT,
                                 PV_ART_SUNFLOWER, PV_ART_JUMPER, PV_ART_LILY};
     int n = plants ? (state.map == 5 ? 5 : 4) : 3;
@@ -673,9 +689,9 @@ static void match_screen(lv_obj_t *root, const OnNetView *v) {
                waiting, drag_phase == GAME_ONLINE_MATCH && drag_index == i);
     }
     if (!plants)
-        button(root, 15, 615, 217, 80, "Закончить", 2, GOLD, INK, U_MATCH_FINISH);
+        button(root, 15, 615, 217, 80, "Закончить", 2, U_MATCH_FINISH);
     if (state.winner) {
-        lv_obj_t *shade = box(root, 0, 0, 1280, 720, 0, C(14251E), 0);
+        lv_obj_t *shade = box(root, 0, 0, 1280, 720, 0, C(222222), 0);
         lv_obj_set_style_bg_opa(shade, LV_OPA_80, 0);
         box(root, 309, 177, 662, 402, 26, PAPER, 1);
         art(root, state.winner == ON_WIN_PLANTS ? PV_ART_PEA : PV_ART_DUCK,
@@ -686,8 +702,8 @@ static void match_screen(lv_obj_t *root, const OnNetView *v) {
         label(root, 367, 429, 546, 46,
               state.winner == ON_WIN_PLANTS ? "Растения спасли сад" :
               "Утки захватили сад", 2, MUTED, LV_TEXT_ALIGN_CENTER);
-        button(root, 410, 493, 460, 65, "Вернуться к комнатам", 2,
-               GOLD, INK, U_MATCH_RETURN);
+        button(root, 410, 493, 460, 65,
+               "Вернуться к комнатам", 2, U_MATCH_RETURN);
     }
 }
 
@@ -1035,7 +1051,7 @@ static void rebuild(int phase, const OnNetView *net) {
     screen = lv_obj_create(NULL);
     lv_obj_remove_style_all(screen);
     lv_obj_set_size(screen, GAME_W, GAME_H);
-    lv_obj_set_style_bg_color(screen, C(E8EAD8), 0);
+    lv_obj_set_style_bg_color(screen, C(E2E2E2), 0);
     lv_obj_set_style_bg_opa(screen,
                             lvgl_ui_fullscreen(phase) ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
     lv_obj_remove_flag(screen, LV_OBJ_FLAG_SCROLLABLE);

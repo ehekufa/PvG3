@@ -28,7 +28,7 @@ function box(ctx, x, y, w, h, color) {ctx.fillStyle = color;ctx.fillRect(x, y, w
 function outline(ctx, x, y, w, h, width = 2) {
   ctx.strokeStyle = '#000';ctx.lineWidth = width;ctx.strokeRect(x + width/2, y + width/2, w - width, h - width);
 }
-function label(ctx, text, x, y, size = 20, color = '#fff2ce', align = 'left') {
+function label(ctx, text, x, y, size = 20, color = '#f5f5f5', align = 'left') {
   ctx.fillStyle = color; ctx.textAlign = align; ctx.textBaseline = 'top';
   ctx.font = `bold ${size}px PTSans, sans-serif`;ctx.fillText(text, x, y);
 }
@@ -51,10 +51,10 @@ function background(ctx, s) {
   ctx.strokeStyle = '#000';ctx.lineWidth = 2;
   for (let c = 0; c <= COLS; c++) {ctx.beginPath();ctx.moveTo(X + c*CW, Y);ctx.lineTo(X + c*CW, Y + ROWS*CH);ctx.stroke();}
   for (let r = 0; r <= ROWS; r++) {ctx.beginPath();ctx.moveTo(X, Y + r*CH);ctx.lineTo(W, Y + r*CH);ctx.stroke();}
-  box(ctx, X - 7, 0, 7, H, '#325c38');
+  box(ctx, X - 7, 0, 7, H, '#242424');
 }
 function cards(ctx, s, role, selected, pending) {
-  box(ctx, 0, 0, X - 7, 130, '#284735');
+  box(ctx, 0, 0, X - 7, 130, '#242424');
   outline(ctx, 0, 0, X - 7, 130, 2);
   label(ctx, role === 'plants' ? 'МОНЕТЫ РАСТЕНИЙ' : 'МОНЕТЫ ЗОМБИ', 14, 17, 20);
   image(ctx, 'coin-token.png', 8, 50, 46, 46);
@@ -67,7 +67,7 @@ function cards(ctx, s, role, selected, pending) {
     const available = (role === 'plants' ? s.plantCash >= d.cost && s.plantCooldown[i] <= 0 && (i !== 4 || s.map === 5)
       : s.zombieCash >= d.cost && s.duckCooldown[i] <= 0 && s.left > 0) && !pending;
     box(ctx, 14, y, 219, h, '#000');
-    box(ctx, 18, y+4, 211, h-8, '#bdbdbd');
+    box(ctx, 18, y+4, 211, h-8, selected === i ? '#bdbdbd' : '#fff');
     outline(ctx, 14, y, 219, h, selected === i ? 5 : 3);
     if (role === 'plants') image(ctx, d.image, 167, y+8, 54, 54);
     else duck(ctx, 148, y+15, 74, d.id);
@@ -81,7 +81,7 @@ function cards(ctx, s, role, selected, pending) {
     if (!available) box(ctx, 20, y+5, 207, h-10, '#444444aa');
     if (cool > 0) label(ctx, `${cool.toFixed(1)} с`, 32, y+40, 18, '#fff');
   });
-  if (role === 'zombies') label(ctx, 'НАЖМИ НА РЯД ПОСЛЕ ВЫБОРА УТКИ', 19, 657, 16, '#ffe7b4');
+  if (role === 'zombies') label(ctx, 'НАЖМИ НА РЯД ПОСЛЕ ВЫБОРА УТКИ', 19, 657, 16, '#e5e5e5');
 }
 export function drawGame(canvas, s, {role, selected, pending = false, id = '', liveDelay = 0} = {}) {
   if (!s) return;
@@ -111,23 +111,23 @@ export function drawGame(canvas, s, {role, selected, pending = false, id = '', l
   ctx.fillStyle='#a8e664';for (const p of s.peas){ctx.beginPath();ctx.arc(p.x,p.y,9,0,7);ctx.fill();}
   for (const c of s.coins)
     image(ctx, 'coin-token.png', c.x - 22, c.y - 22, 44, 44);
-  box(ctx, X, 0, W-X, Y-1, '#284735');
+  box(ctx, X, 0, W-X, Y-1, '#242424');
   outline(ctx, X, 0, W-X, Y-1, 2);
-  label(ctx, `ОНЛАЙН • ${id}`, 271, 19, 25, '#ffe6ab');
+  label(ctx, `ОНЛАЙН • ${id}`, 271, 19, 25, '#fff');
   label(ctx, role === 'plants' ? 'ТЫ: РАСТЕНИЯ' : 'ТЫ: ЗОМБИ-УТКИ', 635, 22, 23);
-  label(ctx, `УТОК ОСТАЛОСЬ: ${s.left + s.ducks.length} / ${WAVE}`, 275, 72, 20, '#dce8c5');
+  label(ctx, `УТОК ОСТАЛОСЬ: ${s.left + s.ducks.length} / ${WAVE}`, 275, 72, 20, '#d0d0d0');
   box(ctx, 924, 26, 154, 66, '#bdbdbd');
   outline(ctx, 924, 26, 154, 66, 3);
   label(ctx, 'КНИГА', 1001, 47, 23, '#111','center');
-  box(ctx, 1099, 26, 165, 66, '#bdbdbd');
+  box(ctx, 1099, 26, 165, 66, '#000');
   outline(ctx, 1099, 26, 165, 66, 3);
-  label(ctx, 'ВЫЙТИ', 1181, 47, 23, '#111','center');
+  label(ctx, 'ВЫЙТИ', 1181, 47, 23, '#fff','center');
   cards(ctx, s, role, selected, pending);
   if (s.winner) {
-    box(ctx, 243, 119, W-243, H-119, '#162821cc');
+    box(ctx, 243, 119, W-243, H-119, '#111111cc');
     label(ctx, s.winner === role ? 'ПОБЕДА!' : 'ПОРАЖЕНИЕ', 770, 290, 64,
-      s.winner === role ? '#fae194' : '#f4ad94','center');
+      '#fff','center');
     label(ctx, s.winner === 'plants' ? 'ВСЕ УТКИ ОСТАНОВЛЕНЫ' : 'УТКИ ПРОРВАЛИ ЗАЩИТУ',
-      770, 380, 28, '#fff5da','center');
+      770, 380, 28, '#d0d0d0','center');
   }
 }
