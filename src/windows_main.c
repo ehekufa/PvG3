@@ -30,6 +30,10 @@ static int key_left, key_right, key_jump, key_trigger;
 static uint32_t game_pixels[GAME_W * GAME_H];
 static uint32_t dib_pixels[GAME_W * GAME_H];
 static BITMAPINFO dib_info;
+static HDC backbuffer_dc;
+static HBITMAP backbuffer_bitmap;
+static HGDIOBJ backbuffer_previous;
+static int backbuffer_width, backbuffer_height;
 static wchar_t executable_dir[PATH_CAP];
 static wchar_t save_dir[PATH_CAP];
 static wchar_t campaign_file[PATH_CAP];
@@ -313,20 +317,63 @@ static void render_frame(float dt) {
     UpdateWindow(window_handle);
 }
 
+static void backbuffer_destroy(void) {
+    if (backbuffer_dc && backbuffer_previous)
+        SelectObject(backbuffer_dc, backbuffer_previous);
+    if (backbuffer_bitmap) DeleteObject(backbuffer_bitmap);
+    if (backbuffer_dc) DeleteDC(backbuffer_dc);
+    backbuffer_dc = NULL;
+    backbuffer_bitmap = NULL;
+    backbuffer_previous = NULL;
+    backbuffer_width = backbuffer_height = 0;
+}
+
+static int backbuffer_ensure(HDC reference, int width, int height) {
+    if (width <= 0 || height <= 0) return 0;
+    if (backbuffer_dc && backbuffer_width == width &&
+        backbuffer_height == height) return 1;
+
+    backbuffer_destroy();
+    backbuffer_dc = CreateCompatibleDC(reference);
+    if (!backbuffer_dc) return 0;
+    backbuffer_bitmap = CreateCompatibleBitmap(reference, width, height);
+    if (!backbuffer_bitmap) {
+        backbuffer_destroy();
+        return 0;
+    }
+    backbuffer_previous = SelectObject(backbuffer_dc, backbuffer_bitmap);
+    if (!backbuffer_previous || backbuffer_previous == HGDI_ERROR) {
+        backbuffer_previous = NULL;
+        backbuffer_destroy();
+        return 0;
+    }
+    backbuffer_width = width;
+    backbuffer_height = height;
+    return 1;
+}
+
 static void paint_frame(HWND hwnd) {
     PAINTSTRUCT ps;
     HDC dc = BeginPaint(hwnd, &ps);
     RECT client;
     GetClientRect(hwnd, &client);
-    FillRect(dc, &client, (HBRUSH)GetStockObject(BLACK_BRUSH));
+    int width = client.right - client.left;
+    int height = client.bottom - client.top;
+    HDC target = backbuffer_ensure(dc, width, height) ? backbuffer_dc : dc;
+
+    /* Compose the whole frame off-screen and copy it once to prevent flicker. */
+    FillRect(target, &client, (HBRUSH)GetStockObject(BLACK_BRUSH));
     if (dib_info.bmiHeader.biSize) {
-        int left, top, width, height;
-        game_viewport(client.right - client.left, client.bottom - client.top,
-                      &left, &top, &width, &height);
-        SetStretchBltMode(dc, COLORONCOLOR);
-        StretchDIBits(dc, left, top, width, height, 0, 0, GAME_W, GAME_H,
-                      dib_pixels, &dib_info, DIB_RGB_COLORS, SRCCOPY);
+        int left, top, viewport_width, viewport_height;
+        game_viewport(width, height, &left, &top,
+                      &viewport_width, &viewport_height);
+        SetStretchBltMode(target, COLORONCOLOR);
+        StretchDIBits(target, left, top, viewport_width, viewport_height,
+                      0, 0, GAME_W, GAME_H, dib_pixels, &dib_info,
+                      DIB_RGB_COLORS, SRCCOPY);
     }
+    if (target != dc && width > 0 && height > 0)
+        BitBlt(dc, 0, 0, width, height, target, 0, 0, SRCCOPY);
     EndPaint(hwnd, &ps);
 }
 
@@ -480,6 +527,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous,
 
 cleanup:
     save_all();
+    backbuffer_destroy();
     on_net_shutdown();
     set_music(0);
     if (ui_ready) lvgl_ui_shutdown();
