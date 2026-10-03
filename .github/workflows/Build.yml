@@ -166,12 +166,13 @@ jobs:
           # accepts it as an update when signed with the same persistent key.
           VERSION_CODE=$((100000 + GITHUB_RUN_NUMBER))
           VERSION_NAME="2.2.${GITHUB_RUN_NUMBER}"
+          mkdir -p "$RUNNER_TEMP/pvg3-manifest"
           sed -E \
             -e "s/android:versionCode=\"[0-9]+\"/android:versionCode=\"$VERSION_CODE\"/" \
             -e "s/android:versionName=\"[^\"]+\"/android:versionName=\"$VERSION_NAME\"/" \
-            AndroidManifest.xml > "$RUNNER_TEMP/pvg3-AndroidManifest.xml"
+            AndroidManifest.xml > "$RUNNER_TEMP/pvg3-manifest/AndroidManifest.xml"
 
-          "$BT/aapt" package -f -M "$RUNNER_TEMP/pvg3-AndroidManifest.xml" \
+          "$BT/aapt" package -f -M "$RUNNER_TEMP/pvg3-manifest/AndroidManifest.xml" \
             -I "$SDK/platforms/android-34/android.jar" \
             -F unsigned.apk ./staging/
 
