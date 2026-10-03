@@ -67,20 +67,19 @@ function cards(ctx, s, role, selected, pending) {
     const available = (role === 'plants' ? s.plantCash >= d.cost && s.plantCooldown[i] <= 0 && (i !== 4 || s.map === 5)
       : s.zombieCash >= d.cost && s.duckCooldown[i] <= 0 && s.left > 0) && !pending;
     box(ctx, 14, y, 219, h, '#000');
-    box(ctx, 18, y+4, 211, h-8, '#faf5e3');
-    box(ctx, 21, y+5, 6, h-10, role === 'plants' ? '#d8e9bf' : '#f3bc6c');
-    outline(ctx, 14, y, 219, h, selected === i ? 4 : 2);
+    box(ctx, 18, y+4, 211, h-8, '#bdbdbd');
+    outline(ctx, 14, y, 219, h, selected === i ? 5 : 3);
     if (role === 'plants') image(ctx, d.image, 167, y+8, 54, 54);
     else duck(ctx, 148, y+15, 74, d.id);
     let text = d.name.toUpperCase();
     if (text.length > 17) text = text.slice(0, 16) + '…';
-    label(ctx, text, 32, y+12, role === 'plants' ? 16 : 18, '#4b3626');
+    label(ctx, text, 32, y+12, role === 'plants' ? 16 : 18, '#111');
     image(ctx, 'coin-token.png', 31, y+h-34, 22, 22);
     label(ctx, `${d.cost}  ·  ${role === 'plants' ? d.hp : d.hp+' HP'}`,
-      59, y+h-33, 17, '#604532');
+      59, y+h-33, 17, '#111');
     const cool = role === 'plants' ? s.plantCooldown[i] : s.duckCooldown[i];
-    if (!available) box(ctx, 20, y+5, 207, h-10, '#121a27a0');
-    if (cool > 0) label(ctx, `${cool.toFixed(1)} с`, 32, y+40, 18, '#fff2c8');
+    if (!available) box(ctx, 20, y+5, 207, h-10, '#444444aa');
+    if (cool > 0) label(ctx, `${cool.toFixed(1)} с`, 32, y+40, 18, '#fff');
   });
   if (role === 'zombies') label(ctx, 'НАЖМИ НА РЯД ПОСЛЕ ВЫБОРА УТКИ', 19, 657, 16, '#ffe7b4');
 }
@@ -117,12 +116,12 @@ export function drawGame(canvas, s, {role, selected, pending = false, id = '', l
   label(ctx, `ОНЛАЙН • ${id}`, 271, 19, 25, '#ffe6ab');
   label(ctx, role === 'plants' ? 'ТЫ: РАСТЕНИЯ' : 'ТЫ: ЗОМБИ-УТКИ', 635, 22, 23);
   label(ctx, `УТОК ОСТАЛОСЬ: ${s.left + s.ducks.length} / ${WAVE}`, 275, 72, 20, '#dce8c5');
-  box(ctx, 924, 26, 154, 66, '#000');box(ctx, 928, 30, 146, 58, '#d8e9bf');
-  outline(ctx, 924, 26, 154, 66, 2);
-  label(ctx, 'КНИГА', 1001, 47, 23, '#304537','center');
-  box(ctx, 1099, 26, 165, 66, '#000');box(ctx, 1103, 30, 157, 58, '#f3bc6c');
-  outline(ctx, 1099, 26, 165, 66, 2);
-  label(ctx, 'ВЫЙТИ', 1181, 47, 23, '#304537','center');
+  box(ctx, 924, 26, 154, 66, '#bdbdbd');
+  outline(ctx, 924, 26, 154, 66, 3);
+  label(ctx, 'КНИГА', 1001, 47, 23, '#111','center');
+  box(ctx, 1099, 26, 165, 66, '#bdbdbd');
+  outline(ctx, 1099, 26, 165, 66, 3);
+  label(ctx, 'ВЫЙТИ', 1181, 47, 23, '#111','center');
   cards(ctx, s, role, selected, pending);
   if (s.winner) {
     box(ctx, 243, 119, W-243, H-119, '#162821cc');

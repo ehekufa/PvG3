@@ -24,8 +24,10 @@
 #define GOLD C(F3BC6C)
 #define MUTED C(667965)
 #define BLUE C(C8E7E9)
-#define GARDEN_GRAY C(BDBDBD)
-#define GARDEN_TEXT C(111111)
+#define BUTTON_GRAY C(BDBDBD)
+#define BUTTON_TEXT C(111111)
+#define GARDEN_GRAY BUTTON_GRAY
+#define GARDEN_TEXT BUTTON_TEXT
 
 enum {
     U_MENU_PLAY = 1, U_MENU_LEVELS, U_MENU_GARDEN, U_MENU_BOOK, U_MENU_ONLINE,
@@ -130,18 +132,20 @@ static lv_obj_t *button(lv_obj_t *parent, int x, int y, int w, int h,
     lv_obj_remove_style_all(o);
     lv_obj_set_pos(o, x, y);
     lv_obj_set_size(o, w, h);
-    lv_obj_set_style_bg_color(o, face, 0);
+    (void)face;
+    (void)text_color;
+    lv_obj_set_style_bg_color(o, BUTTON_GRAY, 0);
     lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(o, 5, 0);
     lv_obj_set_style_border_width(o, 3, 0);
     lv_obj_set_style_border_color(o, C(000000), 0);
     lv_obj_set_style_border_opa(o, LV_OPA_COVER, 0);
     lv_obj_set_style_shadow_width(o, 0, 0);
-    lv_obj_set_style_bg_color(o, face, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(o, BUTTON_GRAY, LV_STATE_PRESSED);
     lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLLABLE);
     if (name && name[0])
         label(o, 7, (h - font_sizes[size] - 3) / 2, w - 14, font_sizes[size] + 6,
-              name, size, text_color, LV_TEXT_ALIGN_CENTER);
+              name, size, BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
     if (action) lv_obj_add_event_cb(o, pressed, LV_EVENT_CLICKED,
                                      (void *)(intptr_t)action);
     return o;
@@ -200,16 +204,15 @@ static void levels_screen(lv_obj_t *root) {
     for (int n = 1; n <= 10; n++) {
         int col = (n - 1) % 5, row = (n - 1) / 5;
         int x = 84 + col * 225, y = 194 + row * 188;
-        lv_color_t tint = n == 5 ? BLUE : n <= game_completed_level() ?
-                          SAGE : C(EEE4C9);
-        lv_obj_t *o = button(root, x, y, 206, 153, "", 2, tint, INK,
-                             U_LEVEL_BASE + n);
+        lv_obj_t *o = button(root, x, y, 206, 153, "", 2,
+                             BUTTON_GRAY, BUTTON_TEXT, U_LEVEL_BASE + n);
+        lv_obj_set_style_border_width(o, n == game_resume_level() ? 5 : 3, 0);
         char num[30];
         snprintf(num, sizeof num, "%02d", n);
-        label(o, 17, 13, 170, 62, num, 4, INK, LV_TEXT_ALIGN_LEFT);
+        label(o, 17, 13, 170, 62, num, 4, BUTTON_TEXT, LV_TEXT_ALIGN_LEFT);
         if (n == 5 || n == 10)
             label(o, 18, 91, 180, 48, n == 5 ? "Вода" : "Финал",
-                  2, INK, LV_TEXT_ALIGN_LEFT);
+                  2, BUTTON_TEXT, LV_TEXT_ALIGN_LEFT);
     }
     button(root, 414, 590, 452, 67, "Уровень 0 · история", 2,
            GOLD, INK, U_INTRO);
@@ -270,23 +273,24 @@ static void book_screen(lv_obj_t *root) {
     header(root, "Умная книга", "Назад", U_BOOK_BACK);
     box(root, 63, 179, 513, 505, 22, PAPER, 1);
     box(root, 596, 179, 633, 505, 22, WHITE, 1);
-    button(root, 84, 194, 220, 54, "Растения", 2,
-           state.book_enemy_tab ? WHITE : SAGE, INK, U_BOOK_PLANTS);
-    button(root, 314, 194, 226, 54, "Противники", 2,
-           state.book_enemy_tab ? SAGE : WHITE, INK, U_BOOK_ENEMIES);
+    lv_obj_t *plants = button(root, 84, 194, 220, 54, "Растения", 2,
+                              BUTTON_GRAY, BUTTON_TEXT, U_BOOK_PLANTS);
+    lv_obj_t *enemies = button(root, 314, 194, 226, 54, "Противники", 2,
+                               BUTTON_GRAY, BUTTON_TEXT, U_BOOK_ENEMIES);
+    lv_obj_set_style_border_width(state.book_enemy_tab ? enemies : plants, 5, 0);
     int count = state.book_enemy_tab ? 4 : 5;
     for (int i = 0; i < count; ++i) {
         GameBookEntry entry;
         if (!game_book_entry(state.book_enemy_tab, i, &entry)) continue;
         int y = 259 + i * 79;
         lv_obj_t *card = button(root, 83, y, 472, 68, "", 0,
-                                state.book_selection == i ? SAGE : WHITE,
-                                INK, U_BOOK_ENTRY_BASE + i);
+                                BUTTON_GRAY, BUTTON_TEXT, U_BOOK_ENTRY_BASE + i);
+        lv_obj_set_style_border_width(card, state.book_selection == i ? 5 : 3, 0);
         if (state.book_enemy_tab && entry.art_id == PV_ART_DUCK)
             duck_art(card, 42, 34, 50, entry.enemy_variant);
         else art(card, entry.art_id, 42, 34, 54);
         label(card, 81, 16, 371, 44, entry.short_name, 2,
-              INK, LV_TEXT_ALIGN_LEFT);
+              BUTTON_TEXT, LV_TEXT_ALIGN_LEFT);
     }
     GameBookEntry entry;
     if (!game_book_entry(state.book_enemy_tab, state.book_selection, &entry)) return;
@@ -332,8 +336,9 @@ static void intro_screen(lv_obj_t *root) {
  * visible throughout cooldown; only its caption changes to "Подождите". */
 static void packet(lv_obj_t *root, int y, int image_id, int duck_variant,
                    int waiting, int dragging) {
-    lv_obj_t *slot = button(root, 12, y, 223, 100, "", 0, DARK, WHITE, 0);
-    lv_obj_set_style_bg_opa(slot, LV_OPA_TRANSP, 0);
+    lv_obj_t *slot = button(root, 12, y, 223, 100, "", 0,
+                            BUTTON_GRAY, BUTTON_TEXT, 0);
+    if (dragging) lv_obj_set_style_border_width(slot, 5, 0);
     lv_obj_set_style_shadow_width(slot, 0, 0);
     if (dragging) {
         lv_obj_t *ring = box(slot, 10, 5, 94, 94, 47, C(000000), 0);
@@ -344,7 +349,7 @@ static void packet(lv_obj_t *root, int y, int image_id, int duck_variant,
     if (duck_variant >= 0) duck_art(slot, 57, 51, 94, duck_variant);
     else art(slot, image_id, 57, 51, 94);
     if (waiting)
-        label(slot, 95, 31, 128, 48, "Подождите", 1, GOLD,
+        label(slot, 95, 31, 128, 48, "Подождите", 1, BUTTON_TEXT,
               LV_TEXT_ALIGN_LEFT);
 }
 
@@ -416,7 +421,7 @@ static void rooms_screen(lv_obj_t *root, const OnNetView *v) {
                              chosen_map == 1 ? SAGE : WHITE, INK, U_MAP_LAWN);
     lv_obj_t *water = button(root, 282, 191, 210, 54, "Вода", 2,
                               chosen_map == 5 ? BLUE : WHITE, INK, U_MAP_WATER);
-    lv_obj_set_style_border_width(chosen_map == 1 ? lawn : water, 2, 0);
+    lv_obj_set_style_border_width(chosen_map == 1 ? lawn : water, 5, 0);
     lv_obj_set_style_border_color(chosen_map == 1 ? lawn : water,
                                   C(000000), 0);
     button(root, 650, 179, 187, 62, "Поиск", 2, WHITE, INK, U_SEARCH);
@@ -455,9 +460,9 @@ static void rooms_screen(lv_obj_t *root, const OnNetView *v) {
                   LV_TEXT_ALIGN_LEFT);
             label(card, width - 300, 19, 119, 42,
                   v->rooms[idx].map == 5 ? "Вода" : "Газон",
-                  1, MUTED, LV_TEXT_ALIGN_CENTER);
+                  1, BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
             label(card, width - 174, 19, 158, 42, "Войти  >", 1,
-                  C(477E4D), LV_TEXT_ALIGN_CENTER);
+                  BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
         }
         if (v->room_count > 8) {
             button(root, 77, 660, 168, 43, "Назад", 1, WHITE, INK, U_ROOM_BASE + 8);
@@ -521,17 +526,17 @@ static void custom_levels_screen(lv_obj_t *root, const OnNetView *v) {
                      v->levels[index].id);
             lv_obj_t *card = button(root, x, y, 548, 78, "", 1, WHITE, INK,
                                     U_CUSTOM_LEVEL_BASE + i);
-            lv_obj_set_style_border_width(card, 2, 0);
+            lv_obj_set_style_border_width(card, 3, 0);
             lv_obj_set_style_border_color(card, C(000000), 0);
-            box(card, 13, 15, 90, 47, 10, SAGE, 0);
-            label(card, 15, 17, 86, 43, v->levels[index].id, 2, INK,
+            box(card, 13, 15, 90, 47, 10, BUTTON_GRAY, 0);
+            label(card, 15, 17, 86, 43, v->levels[index].id, 2, BUTTON_TEXT,
                   LV_TEXT_ALIGN_CENTER);
-            label(card, 119, 7, 410, 32, v->levels[index].title, 2, INK,
+            label(card, 119, 7, 410, 32, v->levels[index].title, 2, BUTTON_TEXT,
                   LV_TEXT_ALIGN_LEFT);
             label(card, 121, 39, 410, 33,
                   v->levels[index].description[0] ? v->levels[index].description :
                                                     "Нажми, чтобы играть в C-игре",
-                  1, C(477E4D), LV_TEXT_ALIGN_LEFT);
+                  1, BUTTON_TEXT, LV_TEXT_ALIGN_LEFT);
         }
     } else if (!v->levels_busy) {
         box(root, 220, 322, 840, 190, 25, WHITE, 1);
@@ -565,29 +570,26 @@ static void custom_platformer_screen(lv_obj_t *root) {
     label(root, 27, 18, 920, 66, title, 2, WHITE, LV_TEXT_ALIGN_LEFT);
     button(root, 1033, 21, 215, 62, "К уровням", 2, C(476750), WHITE,
            U_CUSTOM_BACK);
-    lv_obj_t *pad = box(root, 58, 480, 222, 222, 111, DARK, 0);
-    lv_obj_set_style_bg_opa(pad, LV_OPA_50, 0);
+    lv_obj_t *pad = box(root, 58, 480, 222, 222, 111, BUTTON_GRAY, 0);
     lv_obj_set_style_border_width(pad, 3, 0);
     lv_obj_set_style_border_color(pad, C(000000), 0);
-    lv_obj_t *stick_cross_h = box(root, 104, 587, 130, 8, 4, WHITE, 0);
+    lv_obj_t *stick_cross_h = box(root, 104, 587, 130, 8, 4, C(777777), 0);
     lv_obj_set_style_bg_opa(stick_cross_h, LV_OPA_60, 0);
-    lv_obj_t *stick_cross_v = box(root, 165, 526, 8, 130, 4, WHITE, 0);
+    lv_obj_t *stick_cross_v = box(root, 165, 526, 8, 130, 4, C(777777), 0);
     lv_obj_set_style_bg_opa(stick_cross_v, LV_OPA_60, 0);
-    custom_stick_knob = box(root, 137, 559, 66, 66, 33, GOLD, 1);
+    custom_stick_knob = box(root, 137, 559, 66, 66, 33, BUTTON_GRAY, 1);
     lv_obj_set_style_border_width(custom_stick_knob, 2, 0);
     lv_obj_set_style_border_color(custom_stick_knob, C(000000), 0);
-    lv_obj_t *trigger = box(root, 910, 567, 128, 99, 19, C(59C4BD), 1);
-    lv_obj_set_style_bg_opa(trigger, LV_OPA_70, 0);
+    lv_obj_t *trigger = box(root, 910, 567, 128, 99, 19, BUTTON_GRAY, 1);
     lv_obj_set_style_border_width(trigger, 2, 0);
     lv_obj_set_style_border_color(trigger, C(000000), 0);
-    label(trigger, 0, 11, 128, 38, "⚡ E", 2, WHITE, LV_TEXT_ALIGN_CENTER);
-    label(trigger, 0, 52, 128, 30, "ТРИГГЕР", 1, WHITE, LV_TEXT_ALIGN_CENTER);
-    lv_obj_t *jump = box(root, 1081, 525, 169, 169, 84, C(F1BE6C), 1);
-    lv_obj_set_style_bg_opa(jump, LV_OPA_70, 0);
+    label(trigger, 0, 11, 128, 38, "⚡ E", 2, BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
+    label(trigger, 0, 52, 128, 30, "ТРИГГЕР", 1, BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
+    lv_obj_t *jump = box(root, 1081, 525, 169, 169, 84, BUTTON_GRAY, 1);
     lv_obj_set_style_border_width(jump, 3, 0);
     lv_obj_set_style_border_color(jump, C(000000), 0);
-    label(jump, 0, 36, 169, 56, "↑", 4, INK, LV_TEXT_ALIGN_CENTER);
-    label(jump, 0, 92, 169, 44, "ПРЫЖОК", 1, INK, LV_TEXT_ALIGN_CENTER);
+    label(jump, 0, 36, 169, 56, "↑", 4, BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
+    label(jump, 0, 92, 169, 44, "ПРЫЖОК", 1, BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
 }
 
 static void lobby_screen(lv_obj_t *root, const OnNetView *v) {
@@ -606,19 +608,20 @@ static void lobby_screen(lv_obj_t *root, const OnNetView *v) {
         int x = side == ON_ROLE_PLANTS ? 90 : 663;
         int chosen = mine == side, taken = other == side;
         lv_obj_t *card = button(root, x, 268, 527, 317, "", 1,
-                                WHITE, INK,
+                                BUTTON_GRAY, BUTTON_TEXT,
                                 side == ON_ROLE_PLANTS ? U_PLANTS : U_ZOMBIES);
-        lv_obj_set_style_bg_opa(card, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(card, chosen ? 5 : 3, 0);
         lv_obj_set_style_shadow_width(card, 0, 0);
         art(card, side == ON_ROLE_PLANTS ? PV_ART_PEA : PV_ART_DUCK,
             264, 121, 210);
         label(card, 32, 224, 463, 61,
-              side == ON_ROLE_PLANTS ? "Растения" : "Зомби", 3, INK,
+              side == ON_ROLE_PLANTS ? "Растения" : "Зомби", 3, BUTTON_TEXT,
               LV_TEXT_ALIGN_CENTER);
-        box(card, 129, 285, 269, 6, 0, chosen ? C(000000) : SAGE, 0);
+        box(card, 129, 285, 269, 6, 0,
+            chosen ? C(000000) : BUTTON_GRAY, 0);
         if (taken)
             label(card, 155, 288, 220, 29, "Сторона занята", 1,
-                  MUTED, LV_TEXT_ALIGN_CENTER);
+                  BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
     }
     box(root, 90, 609, 1100, 78, 17, DARK, 0);
     const char *status = v->notice[0] ? v->notice : !v->guest_id[0] ?

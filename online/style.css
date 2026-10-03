@@ -16,6 +16,8 @@
   --blue: #c8e7e9;
   --muted: #667965;
   --outline: #000;
+  --button-gray: #bdbdbd;
+  --button-ink: #111;
 }
 
 * { box-sizing: border-box; }
@@ -26,7 +28,14 @@ body {
   color: var(--white);
   background: var(--dark);
 }
-button { font: inherit; cursor: pointer; touch-action: manipulation; }
+button {
+  font: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+  color: var(--button-ink);
+  background: var(--button-gray);
+  border-color: var(--outline);
+}
 button:focus-visible { outline: 2px solid var(--outline); outline-offset: 2px; }
 button:disabled { opacity: .55; cursor: not-allowed; }
 .hidden { display: none !important; }
@@ -77,8 +86,8 @@ main { min-width: 0; }
   padding: 8px 14px;
   border: 2px solid var(--outline);
   border-radius: 5px;
-  color: var(--ink);
-  background: var(--sage);
+  color: var(--button-ink);
+  background: var(--button-gray);
 }
 .back-link { display: inline-flex; margin: 16px 0 24px; }
 .screen { animation: none; }
@@ -138,12 +147,12 @@ main { min-width: 0; }
   padding: 7px;
   border: 3px solid var(--outline);
   border-radius: 5px;
-  color: var(--ink);
-  background: var(--white);
+  color: var(--button-ink);
+  background: var(--button-gray);
   font-weight: bold;
   text-align: left;
 }
-.map-card.active { background: var(--blue); }
+.map-card.active { background: var(--button-gray); border-width: 5px; }
 .map-card img { width: 68px; height: 53px; border: 1px solid var(--outline); object-fit: cover; }
 .primary-button {
   width: 100%;
@@ -151,13 +160,13 @@ main { min-width: 0; }
   padding: 13px 20px;
   border: 3px solid var(--outline);
   border-radius: 5px;
-  color: var(--ink);
-  background: var(--gold);
+  color: var(--button-ink);
+  background: var(--button-gray);
   font-size: 21px;
   font-weight: bold;
 }
 .plus { margin-right: 8px; font-size: 27px; line-height: 0; }
-.refresh { margin-left: auto; padding: 6px 13px; color: var(--ink); background: var(--blue); font-size: 26px; line-height: 1; }
+.refresh { margin-left: auto; padding: 6px 13px; color: var(--button-ink); background: var(--button-gray); font-size: 26px; line-height: 1; }
 .room-list { display: grid; height: 216px; align-content: start; gap: 8px; overflow: auto; margin-top: 19px; }
 .room-item {
   display: flex;
@@ -168,14 +177,14 @@ main { min-width: 0; }
   padding: 12px;
   border: 2px solid var(--outline);
   border-radius: 5px;
-  color: var(--ink);
-  background: var(--white);
+  color: var(--button-ink);
+  background: var(--button-gray);
   text-align: left;
 }
 .room-item strong { font-size: 19px; letter-spacing: .14em; }
 .room-item small { display: block; margin-top: 2px; color: var(--muted); font-size: 13px; }
-.room-item .badge { padding: 5px 9px; border: 1px solid var(--outline); border-radius: 3px; color: var(--ink); background: var(--sage); font-size: 12px; }
-.room-item:disabled .badge { background: #e4c8b8; }
+.room-item .badge { padding: 5px 9px; border: 1px solid var(--outline); border-radius: 3px; color: var(--button-ink); background: var(--button-gray); font-size: 12px; }
+.room-item:disabled .badge { background: var(--button-gray); }
 .hint { color: var(--muted); font-size: 13px; line-height: 1.4; }
 .footer-note { margin: 26px 0 10px; color: var(--sage); font-size: 14px; text-align: center; }
 
@@ -193,23 +202,23 @@ main { min-width: 0; }
 }
 .code-panel .overline { display: block; color: var(--dark); }
 .code-panel strong { display: block; font-size: 34px; letter-spacing: .23em; }
-.code-panel button { margin-top: 5px; padding: 4px; border: 2px solid var(--outline); border-radius: 4px; color: var(--ink); background: var(--sage); font-size: 15px; }
+.code-panel button { margin-top: 5px; padding: 4px; border: 2px solid var(--outline); border-radius: 4px; color: var(--button-ink); background: var(--button-gray); font-size: 15px; }
 .sides { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin: 42px 0 20px; }
 .side-card {
   position: relative;
   padding: 20px 27px;
   border: 3px solid var(--outline);
   border-radius: 6px;
-  color: var(--ink);
-  background: var(--sage);
+  color: var(--button-ink);
+  background: var(--button-gray);
   text-align: left;
 }
-.side-card.duck-side { background: var(--gold); }
+.side-card.duck-side { background: var(--button-gray); }
 .side-card.selected { border-width: 5px; }
 .side-card h2 { margin: 0 0 6px; font-size: 34px; }
 .side-card .overline, .side-card.duck-side .overline { color: var(--dark); }
 .side-card p { max-width: 430px; font-size: 17px; line-height: 1.4; }
-.side-card b { display: block; margin-top: 14px; padding: 9px 12px; border: 2px solid var(--outline); border-radius: 4px; background: var(--white); }
+.side-card b { display: block; margin-top: 14px; padding: 9px 12px; border: 2px solid var(--outline); border-radius: 4px; color: var(--button-ink); background: var(--button-gray); }
 .side-art { display: flex; height: 152px; align-items: center; gap: 16px; position: relative; }
 .side-art img { width: 138px; height: 138px; object-fit: contain; image-rendering: pixelated; }
 .lobby-bottom { padding: 17px; border: 2px solid var(--outline); border-radius: 5px; color: var(--ink); background: var(--paper); text-align: center; }
@@ -230,8 +239,8 @@ canvas { display: block; width: 100%; max-width: 100%; height: auto; aspect-rati
   transform: translateX(-50%);
   border: 2px solid var(--outline);
   border-radius: 5px;
-  color: var(--ink);
-  background: var(--gold);
+  color: var(--button-ink);
+  background: var(--button-gray);
   text-align: center;
 }
 .book-dialog {
@@ -252,7 +261,7 @@ canvas { display: block; width: 100%; max-width: 100%; height: auto; aspect-rati
 .book-entry img { width: 58px; height: 58px; object-fit: contain; image-rendering: pixelated; }
 .book-entry strong, .book-entry small { display: block; }
 .book-entry small { color: var(--muted); line-height: 1.4; }
-.book-close { float: right; padding: 0 12px; border: 2px solid var(--outline); border-radius: 4px; color: var(--ink); background: var(--gold); font-size: 29px; }
+.book-close { float: right; padding: 0 12px; border: 2px solid var(--outline); border-radius: 4px; color: var(--button-ink); background: var(--button-gray); font-size: 29px; }
 .book-footer { color: var(--muted); font-size: 14px; }
 
 /* Flat colors and ink-black outlines: no gradients, shine or glow. */
