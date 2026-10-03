@@ -24,6 +24,8 @@
 #define GOLD C(F3BC6C)
 #define MUTED C(667965)
 #define BLUE C(C8E7E9)
+#define GARDEN_GRAY C(BDBDBD)
+#define GARDEN_TEXT C(111111)
 
 enum {
     U_MENU_PLAY = 1, U_MENU_LEVELS, U_MENU_GARDEN, U_MENU_BOOK, U_MENU_ONLINE,
@@ -220,37 +222,46 @@ static void garden_screen(lv_obj_t *root) {
     GameOfflineUIState state;
     game_offline_ui_snapshot(&state);
     box(root, 0, 0, 1280, 121, 0, DARK, 0);
-    box(root, 0, 118, 1280, 3, 0, GOLD, 0);
+    box(root, 0, 118, 1280, 3, 0, C(777777), 0);
     label(root, 12, 3, 232, 36, "Сад Дзен", 2, WHITE, LV_TEXT_ALIGN_LEFT);
-    button(root, 6, 42, 112, 31, "Растения", 0,
-           state.garden_mode == 0 ? SAGE : WHITE, INK, U_GARDEN_PLANTS);
-    button(root, 128, 42, 112, 31, "Гуси", 0,
-           state.garden_mode == 1 ? SAGE : WHITE, INK, U_GARDEN_GEESE);
-    button(root, 6, 78, 112, 31, "Газон", 0,
-           state.garden_map == 1 ? SAGE : WHITE, INK, U_GARDEN_LAWN);
-    button(root, 128, 78, 112, 31, "Вода", 0,
-           state.garden_map == 5 ? SAGE : WHITE, INK, U_GARDEN_WATER);
+    lv_obj_t *plants = button(root, 6, 42, 112, 31, "Растения", 0,
+                              GARDEN_GRAY, GARDEN_TEXT, U_GARDEN_PLANTS);
+    lv_obj_t *geese = button(root, 128, 42, 112, 31, "Гуси", 0,
+                             GARDEN_GRAY, GARDEN_TEXT, U_GARDEN_GEESE);
+    lv_obj_t *lawn = button(root, 6, 78, 112, 31, "Газон", 0,
+                            GARDEN_GRAY, GARDEN_TEXT, U_GARDEN_LAWN);
+    lv_obj_t *water = button(root, 128, 78, 112, 31, "Вода", 0,
+                             GARDEN_GRAY, GARDEN_TEXT, U_GARDEN_WATER);
+    /* Keep every garden control grayscale; the chosen option gets a stronger
+     * black outline instead of a colored fill or a yellow glow. */
+    if (state.garden_mode == 0) lv_obj_set_style_border_width(plants, 5, 0);
+    else lv_obj_set_style_border_width(geese, 5, 0);
+    if (state.garden_map == 1) lv_obj_set_style_border_width(lawn, 5, 0);
+    else lv_obj_set_style_border_width(water, 5, 0);
 
     int count = state.garden_mode ? 3 : 5;
     for (int i = 0; i < count; i++) {
         GameBookEntry entry;
         if (!game_book_entry(state.garden_mode, i, &entry)) continue;
         int x = 260 + (state.garden_mode ? 130 : 0) + i * 130;
+        int active = state.garden_selection == i ||
+                     (drag_phase == GAME_GARDEN && drag_index == i);
         lv_obj_t *slot = button(root, x, 15, 120, 100, "", 0,
-                                DARK, WHITE, 0);
-        lv_obj_set_style_bg_opa(slot, LV_OPA_TRANSP, 0);
+                                GARDEN_GRAY, GARDEN_TEXT, 0);
         lv_obj_set_style_shadow_width(slot, 0, 0);
-        if (state.garden_selection == i ||
-            (drag_phase == GAME_GARDEN && drag_index == i))
-            box(slot, 17, 6, 86, 86, 43, GOLD, 0);
+        if (active) lv_obj_set_style_border_width(slot, 5, 0);
         if (state.garden_mode)
             duck_art(slot, 60, 49, 85, entry.enemy_variant);
         else
             art(slot, entry.art_id, 60, 49, 85);
     }
-    button(root, 918, 22, 145, 44, "Книга", 2, C(476750), WHITE, U_GARDEN_BOOK);
-    button(root, 1079, 22, 179, 44, "В меню", 2, C(476750), WHITE, U_GARDEN_EXIT);
-    button(root, 918, 77, 340, 39, "Убрать", 2, SAGE, INK, U_GARDEN_ERASE);
+    button(root, 918, 22, 145, 44, "Книга", 2,
+           GARDEN_GRAY, GARDEN_TEXT, U_GARDEN_BOOK);
+    button(root, 1079, 22, 179, 44, "В меню", 2,
+           GARDEN_GRAY, GARDEN_TEXT, U_GARDEN_EXIT);
+    lv_obj_t *erase = button(root, 918, 77, 340, 39, "Убрать", 2,
+                             GARDEN_GRAY, GARDEN_TEXT, U_GARDEN_ERASE);
+    if (state.garden_selection == 5) lv_obj_set_style_border_width(erase, 5, 0);
 }
 
 static void book_screen(lv_obj_t *root) {

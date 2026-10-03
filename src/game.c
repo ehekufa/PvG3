@@ -1627,14 +1627,15 @@ static void draw_level_select(void) {
                 "ПОВТОР КАТ-СЦЕНЫ НЕ СБРАСЫВАЕТ СОХРАНЕНИЕ");
 }
 
-/* Simple, flat controls shared by the fallback software-rendered garden. */
-static void draw_garden_option(int x0, int y0, int x1, int y1,
-                               const char *text, int active) {
-    rect(x0, y0, x1, y1, COL(47, 37, 28));
-    rect(x0 + 3, y0 + 3, x1 - 3, y1 - 3,
-         active ? COL(179, 207, 143) : COL(236, 224, 188));
-    draw_text_c((x0 + x1) / 2, y0 + 8, 1,
-                active ? COL(39, 54, 35) : COL(64, 48, 35), text);
+/* Flat grayscale buttons shared by the fallback software-rendered garden. */
+static void draw_garden_button(int x0, int y0, int x1, int y1,
+                               const char *text, int size, int active) {
+    int inset = active ? 5 : 3;
+    rect(x0, y0, x1, y1, COL(0, 0, 0));
+    rect(x0 + inset, y0 + inset, x1 - inset, y1 - inset, COL(190, 190, 190));
+    while (size > 1 && text_w(size, text) > x1 - x0 - 18) size--;
+    draw_text_c((x0 + x1) / 2, (y0 + y1 - size * 7) / 2,
+                size, COL(24, 24, 24), text);
 }
 
 /* Plants and geese share a free-placement garden; campaign rules and currency
@@ -1662,37 +1663,36 @@ static void draw_garden(void) {
     rect_blend(0, 0, GAME_W - 1, LAWN_Y - 1, COL(31, 25, 30), 148);
     rect(LAWN_X, LAWN_Y - 5, GAME_W - 1, LAWN_Y - 1, COL(70, 46, 28));
     draw_text(28, 13, 4, COL(255, 229, 157), "САД ДЗЕН");
-    draw_garden_option(8, 43, 116, 78, "РАСТЕНИЯ", !garden_mode);
-    draw_garden_option(124, 43, 232, 78, "ГУСИ", garden_mode);
-    draw_garden_option(8, 81, 116, 116, "ГАЗОН", garden_map == 1);
-    draw_garden_option(124, 81, 232, 116, "ВОДА", garden_map == WATER_LEVEL);
+    draw_garden_button(8, 43, 116, 78, "РАСТЕНИЯ", 1, !garden_mode);
+    draw_garden_button(124, 43, 232, 78, "ГУСИ", 1, garden_mode);
+    draw_garden_button(8, 81, 116, 116, "ГАЗОН", 1, garden_map == 1);
+    draw_garden_button(124, 81, 232, 116, "ВОДА", 1,
+                       garden_map == WATER_LEVEL);
 
     int count = garden_mode ? GARDEN_DUCK_COUNT : PT_COUNT;
     for (int i = 0; i < count; i++) {
         int x0 = garden_card_x(i);
-        uint32_t border = garden_selected == i ? COL(255, 225, 82) : COL(65, 44, 31);
-        rect(x0 - 3, 9, x0 + CARD_W + 3, 115, border);
-        rect(x0, 12, x0 + CARD_W, 112, COL(236, 224, 188));
+        int active = garden_selected == i;
+        int inset = active ? 5 : 3;
+        rect(x0 - 3, 9, x0 + CARD_W + 3, 115, COL(0, 0, 0));
+        rect(x0 - 3 + inset, 9 + inset,
+             x0 + CARD_W + 3 - inset, 115 - inset, COL(190, 190, 190));
         if (garden_mode) {
-            rect(x0, 12, x0 + CARD_W, 18, COL(194, 159, 75));
             draw_duck_variant(x0 + (CARD_W - 60) / 2, 19, 60,
                               GARDEN_DUCKS[i], 0);
-            draw_text_c(x0 + CARD_W / 2, 84, 2, COL(64, 42, 29),
+            draw_text_c(x0 + CARD_W / 2, 84, 2, COL(24, 24, 24),
                         GARDEN_DUCK_NAMES[i]);
         } else {
-            rect(x0, 12, x0 + CARD_W, 18, PDEF[i].body);
             sprite_draw(PDEF[i].sprite, x0 + (CARD_W - 60) / 2, 19, 60, 60, 0);
             int size = text_w(2, PDEF[i].short_name) <= CARD_W - 8 ? 2 : 1;
             draw_text_c(x0 + CARD_W / 2, 84, size,
-                        COL(64, 42, 29), PDEF[i].short_name);
+                        COL(24, 24, 24), PDEF[i].short_name);
         }
     }
-    draw_button(915, 16, 1070, 58, "КНИГА", 2);
-    draw_button(1080, 16, 1265, 58, "В МЕНЮ", 2);
-    rect(915, 73, 1265, 116, garden_selected == PT_COUNT ?
-         COL(255, 225, 82) : COL(66, 44, 31));
-    rect(918, 76, 1262, 113, COL(158, 113, 66));
-    draw_text_c(1090, 82, 3, COL(255, 240, 198), "УБРАТЬ");
+    draw_garden_button(915, 16, 1070, 58, "КНИГА", 2, 0);
+    draw_garden_button(1080, 16, 1265, 58, "В МЕНЮ", 2, 0);
+    draw_garden_button(915, 73, 1265, 116, "УБРАТЬ", 2,
+                       garden_selected == PT_COUNT);
     rect_blend(95, 679, 1185, 717, COL(13, 29, 22), 220);
     draw_text_c(640, 691, 2, COL(255, 244, 205),
                 "СВОБОДНО СТАВЬ РАСТЕНИЯ И ГУСЕЙ. ВСЁ БЕСПЛАТНО.");
