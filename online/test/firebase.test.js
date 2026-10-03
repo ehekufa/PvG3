@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {validId, listRooms, createRoom, getRoom, joinRoom, chooseRole,
-        encodeState, decodeState, writeState, writeCommand, leaveRoom} from '../firebase.js';
+        encodeState, decodeState, writeState, writeCommand, leaveRoom,
+        validLevelId, listPublishedLevels, getPublishedLevel, publishLevel} from '../firebase.js';
+import {newDraft, addObject} from '../workshop.js';
 import {newMatch, validMatch, applyCommand} from '../rules.js';
 
 // Fake the RTDB REST surface; never write fixtures to the user's real DB.
@@ -78,6 +80,57 @@ test('room creation, list, compare-and-set join, role choice, actions and exit',
     assert.equal(await getRoom(created.id),null);
   } finally {globalThis.fetch=originalFetch;}
 });
+test('publishing creates a compatible level and catalog entry using only the fake REST database', async () => {
+  const database = {levels:{}, 'levels-index':{}};
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    const route = new URL(url), path = route.pathname.slice(1, -5).split('/');
+    assert.equal(route.hostname, 'pvg3-ae824-default-rtdb.firebaseio.com');
+    assert(['levels', 'levels-index'].includes(path[0]));
+    let parent = database;
+    for (const segment of path.slice(0, -1)) parent = parent[segment] ||= {};
+    const key = path.at(-1), method = opts.method || 'GET';
+    if (method === 'GET') return reply(200, parent[key] ?? null);
+    if (method === 'PUT') {
+      if (opts.headers['If-Match'] === 'null_etag' && parent[key] != null)
+        return reply(412, {error:'precondition failed'});
+      parent[key] = JSON.parse(opts.body);
+      return reply(200, parent[key]);
+    }
+    throw new Error(`Unexpected mock method ${method}`);
+  };
+  try {
+    const draft = newDraft();draft.title = 'Test level';draft.description = 'Fake only';
+    addObject(draft, 'coin', 5, 5);
+    const result = await publishLevel(draft);
+    assert(validLevelId(result.id));
+    assert.equal(database.levels[result.id].format, 'PVG3-PUBLISHED-LEVEL');
+    assert.equal(database['levels-index'][result.id].title, 'Test level');
+    assert.deepEqual((await listPublishedLevels()).map(({id}) => id), [result.id]);
+    assert.equal((await getPublishedLevel(result.id)).project.format, 'PVG3-MAKER');
+    await assert.rejects(getPublishedLevel('0'), /ID/);
+  } finally {globalThis.fetch = originalFetch;}
+});
+
+test('a catalog permission refusal is surfaced without erasing a saved level', async () => {
+  const stored = {};
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    const path = new URL(url).pathname.slice(1, -5);
+    if (path.startsWith('levels-index/')) return reply(403, {error:'permission denied'});
+    if (path.startsWith('levels/')) {
+      const id = path.slice('levels/'.length);stored[id] = JSON.parse(opts.body);
+      return reply(200, stored[id]);
+    }
+    throw new Error(`Unexpected fake path ${path}`);
+  };
+  try {
+    await assert.rejects(publishLevel(newDraft()), error =>
+      error.status === 403 && /сохранён, но не появился в каталоге/.test(error.message));
+    assert.equal(Object.keys(stored).length, 1);
+  } finally {globalThis.fetch = originalFetch;}
+});
+
 test('wire encoding keeps Firebase from dropping empty arrays or null plants', () => {
   const original=newMatch();
   const wire=firebaseNormalize(encodeState(original));

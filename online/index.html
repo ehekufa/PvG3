@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#273a33">
+  <meta name="theme-color" content="#242424">
   <meta name="description" content="PvG3 Онлайн: играй за растения Кирилла или отправляй уток-зомби другу. Комнаты через Firebase.">
   <title>PvG3 Онлайн — растения против уток</title>
   <link rel="stylesheet" href="./style.css">
@@ -41,7 +41,118 @@
             <p class="hint">Друг может поделиться ссылкой с кодом комнаты. Закрытые и занятые комнаты в список не попадают.</p>
           </section>
         </div>
+        <section class="workshop-banner" aria-label="Мастерская платформера">
+          <div class="workshop-banner-icon" aria-hidden="true">▱</div>
+          <div><span class="overline">СОЗДАЙ СВОЮ ИГРУ</span><h2>Мастерская платформера</h2>
+            <p>Собери уровень из блоков, монет и препятствий, проверь его и опубликуй в каталоге «Уровни игроков».</p></div>
+          <button class="primary-button" id="open-workshop" type="button">Открыть мастерскую →</button>
+        </section>
         <div class="footer-note">Без входа и чата · Только комнаты и игровые ходы · Кампания в APK остаётся отдельно</div>
+      </section>
+
+      <section class="screen hidden" id="workshop-screen" aria-labelledby="workshop-title">
+        <div class="workshop-heading">
+          <button class="back-link" id="workshop-online-back" type="button">← В онлайн</button>
+          <div><span class="eyebrow">ПЛАТФОРМЕННЫЙ РЕДАКТОР</span>
+            <h1 id="workshop-title">Мастерская</h1>
+            <p class="muted">Создавай, испытывай и публикуй собственные уровни. Черновик сохраняется на этом устройстве.</p></div>
+        </div>
+
+        <section class="ws-page" id="ws-home-page" aria-label="Главная мастерской">
+          <div class="ws-home-grid">
+            <article class="ws-home-card ws-draft-card">
+              <span class="overline">ТВОЙ ПРОЕКТ</span><h2 id="ws-draft-title">Новый уровень</h2>
+              <p id="ws-draft-summary" class="muted">Сетка 16 × 10 · игрок, платформа и финиш уже на месте.</p>
+              <div class="ws-card-actions">
+                <button class="primary-button" id="ws-continue" type="button">Продолжить редактор</button>
+                <button class="small-button" id="ws-new-draft" type="button">＋ Новый уровень</button>
+              </div>
+              <small id="ws-draft-status" class="ws-status" aria-live="polite"></small>
+            </article>
+            <article class="ws-home-card ws-catalog-card">
+              <span class="overline">ИГРАЙ И ПУБЛИКУЙ</span><h2>Уровни игроков</h2>
+              <p class="muted">Открой каталог опубликованных уровней и испытай их в браузере. Новая публикация появится и в C/native-клиенте.</p>
+              <button class="primary-button" id="ws-open-catalog" type="button">Открыть каталог →</button>
+            </article>
+          </div>
+          <p class="ws-safety-note">Публикация общедоступна и не требует аккаунта. Firebase может отклонить запись, если правила базы не разрешают публикацию.</p>
+        </section>
+
+        <section class="ws-page hidden" id="ws-editor-page" aria-label="Редактор уровня">
+          <div class="ws-page-toolbar">
+            <button class="small-button" id="ws-editor-back" type="button">← Мастерская</button>
+            <div class="ws-main-actions">
+              <button class="small-button" id="ws-preview" type="button">▶ Проверить</button>
+              <button class="primary-button" id="ws-publish" type="button">Опубликовать</button>
+            </div>
+          </div>
+          <div class="ws-project-fields">
+            <label>Название уровня<input id="ws-title-input" maxlength="80" autocomplete="off" placeholder="Например: Острова над рекой"></label>
+            <label>Краткое описание<textarea id="ws-description-input" maxlength="160" rows="2" placeholder="Что ждёт игрока? (до 160 символов)"></textarea></label>
+          </div>
+          <div class="ws-editor-layout">
+            <div class="ws-board-column">
+              <div class="ws-board-heading"><strong>Сцена · 16 × 10</strong><span id="ws-object-count">0 / 120 объектов</span></div>
+              <div class="canvas-wrap ws-canvas-wrap"><canvas id="ws-editor-canvas" width="1280" height="720" aria-label="Редактор сцены 16 на 10"></canvas></div>
+              <p class="hint">Выбери режим, затем нажми на клетку. В режиме «Выбрать» объект можно перетаскивать.</p>
+              <p class="ws-error hidden" id="ws-editor-message" role="status" aria-live="polite"></p>
+            </div>
+            <aside class="ws-tools" aria-label="Инструменты редактора">
+              <div class="ws-tool-group"><span class="overline">РЕЖИМ</span>
+                <div class="ws-mode-buttons"><button type="button" data-ws-tool="build" class="active">Строить</button><button type="button" data-ws-tool="select">Выбрать</button><button type="button" data-ws-tool="delete">Удалить</button></div></div>
+              <div class="ws-tool-group"><span class="overline">ОБЪЕКТЫ</span><div id="ws-palette" class="ws-palette">
+                <button type="button" data-ws-type="block">Блок</button><button type="button" data-ws-type="ground">Платформа</button>
+                <button type="button" data-ws-type="hazard">Шипы</button><button type="button" data-ws-type="coin">Монета</button>
+                <button type="button" data-ws-type="enemy">Гусь</button><button type="button" data-ws-type="player">Игрок</button>
+                <button type="button" data-ws-type="goal">Финиш</button><button type="button" data-ws-type="trigger">Триггер</button>
+              </div></div>
+              <div class="ws-tool-group ws-properties hidden" id="ws-properties">
+                <span class="overline">ВЫБРАННЫЙ ОБЪЕКТ</span><strong id="ws-selected-label"></strong>
+                <div class="ws-number-fields"><label>X<input id="ws-object-x" type="number" min="0" max="16" step="0.1"></label><label>Y<input id="ws-object-y" type="number" min="0" max="10" step="0.1"></label><label>Число<input id="ws-object-number" type="number" min="0" max="9999" step="1"></label></div>
+                <label class="ws-color-field">Цвет<input id="ws-object-color" type="color" value="#55c8ea"></label>
+                <div id="ws-trigger-fields" class="hidden">
+                  <label>Событие<select id="ws-trigger-event"><option value="touch">Касание</option><option value="coin">Подбор монеты</option><option value="manual">Кнопка действия</option></select></label>
+                  <label>Действие<select id="ws-trigger-action"><option value="toggle">Показать / скрыть</option><option value="move">Сдвинуть по X</option><option value="recolor">Сменить цвет</option><option value="number">Установить число</option></select></label>
+                  <label>Цель<select id="ws-trigger-target"></select></label>
+                  <label>Величина<input id="ws-trigger-value" type="number" min="-100" max="100" step="1"></label>
+                </div>
+                <button class="small-button ws-delete-selected" id="ws-delete-selected" type="button">Удалить объект</button>
+              </div>
+              <p class="ws-status" id="ws-autosave-status" aria-live="polite">Черновик сохраняется автоматически.</p>
+            </aside>
+          </div>
+        </section>
+
+        <section class="ws-page hidden" id="ws-preview-page" aria-label="Предпросмотр уровня">
+          <div class="ws-page-toolbar"><button class="small-button" id="ws-preview-back" type="button">← В редактор</button>
+            <div class="ws-preview-heading"><span class="overline">ПРЕДПРОСМОТР</span><h2 id="ws-preview-title">Уровень</h2></div>
+            <button class="small-button" id="ws-preview-reset" type="button">↻ С начала</button></div>
+          <div class="canvas-wrap ws-canvas-wrap"><canvas id="ws-preview-canvas" width="1280" height="720" aria-label="Предпросмотр платформерного уровня"></canvas></div>
+          <div class="ws-control-panel">
+            <label class="ws-control-select">Управление
+              <select id="ws-control-select"><option value="auto">Авто</option><option value="buttons">Кнопки</option><option value="joystick">Джойстик</option><option value="keyboard">Клавиатура</option></select>
+            </label>
+            <p id="ws-control-help" class="muted">На телефоне можно выбрать кнопки или джойстик.</p>
+            <div class="ws-touch-controls hidden" id="ws-buttons-controls" aria-label="Экранные кнопки">
+              <button type="button" data-ws-hold="left" aria-label="Влево">◀</button><button type="button" data-ws-hold="right" aria-label="Вправо">▶</button>
+              <button type="button" data-ws-press="jump">ПРЫЖОК</button><button type="button" data-ws-press="trigger">ДЕЙСТВИЕ</button>
+            </div>
+            <div class="ws-joystick-row hidden" id="ws-joystick-controls">
+              <div class="ws-joystick" id="ws-joystick" role="application" aria-label="Джойстик: веди влево или вправо"><span></span></div>
+              <button class="ws-jump" type="button" data-ws-press="jump">ПРЫЖОК</button>
+              <button class="ws-action" type="button" data-ws-press="trigger">ДЕЙСТВИЕ</button>
+            </div>
+          </div>
+          <p id="ws-preview-status" class="ws-status" aria-live="polite">Доберись до финиша и попробуй собрать монеты.</p>
+        </section>
+
+        <section class="ws-page hidden" id="ws-catalog-page" aria-label="Каталог уровней игроков">
+          <div class="ws-page-toolbar"><button class="small-button" id="ws-catalog-back" type="button">← Мастерская</button>
+            <h2>Уровни игроков</h2><button class="small-button" id="ws-catalog-refresh" type="button">↻ Обновить</button></div>
+          <p class="muted">Уровни доступны на вебе, Android и Windows. Выбери уровень, чтобы сыграть в браузере.</p>
+          <div id="ws-catalog-list" class="ws-catalog-list"><p class="muted">Загружаем каталог…</p></div>
+          <p id="ws-catalog-message" class="ws-error hidden" role="status" aria-live="polite"></p>
+        </section>
       </section>
 
       <section class="screen hidden" id="lobby-screen" aria-labelledby="lobby-title">
@@ -49,7 +160,7 @@
         <div class="lobby-top"><div><span class="eyebrow">ВЫ В КОМНАТЕ</span><h1 id="lobby-title">Выбери сторону</h1><p class="muted" id="lobby-subtitle">Ждём соперника…</p></div>
           <div class="code-panel"><span class="overline">КОД КОМНАТЫ</span><strong id="room-code">------</strong><button type="button" id="share">Скопировать ссылку ↗</button></div></div>
         <div class="sides"><button type="button" class="side-card plant-side" data-side="plants"><div class="side-art"><img src="../assets/art/peashooter.png" alt="Горохострел"><img src="../assets/art/coin-sunflower.png" alt="Подсолнух"></div><span class="overline">ЗАЩИТА</span><h2>Растения</h2><p>Сажай растения Кирилла, подбирай монеты и не дай уткам пройти к дому.</p><b id="plants-taken">Свободно</b></button>
-          <button type="button" class="side-card duck-side" data-side="zombies"><div class="side-art"><img src="../assets/art/zombie-duck.png" alt="Утка-зомби"><span class="cone-emoji">▲</span></div><span class="overline">НАСТУПЛЕНИЕ</span><h2>Зомби-утки</h2><p>Покупай уток, выбирай ряд и прорвись через растения. Конус и шлем дают больше здоровья.</p><b id="zombies-taken">Свободно</b></button></div>
+          <button type="button" class="side-card duck-side" data-side="zombies"><div class="side-art"><img src="../assets/art/zombie-duck.png" alt="Утка-зомби"><img src="../assets/art/duck-cone.png" alt="Утка с конусом"><img src="../assets/art/duck-bucket.png" alt="Утка с ведром"></div><span class="overline">НАСТУПЛЕНИЕ</span><h2>Зомби-утки</h2><p>Покупай уток, выбирай ряд и прорвись через растения. Конус и ведро дают больше здоровья.</p><b id="zombies-taken">Свободно</b></button></div>
         <div class="lobby-bottom" id="lobby-status">Оба игрока выбирают разные стороны. Бой начнётся автоматически.</div>
       </section>
 
@@ -65,7 +176,7 @@
   <dialog id="book-dialog" class="book-dialog"><form method="dialog"><button class="book-close" aria-label="Закрыть" type="submit">×</button></form>
     <span class="eyebrow">УМНАЯ КНИГА КИРИЛЛА</span><h2>Растения и противники</h2>
     <div class="book-columns"><div><h3>Растения Кирилла</h3><div id="book-plants"></div></div><div><h3>Утки-зомби</h3><div id="book-ducks"></div></div></div>
-    <p class="book-footer">Конус и шлем нарисованы поверх <strong>того же рисунка утки</strong> — это не новые персонажи.</p>
+    <p class="book-footer">Обычная утка, утка с конусом и утка с ведром показаны на отдельных авторских рисунках.</p>
   </dialog>
   <audio id="soundtrack" src="../assets/music/kirill-pond-loop.wav" preload="none" loop></audio>
   <script type="module" src="./app.js"></script>

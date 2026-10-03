@@ -11,15 +11,16 @@ import struct
 import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
-# Descriptive, stable names for the author's drawings. The latest Kirill and
-# duck replace their earlier versions. The two-eyed green pad and the canal
-# map are the new water-level assets. PNG pixels remain the author's own;
-# the renderer scales them when needed.
+# Descriptive, stable names for the author's drawings and the game's currency
+# token. The cone and bucket ducks are complete illustrations, not overlays.
+# The renderer scales these original transparent PNGs when needed.
 IMAGES = [
     ("KHLEBUSHEK", "assets/art/khlebushek.png"),
     ("MASK", "assets/art/dima-mask.png"),
     ("KIRILL", "assets/art/kirill.png"),
     ("DUCK", "assets/art/zombie-duck.png"),
+    ("DUCK_CONE", "assets/art/duck-cone.png"),
+    ("DUCK_BUCKET", "assets/art/duck-bucket.png"),
     ("ROBOT", "assets/art/queen-robot.png"),
     ("PEA", "assets/art/peashooter.png"),
     ("WALL", "assets/art/walnut.png"),
@@ -29,6 +30,7 @@ IMAGES = [
     ("MAP", "assets/art/lawn-map.png"),
     ("WATER_MAP", "assets/art/water-map.png"),
     ("MOWER", "assets/art/lawnmower.png"),
+    ("COIN", "assets/art/coin-token.png"),
 ]
 
 
