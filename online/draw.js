@@ -116,7 +116,7 @@ export function drawGame(canvas, s, {role, selected, pending = false, id = '', l
   label(ctx, `ОНЛАЙН • ${id}`, 271, 19, 25, '#fff');
   label(ctx, role === 'plants' ? 'ТЫ: РАСТЕНИЯ' : 'ТЫ: ЗОМБИ-УТКИ', 635, 22, 23);
   label(ctx, `УТОК ОСТАЛОСЬ: ${s.left + s.ducks.length} / ${WAVE}`, 275, 72, 20, '#d0d0d0');
-  box(ctx, 924, 26, 154, 66, '#bdbdbd');
+  box(ctx, 924, 26, 154, 66, '#ffffff');
   outline(ctx, 924, 26, 154, 66, 3);
   label(ctx, 'КНИГА', 1001, 47, 23, '#111','center');
   box(ctx, 1099, 26, 165, 66, '#000');

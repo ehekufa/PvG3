@@ -1508,7 +1508,7 @@ static void draw_seed_bar(void) {
     draw_text(638, 20, 3, COL(255, 255, 255), "УРОВЕНЬ");
     draw_int(829, 20, 3, COL(255, 255, 255), level);
     draw_text(641, 69, 2, COL(215, 215, 215), LEVEL_NAMES[level - 1]);
-    draw_button(925, 28, 1080, 88, "КНИГА", 3);
+    draw_button_white(925, 28, 1080, 88, "КНИГА", 3);
     draw_button_white(1100, 28, 1260, 88, "МЕНЮ", 3);
 }
 
@@ -2063,7 +2063,7 @@ static void draw_online_match(void) {
     draw_text(277, 76, 2, COL(68, 68, 68),
               s->map == 5 ? "ВОДА: СНАЧАЛА КУВШИНКА" :
                             "ВЫБЕРИ КАРТОЧКУ, ЗАТЕМ КЛЕТКУ ИЛИ РЯД");
-    draw_button(917, 20, 1088, 91, "КНИГА", 3);
+    draw_button_white(917, 20, 1088, 91, "КНИГА", 3);
     draw_button_black(1093, 17, 1265, 91, "ВЫЙТИ", 3);
     int n = plants ? PT_COUNT : 3;
     for (int i = 0; i < n; i++) {

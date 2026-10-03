@@ -392,6 +392,7 @@ static int run_lvgl_test(void) {
     ui_tap(352, 438);tick_pump(3);
     assert(game_phase() == GAME_ONLINE_MATCH && db.host_role == ON_ROLE_PLANTS);
     ui_snapshot("match_plants");
+    assert(ui_pixels[50 * GAME_W + 935] == 0xFFFFFFFFu); /* online book */
     ui_tap(120, 580);ui_board_tap(535, 288);
     OnMatch match;int role;
     game_online_ui_snapshot(&match, &role, NULL, NULL, 0, NULL);

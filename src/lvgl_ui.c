@@ -138,7 +138,7 @@ static void button_palette(int action, lv_color_t *face, lv_color_t *text) {
         return;
     case U_MENU_PLAY: case U_MENU_LEVELS: case U_MENU_GARDEN:
     case U_MENU_BOOK: case U_MENU_ONLINE: case U_INTRO:
-    case U_CREATE: case U_SEARCH_GO: case U_MATCH_FINISH:
+    case U_CREATE: case U_SEARCH_GO: case U_MATCH_BOOK: case U_MATCH_FINISH:
     case U_CUSTOM_CATALOG:
     case U_GARDEN_BOOK: case U_OFFLINE_MENU:
     case U_RESULT_NEXT: case U_RESULT_RETRY:
