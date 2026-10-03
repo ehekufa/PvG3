@@ -386,6 +386,7 @@ static char online_code[ON_ROOM_ID_SIZE];
 static char online_hint[110];
 static float online_hint_time;
 static Phase book_return;
+static Phase custom_levels_return;
 
 static int garden_card_x(int index) {
     /* Keep the three-goose palette centered in the same five-card rail. */
@@ -410,6 +411,7 @@ static void custom_platformer_update(float dt);
 static void custom_platformer_draw(void);
 
 void game_custom_levels_open(void) {
+    custom_levels_return = phase == PH_SELECT ? PH_SELECT : PH_MENU;
     on_net_open();
     on_net_levels_refresh();
     phase = PH_CUSTOM_LEVELS;
@@ -422,7 +424,7 @@ void game_custom_level_exit(void) {
         phase = PH_CUSTOM_LEVELS;
     } else if (phase == PH_CUSTOM_LEVELS) {
         on_net_level_cancel();
-        phase = PH_MENU;
+        phase = custom_levels_return;
     }
 }
 void game_custom_control(int horizontal, int jump, int trigger) {
@@ -689,6 +691,7 @@ void game_init(void) {
     online_code[0] = online_hint[0] = 0;
     online_hint_time = 0;
     book_return = PH_MENU;
+    custom_levels_return = PH_MENU;
     phase = PH_MENU;
 }
 
@@ -1157,8 +1160,6 @@ void game_input_press(int x, int y) {
             else if (completed_mask == 0 && resume_level == 1) {
                 start_intro(0);
             } else start_level(resume_level);
-        } else if (inside(x, y, 90, 30, 375, 172)) {
-            game_custom_levels_open();
         } else if (inside(x, y, 475, 38, 785, 132)) {
             phase = PH_SELECT;
         } else if (inside(x, y, 850, 38, 1240, 132)) {
@@ -1174,6 +1175,10 @@ void game_input_press(int x, int y) {
     }
     if (phase == PH_SELECT) {
         if (inside(x, y, 1045, 18, 1265, 85)) { phase = PH_MENU; return; }
+        if (inside(x, y, 880, 567, 1240, 641)) {
+            game_custom_levels_open();
+            return;
+        }
         if (inside(x, y, 425, 567, 855, 641)) { start_intro(1); return; }
         for (int n = 1; n <= MAX_LEVEL; n++) {
             int col = (n - 1) % 5, row = (n - 1) / 5;
@@ -1577,16 +1582,10 @@ static void draw_menu(void) {
     rect(0, 0, GAME_W - 1, GAME_H - 1, COL(174, 174, 174));
     rect(0, 508, GAME_W - 1, GAME_H - 1, COL(153, 153, 153));
     rect(0, 508, GAME_W - 1, 511, COL(123, 123, 123));
-    rect(83, 25, 389, 171, COL(0, 0, 0));
-    rect(86, 28, 386, 168, COL(189, 189, 189));
-    sprite_crop(SPR_MAP, 94, 36, 284, 94, 0, 0, 500, 500, 0);
-    rect(94, 130, 378, 160, COL(189, 189, 189));
-    draw_text_c(235, 137, 3, COL(17, 17, 17), "УРОВНИ ИГРОКОВ");
-    draw_button(475, 38, 785, 127, "УРОВНИ 1-10", 4);
+    draw_button_white(475, 38, 785, 127, "УРОВНИ 1-10", 4);
     rect(846, 34, 1244, 137, COL(0, 0, 0));
-    rect(849, 37, 1241, 134, COL(189, 189, 189));
-    sprite_draw(SPR_SUNFLOWER, 871, 45, 78, 78, 0);
-    draw_text_c(1093, 65, 5, COL(17, 17, 17), "САД ДЗЕН");
+    rect(849, 37, 1241, 134, COL(255, 255, 255));
+    draw_text_c(1045, 65, 5, COL(17, 17, 17), "САД ДЗЕН");
 
     draw_text_c(640, 177, 6, COL(17, 17, 17), "РАСТЕНИЯ ПРОТИВ ГУСЕЙ");
     draw_text_c(640, 231, 3, COL(68, 68, 68), "ИСТОРИЯ ХЛЕБУШКА");
@@ -1594,7 +1593,7 @@ static void draw_menu(void) {
     draw_menu_hero(SPR_MASK, 640, 491, 235, "ДИМА");
     draw_menu_hero(SPR_KIRILL, 1012, 491, 225, "КИРИЛЛ");
 
-    draw_button(98, 568, 392, 665, "КНИГА", 5);
+    draw_button_white(98, 568, 392, 665, "КНИГА", 5);
     draw_button_white(440, 548, 840, 674, "СТАРТ", 8);
     char status[75];
     snprintf(status, sizeof(status), "ПРОЙДЕНО: %d / 10   •   СТАРТ: УРОВЕНЬ %d",
@@ -1647,6 +1646,7 @@ static void draw_level_select(void) {
     draw_text_c(640, 166, 2, COL(68, 68, 68),
                 "ВОЛНА ЗАКОНЧИТСЯ, КОГДА ВСЕ ЕЁ ВРАГИ ПОБЕЖДЕНЫ");
     draw_button_white(425, 567, 855, 641, "УРОВЕНЬ 0: КАТ-СЦЕНА", 4);
+    draw_button_white(880, 567, 1240, 641, "КАТАЛОГ УРОВНЕЙ", 3);
     draw_text_c(640, 668, 2, COL(68, 68, 68),
                 "ПОВТОР КАТ-СЦЕНЫ НЕ СБРАСЫВАЕТ СОХРАНЕНИЕ");
 }

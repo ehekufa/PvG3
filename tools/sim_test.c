@@ -139,11 +139,17 @@ int main(void) {
     game_input_press(1130, 50);
     assert(game_phase() == GAME_MENU);
 
-    /* The map tile opens the published-player catalog; campaign selection is
-     * kept on its separate, labeled button. */
+    /* The main-menu player-level tile is gone; the published catalog remains
+     * available from the campaign selector and returns there after browsing. */
     game_input_press(235, 100);
+    assert(game_phase() == GAME_MENU);
+    game_input_press(630, 80);
+    assert(game_phase() == GAME_SELECT);
+    game_input_press(1050, 600);
     assert(game_phase() == GAME_CUSTOM_LEVELS);
     game_custom_level_exit();
+    assert(game_phase() == GAME_SELECT);
+    game_input_press(1130, 50);
     assert(game_phase() == GAME_MENU);
     game_input_press(630, 80);              /* campaign levels */
     assert(game_phase() == GAME_SELECT);

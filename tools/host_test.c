@@ -53,6 +53,12 @@ int main(void) {
     assert(game_phase() == GAME_MENU);
     /* A neutral gray background replaces the old menu's Queen robot. */
     assert(fb[365 * GAME_W + 1165] == 0xFFAEAEAEu);
+    assert(fb[50 * GAME_W + 100] == 0xFFAEAEAEu); /* player-level tile removed */
+    assert(fb[50 * GAME_W + 480] == 0xFFFFFFFFu); /* campaign is white */
+    assert(fb[70 * GAME_W + 900] == 0xFFFFFFFFu); /* no Zen Garden picture */
+    assert(fb[580 * GAME_W + 105] == 0xFFFFFFFFu); /* book is white */
+    assert(fb[560 * GAME_W + 450] == 0xFFFFFFFFu); /* start is white */
+    assert(fb[580 * GAME_W + 900] == 0xFFFFFFFFu); /* online is white */
     write_bmp("shots/menu.bmp", GAME_W, GAME_H, fb);
     game_input_press(1058, 615);            /* native room browser */
     on_net_pump_once();                      /* desktop fake: no rooms */

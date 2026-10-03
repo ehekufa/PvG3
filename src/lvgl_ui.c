@@ -31,7 +31,7 @@
 enum {
     U_MENU_PLAY = 1, U_MENU_LEVELS, U_MENU_GARDEN, U_MENU_BOOK, U_MENU_ONLINE,
     U_MENU_BACK, U_INTRO, U_MAP_LAWN, U_MAP_WATER, U_REFRESH,
-    U_CREATE, U_USER_LEVELS, U_SEARCH, U_SEARCH_CLOSE, U_SEARCH_ERASE, U_SEARCH_GO,
+    U_CREATE, U_CUSTOM_CATALOG, U_SEARCH, U_SEARCH_CLOSE, U_SEARCH_ERASE, U_SEARCH_GO,
     U_ROOMS_BACK, U_LOBBY_EXIT, U_PLANTS, U_ZOMBIES, U_MATCH_BOOK,
     U_MATCH_EXIT, U_MATCH_FINISH, U_MATCH_RETURN,
     U_GARDEN_BOOK, U_GARDEN_EXIT, U_GARDEN_ERASE,
@@ -136,8 +136,10 @@ static void button_palette(int action, lv_color_t *face, lv_color_t *text) {
         *face = BUTTON_BLACK;
         *text = BUTTON_LIGHT_TEXT;
         return;
-    case U_MENU_PLAY: case U_MENU_ONLINE: case U_INTRO:
+    case U_MENU_PLAY: case U_MENU_LEVELS: case U_MENU_GARDEN:
+    case U_MENU_BOOK: case U_MENU_ONLINE: case U_INTRO:
     case U_CREATE: case U_SEARCH_GO: case U_MATCH_FINISH:
+    case U_CUSTOM_CATALOG:
     case U_GARDEN_BOOK: case U_OFFLINE_MENU:
     case U_RESULT_NEXT: case U_RESULT_RETRY:
         *face = BUTTON_WHITE;
@@ -209,11 +211,12 @@ static void header(lv_obj_t *root, const char *title, const char *back,
 }
 
 static void menu_screen(lv_obj_t *root) {
-    header(root, "Растения против гусей 3", NULL, 0);
-    button(root, 411, 51, 292, 64, "Уровни игроков", 2,
-           U_USER_LEVELS);
-    button(root, 730, 51, 220, 64, "Кампания", 2, U_MENU_LEVELS);
-    button(root, 971, 51, 270, 64, "Сад Дзен", 2, U_MENU_GARDEN);
+    box(root, 0, 0, GAME_W, 148, 0, DARK, 0);
+    box(root, 0, 145, GAME_W, 4, 0, LIGHT_GRAY, 0);
+    label(root, 48, 48, 470, 60, "Растения против гусей 3", 2,
+          WHITE, LV_TEXT_ALIGN_LEFT);
+    button(root, 540, 51, 280, 64, "Кампания", 2, U_MENU_LEVELS);
+    button(root, 840, 51, 350, 64, "Сад Дзен", 2, U_MENU_GARDEN);
     /* The characters stand together on the lawn, not in three square frames. */
     box(root, 55, 176, 1170, 355, 34, C(E5E5E5), 0);
     art(root, PV_ART_BREAD, 250, 322, 228);
@@ -243,6 +246,8 @@ static void levels_screen(lv_obj_t *root) {
                   2, BUTTON_TEXT, LV_TEXT_ALIGN_LEFT);
     }
     button(root, 414, 590, 452, 67, "Уровень 0 · история", 2, U_INTRO);
+    button(root, 895, 590, 315, 67, "Каталог уровней", 2,
+           U_CUSTOM_CATALOG);
 }
 
 /* Offline navigation and HUD share the same real LVGL widgets as online. The
@@ -518,7 +523,7 @@ static void rooms_screen(lv_obj_t *root, const OnNetView *v) {
 }
 
 static void custom_levels_screen(lv_obj_t *root, const OnNetView *v) {
-    header(root, "Уровни игроков", "В меню", U_CUSTOM_BACK);
+    header(root, "Каталог уровней", "Назад", U_CUSTOM_BACK);
     box(root, 43, 165, 1195, 94, 20, PAPER, 1);
     label(root, 68, 179, 770, 34, "ПУБЛИЧНЫЙ КАТАЛОГ УРОВНЕЙ",
           1, MUTED, LV_TEXT_ALIGN_LEFT);
@@ -986,7 +991,7 @@ static void pressed(lv_event_t *ev) {
     case U_MENU_GARDEN: game_input_press(1040, 83);break;
     case U_MENU_BOOK: game_input_press(205, 615);break;
     case U_MENU_ONLINE: game_input_press(1058, 615);page = 0;break;
-    case U_USER_LEVELS: custom_level_page = 0;game_custom_levels_open();break;
+    case U_CUSTOM_CATALOG: custom_level_page = 0;game_custom_levels_open();break;
     case U_MENU_BACK: game_input_press(1150, 55);break;
     case U_INTRO: game_input_press(640, 605);break;
     case U_MAP_LAWN: chosen_map = 1;dirty = 1;break;

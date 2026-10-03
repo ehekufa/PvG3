@@ -245,7 +245,13 @@ static int run_lvgl_test(void) {
     assert(lvgl_ui_init());
     game_set_lvgl_ui(1);
     ui_snapshot("menu");
-    ui_tap(557, 82);assert(game_phase() == GAME_CUSTOM_LEVELS);
+    assert(ui_pixels[60 * GAME_W + 545] == 0xFFFFFFFFu); /* campaign */
+    assert(ui_pixels[60 * GAME_W + 848] == 0xFFFFFFFFu); /* garden */
+    assert(ui_pixels[580 * GAME_W + 100] == 0xFFFFFFFFu); /* book */
+    assert(ui_pixels[560 * GAME_W + 420] == 0xFFFFFFFFu); /* start */
+    assert(ui_pixels[580 * GAME_W + 905] == 0xFFFFFFFFu); /* online */
+    ui_tap(680, 82);assert(game_phase() == GAME_SELECT);
+    ui_tap(1040, 620);assert(game_phase() == GAME_CUSTOM_LEVELS);
     tick_pump(2);ui_snapshot("custom_levels");
     OnNetView catalog = view();
     assert(catalog.level_count == 1 && !strcmp(catalog.levels[0].id, "104") &&
@@ -262,6 +268,7 @@ static int run_lvgl_test(void) {
     assert(game_debug_custom_player_x() > custom_x + 50);
     ui_tap(1140, 55);assert(game_phase() == GAME_CUSTOM_LEVELS);
     ui_snapshot("custom_level_return");
+    ui_tap(1150, 76);assert(game_phase() == GAME_SELECT);
     ui_tap(1150, 76);assert(game_phase() == GAME_MENU);
     ui_snapshot("menu_after_custom");
     ui_tap(1090, 79);assert(game_phase() == GAME_GARDEN);
@@ -321,10 +328,10 @@ static int run_lvgl_test(void) {
     ui_tap(225, 525);ui_snapshot("book_robot");
     ui_tap(1150, 76);assert(game_phase() == GAME_GARDEN);
     ui_tap(1150, 44);assert(game_phase() == GAME_MENU);
-    assert(lvgl_ui_pointer(829, 78, 1));
+    assert(lvgl_ui_pointer(680, 78, 1));
     assert(lvgl_ui_cancel());ui_snapshot("cancel_menu_button");
     assert(game_phase() == GAME_MENU);
-    ui_quick_tap(829, 78);assert(game_phase() == GAME_SELECT);
+    ui_quick_tap(680, 78);assert(game_phase() == GAME_SELECT);
     ui_snapshot("levels");
     ui_tap(640, 620);assert(game_phase() == GAME_INTRO);
     ui_snapshot("intro_bread");
