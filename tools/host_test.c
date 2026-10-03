@@ -52,7 +52,7 @@ int main(void) {
     game_tick(0.016f, fb);
     assert(game_phase() == GAME_MENU);
     /* A neutral gray background replaces the old menu's Queen robot. */
-    assert(fb[365 * GAME_W + 1165] == 0xFFADB0ADu);
+    assert(fb[365 * GAME_W + 1165] == 0xFFAEAEAEu);
     write_bmp("shots/menu.bmp", GAME_W, GAME_H, fb);
     game_input_press(1058, 615);            /* native room browser */
     on_net_pump_once();                      /* desktop fake: no rooms */
@@ -91,9 +91,9 @@ int main(void) {
     game_input_press(320, 160 + 3 * 99 + 44); /* Jumper's page */
     game_tick(0, fb);
     assert(game_phase() == GAME_BOOK);
-    /* The index page is parchment; the selected plant's page is orange. */
-    assert(fb[350 * GAME_W + 125] == 0xFFC8E9F6u);
-    assert(fb[350 * GAME_W + 1155] == 0xFF4F8EDFu);
+    /* The book spread uses contrasting white and light-gray paper. */
+    assert(fb[350 * GAME_W + 125] == 0xFFFFFFFFu);
+    assert(fb[350 * GAME_W + 1155] == 0xFFE1E1E1u);
     write_bmp("shots/book.bmp", GAME_W, GAME_H, fb);
     game_input_press(320, 160 + 2 * 99 + 44); /* sunflower's page */
     game_tick(0, fb);
