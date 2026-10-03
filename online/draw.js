@@ -59,7 +59,7 @@ function cards(ctx, s, role, selected, pending) {
   label(ctx, role === 'plants' ? 'МОНЕТЫ РАСТЕНИЙ' : 'МОНЕТЫ ЗОМБИ', 14, 17, 20);
   image(ctx, 'coin-token.png', 8, 50, 46, 46);
   label(ctx, String(role === 'plants' ? s.plantCash : s.zombieCash),
-    62, 56, 45, '#fff3dc');
+    62, 56, 45, '#fff');
   const defs = role === 'plants' ? PLANTS : DUCKS;
   defs.forEach((d, i) => {
     const y = role === 'plants' ? 137 + i*107 : 169 + i*155;

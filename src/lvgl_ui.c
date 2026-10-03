@@ -378,8 +378,7 @@ static void play_screen(lv_obj_t *root) {
     game_offline_ui_snapshot(&state);
     box(root, 0, 0, 1280, 121, 0, DARK, 0);
     box(root, 0, 118, 1280, 3, 0, LIGHT_GRAY, 0);
-    lv_obj_t *rail = box(root, 0, 121, 246, 599, 0, C(2A2A2A), 0);
-    lv_obj_set_style_bg_opa(rail, 115, 0); /* author's wood stays visible */
+    box(root, 0, 121, 246, 599, 0, BUTTON_GRAY, 0);
     art(root, PV_ART_COIN, 40, 82, 40);
     char coins[25];snprintf(coins, sizeof coins, "%d", state.coins);
     label(root, 72, 53, 157, 58, coins, 3, WHITE, LV_TEXT_ALIGN_LEFT);
@@ -456,7 +455,7 @@ static void rooms_screen(lv_obj_t *root, const OnNetView *v) {
         label(root, 285, 497, 710, 52, title, 3, INK, LV_TEXT_ALIGN_CENTER);
         if (v->notice[0])
             label(root, 253, 548, 774, 38, v->notice, 1,
-                  C(A1513B), LV_TEXT_ALIGN_CENTER);
+                  MUTED, LV_TEXT_ALIGN_CENTER);
         button(root, 479, 587, 322, 66,
                v->notice[0] ? "Повторить поиск" : "+ Создать комнату", 2,
                v->notice[0] ? U_REFRESH : U_CREATE);
@@ -512,7 +511,7 @@ static void rooms_screen(lv_obj_t *root, const OnNetView *v) {
     }
     if (local_notice[0])
         label(root, 331, 558, 620, 33, local_notice, 1,
-              C(A1513B), LV_TEXT_ALIGN_CENTER);
+              MUTED, LV_TEXT_ALIGN_CENTER);
     lv_obj_t *join = button(root, 395, 599, 490, 64,
                             "Войти в комнату", 2, U_SEARCH_GO);
     if (len != 6) button_fill(join, BUTTON_GRAY);
@@ -528,7 +527,7 @@ static void custom_levels_screen(lv_obj_t *root, const OnNetView *v) {
           v->levels_notice[0] ? v->levels_notice :
           v->level_count ? "Выбери уровень, чтобы запустить его в C-игре." :
                            "Пока нет опубликованных уровней.",
-          2, v->levels_notice[0] ? C(A1513B) : INK, LV_TEXT_ALIGN_LEFT);
+          2, v->levels_notice[0] ? MUTED : INK, LV_TEXT_ALIGN_LEFT);
     button(root, 1015, 185, 193, 54, "↻ Обновить", 2,
            U_CUSTOM_REFRESH);
     memset(visible_level_ids, 0, sizeof visible_level_ids);

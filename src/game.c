@@ -1443,20 +1443,16 @@ static void draw_button_black(int x0, int y0, int x1, int y1,
                               const char *label, int size);
 
 static void draw_seed_bar(void) {
-    /* Mask the mowers and enemies at the edge: they belong to the lawn, not
-     * on top of the author's painted wooden packet rack. */
-    if (sprite_pixels[SPR_MAP])
-        sprite_crop(SPR_MAP, 0, 0, LAWN_X - 7, GAME_H, 0, 0, 246, 500, 0);
-    else rect(0, 0, LAWN_X - 8, GAME_H - 1, COL(139, 84, 39));
-    rect(LAWN_X - 7, 0, LAWN_X - 1, GAME_H - 1, COL(48, 85, 39));
-    /* Coins and seed packets live on the left of the lawn, as in the sketch;
-     * nothing in this HUD covers the first row of playable cells. */
-    rect_blend(0, 0, LAWN_X - 8, 130, COL(53, 35, 27), 165);
-    rect(12, 12, LAWN_X - 19, 131, COL(56, 38, 29));
-    rect(17, 17, LAWN_X - 24, 126, COL(120, 89, 56));
+    /* The sidebar and top strip are UI; keep the playable map untouched. */
+    rect(0, 0, GAME_W - 1, LAWN_Y - 1, COL(36, 36, 36));
+    rect(0, 118, GAME_W - 1, LAWN_Y - 1, COL(215, 215, 215));
+    rect(0, LAWN_Y + 1, LAWN_X - 8, GAME_H - 1, COL(224, 224, 224));
+    rect(LAWN_X - 7, LAWN_Y + 1, LAWN_X - 1, GAME_H - 1, COL(0, 0, 0));
+    rect(12, 12, LAWN_X - 19, 131, COL(0, 0, 0));
+    rect(17, 17, LAWN_X - 24, 126, COL(231, 231, 231));
     draw_coin_icon(60, 71, 26);
-    draw_text(101, 37, 2, COL(255, 226, 147), "МОНЕТЫ");
-    draw_int(101, 67, 5, COL(255, 252, 220), coin_balance);
+    draw_text(101, 37, 2, COL(17, 17, 17), "МОНЕТЫ");
+    draw_int(101, 67, 5, COL(17, 17, 17), coin_balance);
     for (int i = 0; i < PT_COUNT; i++) {
         int x0 = BATTLE_CARD_X, y0 = BATTLE_CARD_Y + i * BATTLE_CARD_STEP;
         int affordable = coin_balance >= PDEF[i].cost && cooldown[i] <= 0 &&
@@ -1478,16 +1474,12 @@ static void draw_seed_bar(void) {
         if (cooldown[i] > 0) {
             float frac = cooldown[i] / PDEF[i].recharge;
             rect_blend(x0, y0, x0 + BATTLE_CARD_W,
-                       y0 + (int)(BATTLE_CARD_H * frac), COL(20, 20, 28), 95);
+                       y0 + (int)(BATTLE_CARD_H * frac), COL(20, 20, 20), 95);
         }
     }
 
-    if (sprite_pixels[SPR_MAP])
-        sprite_crop(SPR_MAP, LAWN_X, 0, GAME_W - LAWN_X, LAWN_Y,
-                    0, 0, 242, 135, 0);
-    else rect(LAWN_X, 0, GAME_W - 1, LAWN_Y - 1, COL(98, 64, 39));
-    rect_blend(LAWN_X, 0, GAME_W - 1, LAWN_Y - 1, COL(29, 27, 31), 143);
-    rect(LAWN_X, LAWN_Y - 5, GAME_W - 1, LAWN_Y - 1, COL(77, 54, 32));
+    rect(LAWN_X, 0, GAME_W - 1, LAWN_Y - 1, COL(36, 36, 36));
+    rect(LAWN_X, LAWN_Y - 5, GAME_W - 1, LAWN_Y - 1, COL(0, 0, 0));
     /* Defeated enemies fill the wave meter; then the boss meter shows HP. */
     int defeated = total_zombies - game_wave_remaining();
     if (defeated < 0) defeated = 0;
@@ -1504,14 +1496,13 @@ static void draw_seed_bar(void) {
                 break;
             }
     }
-    draw_text(282, 20, 3, COL(255, 232, 181), boss_phase ? "РОБОТ" : "ВОЛНА");
-    draw_text(462, 24, 2, COL(255, 247, 207), progress);
-    rect(281, 65, 585, 89, COL(33, 28, 29));
-    if (bar > 0) rect(283, 67, 283 + bar, 87,
-                      boss_phase ? COL(220, 74, 75) : COL(238, 149, 61));
-    draw_text(638, 20, 3, COL(255, 238, 195), "УРОВЕНЬ");
-    draw_int(829, 20, 3, COL(255, 238, 164), level);
-    draw_text(641, 69, 2, COL(250, 223, 172), LEVEL_NAMES[level - 1]);
+    draw_text(282, 20, 3, COL(255, 255, 255), boss_phase ? "РОБОТ" : "ВОЛНА");
+    draw_text(462, 24, 2, COL(230, 230, 230), progress);
+    rect(281, 65, 585, 89, COL(0, 0, 0));
+    if (bar > 0) rect(283, 67, 283 + bar, 87, COL(189, 189, 189));
+    draw_text(638, 20, 3, COL(255, 255, 255), "УРОВЕНЬ");
+    draw_int(829, 20, 3, COL(255, 255, 255), level);
+    draw_text(641, 69, 2, COL(215, 215, 215), LEVEL_NAMES[level - 1]);
     draw_button(925, 28, 1080, 88, "КНИГА", 3);
     draw_button_white(1100, 28, 1260, 88, "МЕНЮ", 3);
 }
@@ -1551,7 +1542,7 @@ static void draw_button_black(int x0, int y0, int x1, int y1,
 static void draw_dima(int cx, int feet_y, int size) {
     /* Show the author's masked Dima as-is, without an invented body. */
     sprite_draw(SPR_MASK, cx - size / 2, feet_y - size, size, size, 0);
-    draw_text_c(cx, feet_y + 8, 3, COL(255, 239, 197), "ДИМА");
+    draw_text_c(cx, feet_y + 8, 3, COL(255, 255, 255), "ДИМА");
 }
 
 static void draw_khlebushek(int cx, int feet_y, int size, int crying) {
@@ -1564,28 +1555,28 @@ static void draw_khlebushek(int cx, int feet_y, int size, int crying) {
         ellipse(eye_x, eye_y + 11 + drop, 4, 10, COL(105, 205, 255));
         ellipse(eye_x - size / 20, eye_y + 19 + drop, 3, 8, COL(146, 221, 255));
     }
-    draw_text_c(cx, feet_y + 8, 3, COL(255, 239, 197), "ХЛЕБУШЕК");
+    draw_text_c(cx, feet_y + 8, 3, COL(255, 255, 255), "ХЛЕБУШЕК");
 }
 
 static void draw_kirill(int cx, int feet_y, int size) {
     /* The author's updated Kirill drawing, assets/art/kirill.png. */
     sprite_draw(SPR_KIRILL, cx - size / 2, feet_y - size, size, size, 0);
-    draw_text_c(cx, feet_y + 8, 3, COL(255, 239, 197), "КИРИЛЛ");
+    draw_text_c(cx, feet_y + 8, 3, COL(255, 255, 255), "КИРИЛЛ");
 }
 
 static void draw_menu_hero(int image, int cx, int feet_y, int size,
                            const char *name) {
-    ellipse(cx, feet_y - 2, size / 2 - 20, 13, COL(111, 111, 107));
+    ellipse(cx, feet_y - 2, size / 2 - 20, 13, COL(111, 111, 111));
     sprite_draw(image, cx - size / 2, feet_y - size, size, size, 0);
-    draw_text_c(cx, feet_y + 8, 3, COL(45, 46, 44), name);
+    draw_text_c(cx, feet_y + 8, 3, COL(45, 45, 45), name);
 }
 
 static void draw_menu(void) {
     /* Match the gray title sketch: just the three author's heroes. The
      * Queen's robot is revealed in the FINAL level, not on this screen. */
-    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(173, 176, 173));
-    rect(0, 508, GAME_W - 1, GAME_H - 1, COL(151, 155, 150));
-    rect(0, 508, GAME_W - 1, 511, COL(123, 128, 121));
+    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(174, 174, 174));
+    rect(0, 508, GAME_W - 1, GAME_H - 1, COL(153, 153, 153));
+    rect(0, 508, GAME_W - 1, 511, COL(123, 123, 123));
     rect(83, 25, 389, 171, COL(0, 0, 0));
     rect(86, 28, 386, 168, COL(189, 189, 189));
     sprite_crop(SPR_MAP, 94, 36, 284, 94, 0, 0, 500, 500, 0);
@@ -1597,8 +1588,8 @@ static void draw_menu(void) {
     sprite_draw(SPR_SUNFLOWER, 871, 45, 78, 78, 0);
     draw_text_c(1093, 65, 5, COL(17, 17, 17), "САД ДЗЕН");
 
-    draw_text_c(640, 177, 6, COL(52, 53, 49), "РАСТЕНИЯ ПРОТИВ ГУСЕЙ");
-    draw_text_c(640, 231, 3, COL(68, 69, 64), "ИСТОРИЯ ХЛЕБУШКА");
+    draw_text_c(640, 177, 6, COL(17, 17, 17), "РАСТЕНИЯ ПРОТИВ ГУСЕЙ");
+    draw_text_c(640, 231, 3, COL(68, 68, 68), "ИСТОРИЯ ХЛЕБУШКА");
     draw_menu_hero(SPR_KHLEBUSHEK, 256, 491, 212, "ХЛЕБУШЕК");
     draw_menu_hero(SPR_MASK, 640, 491, 235, "ДИМА");
     draw_menu_hero(SPR_KIRILL, 1012, 491, 225, "КИРИЛЛ");
@@ -1608,25 +1599,25 @@ static void draw_menu(void) {
     char status[75];
     snprintf(status, sizeof(status), "ПРОЙДЕНО: %d / 10   •   СТАРТ: УРОВЕНЬ %d",
              game_completed_level(), resume_level);
-    draw_text_c(1058, 538, 2, COL(46, 48, 43), status);
+    draw_text_c(1058, 538, 2, COL(68, 68, 68), status);
     draw_button_white(893, 569, 1223, 661, "ОНЛАЙН", 6);
     rect(926, 609, 946, 614, COL(17, 17, 17));
     rect(933, 602, 939, 621, COL(17, 17, 17));
-    draw_text_c(640, 689, 2, COL(44, 46, 42),
+    draw_text_c(640, 689, 2, COL(68, 68, 68),
                 "АВТОСОХРАНЕНИЕ. РАСТЕНИЯ СОЗДАЛ КИРИЛЛ.");
 }
 
 /* Level 0 replays the story; any wave can be replayed. Progress and the
  * resume level use thicker neutral-black outlines rather than color fills. */
 static void draw_level_select(void) {
-    draw_background();
-    rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(20, 20, 20), 200);
-    rect(0, 0, GAME_W - 1, 101, COL(210, 210, 210));
+    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(226, 226, 226));
+    rect(0, 0, GAME_W - 1, 101, COL(190, 190, 190));
+    rect(0, 99, GAME_W - 1, 102, COL(0, 0, 0));
     draw_text_c(630, 32, 6, COL(17, 17, 17), "ВЫБОР УРОВНЯ");
     draw_button_black(1045, 18, 1265, 85, "НАЗАД", 4);
     char status[64];
     snprintf(status, sizeof(status), "ПРОЙДЕНО: %d / 10", game_completed_level());
-    draw_text_c(640, 121, 3, COL(248, 236, 204), status);
+    draw_text_c(640, 121, 3, COL(68, 68, 68), status);
     for (int n = 1; n <= MAX_LEVEL; n++) {
         int col = (n - 1) % 5, row = (n - 1) / 5;
         int x = 100 + col * 220, y = 210 + row * 190;
@@ -1636,16 +1627,16 @@ static void draw_level_select(void) {
         rect(x, y, x + 180, y + 130, COL(0, 0, 0));
         rect(x + inset, y + inset, x + 180 - inset, y + 130 - inset,
              active ? COL(189, 189, 189) : COL(255, 255, 255));
-        if (n == WATER_LEVEL && sprite_pixels[SPR_WATER_MAP]) {
+        int water_art = n == WATER_LEVEL && sprite_pixels[SPR_WATER_MAP];
+        if (water_art) {
             sprite_crop(SPR_WATER_MAP, x + inset, y + inset,
                         180 - 2 * inset, 130 - 2 * inset,
                         0, 0, 500, 500, 0);
             rect_blend(x + inset, y + inset, x + 180 - inset,
-                       y + 130 - inset, COL(12, 31, 35), 177);
+                       y + 130 - inset, COL(0, 0, 0), 145);
         }
         char label[32];
-        uint32_t text_color = n == WATER_LEVEL && sprite_pixels[SPR_WATER_MAP] ?
-                              COL(255, 255, 255) : COL(17, 17, 17);
+        uint32_t text_color = water_art ? COL(255, 255, 255) : COL(17, 17, 17);
         snprintf(label, sizeof(label), "УРОВЕНЬ %d", n);
         draw_text_c(x + 90, y + 12, 3, text_color, label);
         draw_text_c(x + 90, y + 56, 2, text_color, LEVEL_NAMES[n - 1]);
@@ -1653,10 +1644,10 @@ static void draw_level_select(void) {
         else snprintf(label, sizeof(label), "%d ВРАГОВ", 5 + n * 3);
         draw_text_c(x + 90, y + 97, 2, text_color, label);
     }
-    draw_text_c(640, 166, 2, COL(255, 231, 191),
+    draw_text_c(640, 166, 2, COL(68, 68, 68),
                 "ВОЛНА ЗАКОНЧИТСЯ, КОГДА ВСЕ ЕЁ ВРАГИ ПОБЕЖДЕНЫ");
     draw_button_white(425, 567, 855, 641, "УРОВЕНЬ 0: КАТ-СЦЕНА", 4);
-    draw_text_c(640, 668, 2, COL(242, 231, 203),
+    draw_text_c(640, 668, 2, COL(68, 68, 68),
                 "ПОВТОР КАТ-СЦЕНЫ НЕ СБРАСЫВАЕТ СОХРАНЕНИЕ");
 }
 
@@ -1688,7 +1679,7 @@ static void draw_garden(void) {
         sprite_crop(SPR_MAP, LAWN_X, 0, GAME_W - LAWN_X, LAWN_Y,
                     0, 0, 242, 135, 0);
     else rect(LAWN_X, 0, GAME_W - 1, LAWN_Y - 1, COL(96, 64, 40));
-    rect_blend(0, 0, GAME_W - 1, LAWN_Y - 1, COL(31, 25, 30), 148);
+    rect_blend(0, 0, GAME_W - 1, LAWN_Y - 1, COL(20, 20, 20), 148);
     rect(LAWN_X, LAWN_Y - 5, GAME_W - 1, LAWN_Y - 1, COL(70, 46, 28));
     rect(0, 0, GAME_W - 1, 124, COL(210, 210, 210));
     draw_text(28, 13, 4, COL(17, 17, 17), "САД ДЗЕН");
@@ -1729,7 +1720,7 @@ static void draw_garden(void) {
     draw_garden_button(915, 73, 1265, 116, "УБРАТЬ", 2,
                        garden_selected == PT_COUNT, BUTTON_TONE_GRAY);
     rect_blend(95, 679, 1185, 717, COL(20, 20, 20), 220);
-    draw_text_c(640, 691, 2, COL(255, 244, 205),
+    draw_text_c(640, 691, 2, COL(255, 255, 255),
                 "СВОБОДНО СТАВЬ РАСТЕНИЯ И ГУСЕЙ. ВСЁ БЕСПЛАТНО.");
 }
 
@@ -1830,7 +1821,7 @@ static void draw_intro(void) {
     int size = 5;
     while (size > 2 && text_w(size, line) > 990) size--;
     draw_text_c(640, 602, size, COL(17, 17, 17), line);
-    draw_text_c(1085, 690, 2, COL(255, 242, 196), "КОСНИСЬ: ДАЛЬШЕ");
+    draw_text_c(1085, 690, 2, COL(230, 230, 230), "КОСНИСЬ: ДАЛЬШЕ");
 }
 
 static void draw_play_scene(void) {
@@ -1866,16 +1857,16 @@ static void draw_play_scene(void) {
         int bw = text_w(s, banner_text) + 44;
         rect_blend(640 - bw / 2, 156, 640 + bw / 2, 172 + 7 * s,
                    COL(20, 20, 20), 205);
-        draw_text_c(640, 165, s, COL(255, 240, 180), banner_text);
+        draw_text_c(640, 165, s, COL(255, 255, 255), banner_text);
     }
     for (int i = 0; i < ZMAX; i++)
         if (zomb[i].active && zomb[i].type == EN_ROBOT) {
             float bf = zomb[i].hp / zomb[i].maxhp;
             if (bf < 0) bf = 0;
             if (bf > 1) bf = 1;
-            rect(395, 684, 885, 717, COL(22, 22, 32));
-            rect(401, 690, 401 + (int)(478 * bf), 711, COL(225, 60, 75));
-            draw_text_c(640, 697, 2, COL(255, 236, 165), "КОРОЛЕВА В РОБОТЕ");
+            rect(395, 684, 885, 717, COL(0, 0, 0));
+            rect(401, 690, 401 + (int)(478 * bf), 711, COL(189, 189, 189));
+            draw_text_c(640, 697, 2, COL(255, 255, 255), "КОРОЛЕВА В РОБОТЕ");
             break;
         }
 }
@@ -1929,22 +1920,22 @@ static void draw_online_rooms(void) {
     draw_text_c(1133, 171, 2, COL(17, 17, 17), "СОЗДАТЬ");
     rect(45, 239, 1234, 711, COL(38, 38, 38));
     rect(52, 245, 1227, 704, COL(235, 235, 235));
-    draw_text(70, 260, 4, COL(63, 64, 50), "КОМНАТЫ");
+    draw_text(70, 260, 4, COL(17, 17, 17), "КОМНАТЫ");
     draw_button(1019, 248, 1225, 308, "ОБНОВИТЬ", 2);
     int indexes[ON_ROOM_LIST_CAP], count = online_filtered(indexes);
     int page = online_page;
     if (page * 8 >= count) page = 0;
-    if (online_view.busy) draw_text(350, 273, 2, COL(116, 76, 36), "ПОДКЛЮЧАЕМСЯ...");
+    if (online_view.busy) draw_text(350, 273, 2, COL(68, 68, 68), "ПОДКЛЮЧАЕМСЯ...");
     else if (!online_view.connected && !online_view.notice[0])
-        draw_text(350, 273, 2, COL(116, 76, 36), "ЗАГРУЖАЕМ КОМНАТЫ...");
+        draw_text(350, 273, 2, COL(68, 68, 68), "ЗАГРУЖАЕМ КОМНАТЫ...");
     else if (online_view.notice[0]) {
         int size = text_w(2, online_view.notice) < 730 ? 2 : 1;
-        draw_text(362, 276, size, COL(160, 62, 43), online_view.notice);
+        draw_text(362, 276, size, COL(68, 68, 68), online_view.notice);
     } else {
         char label[50];snprintf(label, sizeof label, "НАЙДЕНО: %d", count);
-        draw_text(366, 275, 2, COL(102, 89, 68), label);
+        draw_text(366, 275, 2, COL(68, 68, 68), label);
     }
-    if (!count) draw_text_c(640, 459, 4, COL(121, 106, 82),
+    if (!count) draw_text_c(640, 459, 4, COL(68, 68, 68),
                            "ПОКА НЕТ СВОБОДНЫХ КОМНАТ");
     for (int i = 0; i < 8; i++) {
         int pos = page * 8 + i;
@@ -1964,19 +1955,19 @@ static void draw_online_rooms(void) {
         draw_button(873, 654, 1220, 704, "ДАЛЬШЕ", 2);
         char page_text[48];
         snprintf(page_text, sizeof page_text, "%d / %d", page + 1, (count + 7) / 8);
-        draw_text_c(640, 670, 2, COL(71, 61, 43), page_text);
-    } else draw_text_c(640, 674, 2, COL(87, 76, 58),
+        draw_text_c(640, 670, 2, COL(68, 68, 68), page_text);
+    } else draw_text_c(640, 674, 2, COL(68, 68, 68),
                        "КОСНИСЬ КОМНАТЫ ИЛИ СОЗДАЙ СВОЮ КНОПКОЙ +");
     if (online_search) {
         rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(20, 20, 20), 193);
         rect(222, 92, 1058, 667, COL(32, 32, 32));
         rect(229, 99, 1051, 660, COL(245, 245, 245));
-        draw_text_c(640, 116, 5, COL(69, 58, 48), "ПОИСК КОМНАТЫ");
+        draw_text_c(640, 116, 5, COL(17, 17, 17), "ПОИСК КОМНАТЫ");
         draw_button_black(902, 109, 1009, 159, "X", 3);
         rect(301, 171, 837, 237, COL(60, 60, 60));
         rect(309, 179, 829, 229, COL(255, 255, 255));
-        if (online_code[0]) draw_text_c(569, 184, 4, COL(64, 56, 47), online_code);
-        else draw_text_c(569, 185, 3, COL(131, 122, 105), "КОД ИЗ 6 СИМВОЛОВ");
+        if (online_code[0]) draw_text_c(569, 184, 4, COL(17, 17, 17), online_code);
+        else draw_text_c(569, 185, 3, COL(102, 102, 102), "КОД ИЗ 6 СИМВОЛОВ");
         draw_button(847, 171, 993, 236, "СТЕРЕТЬ", 2);
         const char *keys = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
         for (int i = 0; i < 32; i++) {
@@ -1985,9 +1976,9 @@ static void draw_online_rooms(void) {
             draw_button_white(kx, ky, kx + 68, ky + 58, letter, 3);
         }
         char matches[80];snprintf(matches, sizeof matches, "ПОДХОДЯЩИХ КОМНАТ: %d", count);
-        draw_text_c(640, 542, 2, COL(84, 77, 59), matches);
+        draw_text_c(640, 542, 2, COL(68, 68, 68), matches);
         draw_button_white(395, 568, 880, 644, "ВОЙТИ ПО КОДУ", 4);
-        if (online_hint_time > 0) draw_text_c(640, 654, 2, COL(169, 52, 48), online_hint);
+        if (online_hint_time > 0) draw_text_c(640, 654, 2, COL(68, 68, 68), online_hint);
     }
 }
 
@@ -2026,8 +2017,8 @@ static void draw_online_lobby(void) {
     else if (online_view.slot == ON_SLOT_GUEST && !online_view.has_state)
         draw_text_c(640, 611, 3, COL(255, 255, 255), "ХОЗЯИН ЗАПУСКАЕТ БОЙ...");
     if (online_view.notice[0])
-        draw_text_c(640, 665, 2, COL(255, 171, 156), online_view.notice);
-    else draw_text_c(640, 665, 2, COL(226, 228, 192),
+        draw_text_c(640, 665, 2, COL(230, 230, 230), online_view.notice);
+    else draw_text_c(640, 665, 2, COL(215, 215, 215),
                      "ХОЗЯИН И ГОСТЬ МОГУТ ИГРАТЬ ЗА ЛЮБУЮ СТОРОНУ");
 }
 
@@ -2095,14 +2086,14 @@ static void draw_online_match(void) {
     }
     if (!plants) {
         draw_button_white(15, 615, 232, 702, "ЗАКОНЧИТЬ", 2);
-        draw_text(17, 523, 2, COL(255, 235, 176), "ВЫБЕРИ УТКУ И РЯД");
+        draw_text(17, 523, 2, COL(255, 255, 255), "ВЫБЕРИ УТКУ И РЯД");
     }
     rect_blend(250, 681, 1279, 719, COL(20, 20, 20), 218);
-    if (online_hint_time > 0) draw_text_c(760, 690, 2, COL(255, 188, 130), online_hint);
-    else if (online_view.notice[0]) draw_text_c(760, 690, 2, COL(255, 159, 131), online_view.notice);
-    else if (online_view.pending) draw_text_c(760, 690, 2, COL(255, 234, 179),
+    if (online_hint_time > 0) draw_text_c(760, 690, 2, COL(230, 230, 230), online_hint);
+    else if (online_view.notice[0]) draw_text_c(760, 690, 2, COL(230, 230, 230), online_view.notice);
+    else if (online_view.pending) draw_text_c(760, 690, 2, COL(230, 230, 230),
                                               "ОЖИДАЕМ ПОДТВЕРЖДЕНИЯ ХОДА...");
-    else if (!online_view.guest_id[0]) draw_text_c(760, 690, 2, COL(255, 234, 179),
+    else if (!online_view.guest_id[0]) draw_text_c(760, 690, 2, COL(230, 230, 230),
                                                    "СОПЕРНИК ВЫШЕЛ. БОЙ ПРИОСТАНОВЛЕН.");
     if (s->winner) {
         rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(20, 20, 20), 198);
@@ -2347,20 +2338,23 @@ static void custom_platformer_draw(void) {
         int px = (int)lrintf(custom_player_x), py = (int)lrintf(custom_player_y);
         sprite_draw(PV_ART_BREAD, px, py, (int)custom_player_w, (int)custom_player_h, 0);
     }
-    draw_text(24, 19, 3, COL(42, 73, 55), custom_level.title);
+    rect(0, 0, GAME_W - 1, 102, COL(190, 190, 190));
+    rect(0, 100, GAME_W - 1, 102, COL(0, 0, 0));
+    draw_text(24, 19, 3, COL(17, 17, 17), custom_level.title);
     char label_text[48];
     snprintf(label_text, sizeof label_text, "ID %s   МОНЕТЫ %d", custom_level.id, custom_level_coins);
-    draw_text(26, 64, 2, COL(42, 73, 55), label_text);
+    draw_text(26, 64, 2, COL(68, 68, 68), label_text);
     if (custom_level_won) {
-        rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(17, 34, 27), 170);
-        rect(358, 264, 922, 447, COL(250, 246, 224));
-        draw_text_c(640, 304, 5, COL(48, 82, 59), "УРОВЕНЬ ПРОЙДЕН!");
-        draw_text_c(640, 373, 2, COL(98, 119, 93), "НАЖМИ «К УРОВНЯМ», ЧТОБЫ ВЕРНУТЬСЯ");
+        rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(20, 20, 20), 170);
+        rect(358, 264, 922, 447, COL(0, 0, 0));
+        rect(365, 271, 915, 440, COL(245, 245, 245));
+        draw_text_c(640, 304, 5, COL(17, 17, 17), "УРОВЕНЬ ПРОЙДЕН!");
+        draw_text_c(640, 373, 2, COL(68, 68, 68), "НАЖМИ «К УРОВНЯМ», ЧТОБЫ ВЕРНУТЬСЯ");
     }
 }
 
 static void render(void) {
-    if (phase == PH_CUSTOM_LEVELS) {rect(0, 0, GAME_W - 1, GAME_H - 1, COL(239, 242, 227));return;}
+    if (phase == PH_CUSTOM_LEVELS) {rect(0, 0, GAME_W - 1, GAME_H - 1, COL(226, 226, 226));return;}
     if (phase == PH_CUSTOM_PLAY) {custom_platformer_draw();return;}
     if (phase == PH_ONLINE_ROOMS) {draw_online_rooms();return;}
     if (phase == PH_ONLINE_LOBBY) {draw_online_lobby();return;}
