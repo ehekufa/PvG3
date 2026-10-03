@@ -15,3 +15,8 @@ staging/
 build/
 shots/
 node_modules/
+# Never commit Android signing material.
+*.jks
+*.keystore
+*.p12
+*.pfx

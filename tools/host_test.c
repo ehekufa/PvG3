@@ -52,7 +52,13 @@ int main(void) {
     game_tick(0.016f, fb);
     assert(game_phase() == GAME_MENU);
     /* A neutral gray background replaces the old menu's Queen robot. */
-    assert(fb[365 * GAME_W + 1165] == 0xFFADB0ADu);
+    assert(fb[365 * GAME_W + 1165] == 0xFFAEAEAEu);
+    assert(fb[50 * GAME_W + 100] == 0xFFFFFFFFu); /* player-level tile restored */
+    assert(fb[50 * GAME_W + 480] == 0xFFFFFFFFu); /* campaign is white */
+    assert(fb[70 * GAME_W + 900] == 0xFFFFFFFFu); /* no Zen Garden picture */
+    assert(fb[580 * GAME_W + 105] == 0xFFFFFFFFu); /* book is white */
+    assert(fb[560 * GAME_W + 450] == 0xFFFFFFFFu); /* start is white */
+    assert(fb[580 * GAME_W + 900] == 0xFFFFFFFFu); /* online is white */
     write_bmp("shots/menu.bmp", GAME_W, GAME_H, fb);
     game_input_press(1058, 615);            /* native room browser */
     on_net_pump_once();                      /* desktop fake: no rooms */
@@ -64,7 +70,7 @@ int main(void) {
     write_bmp("shots/online_search.bmp", GAME_W, GAME_H, fb);
     game_input_press(950, 133);
     game_input_press(1140, 55);             /* back to offline menu */
-    game_input_press(235, 100);             /* УРОВНИ */
+    game_input_press(630, 80);              /* кампанийные уровни */
     game_tick(0, fb);
     write_bmp("shots/select.bmp", GAME_W, GAME_H, fb);
     game_input_press(640, 600);             /* level 0: replayable story */
@@ -91,9 +97,9 @@ int main(void) {
     game_input_press(320, 160 + 3 * 99 + 44); /* Jumper's page */
     game_tick(0, fb);
     assert(game_phase() == GAME_BOOK);
-    /* The index page is parchment; the selected plant's page is orange. */
-    assert(fb[350 * GAME_W + 125] == 0xFFC8E9F6u);
-    assert(fb[350 * GAME_W + 1155] == 0xFF4F8EDFu);
+    /* The book spread uses contrasting white and light-gray paper. */
+    assert(fb[350 * GAME_W + 125] == 0xFFFFFFFFu);
+    assert(fb[350 * GAME_W + 1155] == 0xFFE1E1E1u);
     write_bmp("shots/book.bmp", GAME_W, GAME_H, fb);
     game_input_press(320, 160 + 2 * 99 + 44); /* sunflower's page */
     game_tick(0, fb);
@@ -105,9 +111,9 @@ int main(void) {
     game_input_press(320, 160 + 1 * 99 + 44); /* cone duck */
     game_tick(0, fb);
     write_bmp("shots/book_cone.bmp", GAME_W, GAME_H, fb);
-    game_input_press(320, 160 + 2 * 99 + 44); /* helmet duck */
+    game_input_press(320, 160 + 2 * 99 + 44); /* bucket duck */
     game_tick(0, fb);
-    write_bmp("shots/book_helmet.bmp", GAME_W, GAME_H, fb);
+    write_bmp("shots/book_bucket.bmp", GAME_W, GAME_H, fb);
     game_input_press(250, 141);             /* back to the plant tab */
     game_input_press(1130, 50);             /* garden */
     game_input_press(1160, 60);             /* menu */
@@ -124,6 +130,7 @@ int main(void) {
     game_input_press(640, 600);             /* first level */
     game_tick(0, fb);
     assert(game_phase() == GAME_PLAY);
+    assert(fb[35 * GAME_W + 930] == 0xFFFFFFFFu); /* shop's book button is white */
     /* The first playable row starts immediately below the top HUD. */
     assert(fb[125 * GAME_W + 960] != fb[90 * GAME_W + 960]);
     write_bmp("shots/level1.bmp", GAME_W, GAME_H, fb);
@@ -140,7 +147,7 @@ int main(void) {
     write_bmp("shots/armored_ducks.bmp", GAME_W, GAME_H, fb);
 
     game_init();
-    game_input_press(235, 100);            /* level selector */
+    game_input_press(630, 80);             /* campaign level selector */
     game_input_press(1070, 270);           /* level 5: author's water map */
     assert(game_phase() == GAME_PLAY && game_level() == 5);
     game_tick(0, fb);

@@ -2,6 +2,7 @@
 #define PVG3_ONLINE_PROTOCOL_H
 
 #include "online_rules.h"
+#include "online_level.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -43,5 +44,10 @@ int on_protocol_match(const char *json, OnMatch *out);
 size_t on_protocol_match_json(const OnMatch *s, char *out, size_t cap);
 size_t on_protocol_command_json(const OnCommand *c, const char *player_id,
                                 char *out, size_t cap);
+/* Serialize a bounded PVG3-PUBLISHED-LEVEL record for native workshop upload. */
+size_t on_protocol_published_level_json(const OnPublishedLevel *level,
+                                        char *out, size_t cap);
+size_t on_protocol_level_summary_json(const OnPublishedLevel *level,
+                                      char *out, size_t cap, int64_t updated_at);
 
 #endif

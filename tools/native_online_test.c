@@ -91,6 +91,47 @@ static void rooms_and_commands(void) {
     assert(!strcmp(items[1].id, "ZZZZZZ"));
     assert(on_protocol_rooms("null", items, ON_ROOM_LIST_CAP, 1780000000100LL) == 0);
 }
+static void published_level_writer(void) {
+    OnPublishedLevel level = {0}, decoded = {0};
+    snprintf(level.id, sizeof level.id, "%s", "23817");
+    snprintf(level.title, sizeof level.title, "%s", "Проверка \"уровня\"");
+    snprintf(level.description, sizeof level.description, "%s", "Маршрут и триггер.");
+    level.width = 16;level.height = 10;level.object_count = 4;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+        .x=0,.y=8,.w=16,.h=2,.color=0x65a845u,.visible=1};
+    snprintf(level.objects[0].name, sizeof level.objects[0].name, "%s", "Платформа");
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
+        .x=1,.y=7,.w=.65f,.h=.85f,.color=0x5ab7e8u,.visible=1};
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.color=0x69d16cu,.visible=1};
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_TRIGGER,
+        .x=4,.y=6,.w=1,.h=1,.color=0xf27652u,.visible=1,
+        .trigger_event=ON_TRIGGER_MANUAL,.trigger_action=ON_TRIGGER_RECOLOR,
+        .target_id=3,.trigger_value=0,.trigger_color=0xffc54eu};
+    char body[8192], index[1024];
+    size_t size = on_protocol_published_level_json(&level, body, sizeof body);
+    assert(size && strstr(body, "PVG3-PUBLISHED-LEVEL") &&
+           strstr(body, "\\\"уровня\\\"") &&
+           on_protocol_published_level(body, "23817", &decoded));
+    assert(!strcmp(decoded.title, level.title) && decoded.object_count == 4);
+    assert(decoded.objects[3].trigger_action == ON_TRIGGER_RECOLOR &&
+           decoded.objects[3].target_id == 3 &&
+           decoded.objects[3].trigger_color == 0xffc54eu);
+    assert(on_protocol_level_summary_json(&level, index, sizeof index, 1234));
+    assert(strstr(index, "\"updatedAt\":1234") && strstr(index, "23817"));
+    level.objects[2].id = level.objects[1].id;
+    assert(!on_protocol_published_level_json(&level, body, sizeof body));
+    level.objects[2].id = 3;
+    level.objects[1].type = ON_LEVEL_BLOCK;
+    assert(!on_protocol_published_level_json(&level, body, sizeof body));
+    level.objects[1].type = ON_LEVEL_PLAYER;
+    memset(level.title, 'x', 81);level.title[81] = 0;
+    assert(!on_protocol_published_level_json(&level, body, sizeof body));
+    level.title[80] = 0;
+    assert(on_protocol_published_level_json(&level, body, sizeof body));
+    level.title[0] = (char)0xff;level.title[1] = 0;
+    assert(!on_protocol_published_level_json(&level, body, sizeof body));
+}
 static void web_fixture(const char *path) {
     FILE *file = fopen(path, "rb");assert(file);
     char wire[ON_STATE_JSON_CAP];
@@ -106,6 +147,7 @@ static void web_fixture(const char *path) {
 int main(int argc, char **argv) {
     match_codec();
     rooms_and_commands();
+    published_level_writer();
     if (argc == 2) web_fixture(argv[1]);
     puts("Native online match, JSON protocol and optional browser fixture passed");
     return 0;

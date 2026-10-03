@@ -18,7 +18,8 @@
 
 /* Web-compatible plant IDs 0..4; duck IDs 0, 2, 3. */
 enum { ON_PEA_PLANT, ON_WALL, ON_SUNFLOWER, ON_JUMPER, ON_LILY, ON_PLANT_TYPES };
-enum { ON_DUCK = 0, ON_CONE = 2, ON_HELMET = 3 };
+/* The value 3 stays wire/save compatible; ON_HELMET is a legacy alias. */
+enum { ON_DUCK = 0, ON_CONE = 2, ON_BUCKET = 3, ON_HELMET = ON_BUCKET };
 enum { ON_NO_ROLE, ON_ROLE_PLANTS, ON_ROLE_ZOMBIES };
 enum { ON_NO_COMMAND, ON_CMD_PLANT, ON_CMD_COIN, ON_CMD_SPAWN, ON_CMD_FINISH };
 enum { ON_NO_WINNER, ON_WIN_PLANTS, ON_WIN_ZOMBIES };

@@ -1,10 +1,17 @@
 /* Firebase Realtime Database REST adapter. No SDK, password, API key, or
- * privileged service account is embedded in the website or the APK. The
- * database must permit the relevant /rooms reads/writes for this demo. */
+ * privileged service account is embedded in the website or the APK. Demo
+ * rules must permit the relevant /rooms and public-level catalog operations. */
+import {isPublishedRecord, publishedRecord, validateDraft} from './workshop.js';
+
 export const DATABASE = 'https://pvg3-ae824-default-rtdb.firebaseio.com';
 const ROOM_PATH = 'rooms';
 const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const validId = id => typeof id === 'string' && /^[A-Z2-9]{6}$/.test(id);
+export const validLevelId = id => typeof id === 'string' && /^[1-9][0-9]{0,5}$/.test(id);
+
+class FirebaseError extends Error {
+  constructor(status, message) {super(message);this.status = status;}
+}
 
 async function request(path, method = 'GET', body, ifMatch = '') {
   const controller = new AbortController();
@@ -20,9 +27,9 @@ async function request(path, method = 'GET', body, ifMatch = '') {
     });
     if (!response.ok) {
       if (response.status === 401 || response.status === 403)
-        throw new Error('Firebase запретил чтение или запись. Проверь правила /rooms в консоли Firebase.');
-      if (response.status === 412) throw new Error('Комната уже занята. Обнови список и попробуй снова.');
-      throw new Error(`Firebase: HTTP ${response.status} (${(await response.text()).slice(0, 160)})`);
+        throw new FirebaseError(response.status, 'Firebase запретил чтение или запись. Проверь правила Firebase.');
+      if (response.status === 412) throw new FirebaseError(412, 'Комната уже занята. Обнови список и попробуй снова.');
+      throw new FirebaseError(response.status, `Firebase: HTTP ${response.status} (${(await response.text()).slice(0, 160)})`);
     }
     if (response.status === 204) return null;
     const text = await response.text();
@@ -127,4 +134,59 @@ export async function leaveRoom(id, slot, playerId) {
   const room = await getRoom(id);
   if (room?.[slot]?.id !== playerId) return;
   return request(`${ROOM_PATH}/${id}${slot === 'host' ? '' : '/guest'}`, 'DELETE');
+}
+
+export async function listPublishedLevels() {
+  const data = await request('levels-index');
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return [];
+  return Object.entries(data)
+    .filter(([id, entry]) => validLevelId(id) && entry?.id === id &&
+      typeof entry.title === 'string' && entry.title.trim() && entry.title.length <= 80 &&
+      (entry.description === undefined || typeof entry.description === 'string'))
+    .map(([id, entry]) => ({id, title: entry.title, description: entry.description || '',
+      updatedAt: Number.isFinite(entry.updatedAt) ? entry.updatedAt : 0}))
+    .sort((a, b) => b.updatedAt - a.updatedAt || Number(b.id) - Number(a.id))
+    .slice(0, 80);
+}
+
+export async function getPublishedLevel(id) {
+  if (!validLevelId(id)) throw new Error('Неверный ID уровня.');
+  const record = await request(`levels/${id}`);
+  if (!record) throw new Error('Уровень не найден в каталоге.');
+  if (!isPublishedRecord(record, id)) throw new Error('Уровень повреждён или его формат не поддерживается.');
+  return record;
+}
+
+function randomLevelId() {
+  const value = new Uint32Array(1);
+  crypto.getRandomValues(value);
+  return String(value[0] % 999999 + 1);
+}
+
+export async function publishLevel(draft) {
+  const check = validateDraft(draft);
+  if (!check.ok) throw new Error(check.message);
+  let lastCollision;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const id = randomLevelId();
+    const record = publishedRecord(id, draft);
+    try {
+      await request(`levels/${id}`, 'PUT', record, 'null_etag');
+    } catch (e) {
+      if (e.status === 412) {lastCollision = e;continue;}
+      throw e;
+    }
+    const summary = {id, title: record.title, description: record.description,
+      updatedAt: Date.now()};
+    try {
+      await request(`levels-index/${id}`, 'PUT', summary, 'null_etag');
+    } catch (e) {
+      const detail = e.status === 401 || e.status === 403 ?
+        'Firebase запретил запись в /levels-index. Проверь правила Firebase.' : e.message;
+      throw new FirebaseError(e.status || 0,
+        `Уровень ${id} сохранён, но не появился в каталоге: ${detail} Повтори публикацию позже или проверь права базы.`);
+    }
+    return {id, record};
+  }
+  throw lastCollision || new Error('Не удалось подобрать свободный ID для уровня.');
 }

@@ -2,8 +2,8 @@
 #define PVG3_LVGL_UI_H
 #include <stdint.h>
 
-/* Main-thread LVGL adapter: the game owns all gameplay, saves, and networking.
- * No browser, WebView, internet images, or second UI thread is involved. */
+/* Main-thread LVGL adapter: the game owns gameplay, saves, and networking.
+ * The level catalog/player and its touch joystick are rendered natively in C. */
 int lvgl_ui_init(void);
 void lvgl_ui_shutdown(void);
 int lvgl_ui_fullscreen(int phase);

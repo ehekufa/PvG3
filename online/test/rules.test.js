@@ -2,10 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {newMatch, validMatch, applyCommand, stepMatch, PLANTS, DUCKS, WAVE, X} from '../rules.js';
 
-test('author artwork has five plants, three duck variants, increasing real HP', () => {
+test('author artwork has five plants and separate normal, cone, and bucket ducks', () => {
   assert.equal(PLANTS.length, 5);
   assert.deepEqual(DUCKS.map(d => d.hp), [180, 420, 750]);
   assert.deepEqual(DUCKS.map(d => d.id), [0, 2, 3]);
+  assert.deepEqual(DUCKS.map(d => d.image), [
+    'zombie-duck.png', 'duck-cone.png', 'duck-bucket.png',
+  ]);
+  assert.equal(DUCKS[2].name, 'Утка с ведром');
   assert(validMatch(newMatch()));
 });
 
@@ -23,7 +27,7 @@ test('the water map rejects plants until a pad supports them', () => {
   assert(!applyCommand(s, 'plants', {kind:'plant', type:1, row:1, col:2}));
 });
 
-test('same drawn duck gets actual cone and helmet HP; invalid moves are free', () => {
+test('separate cone and bucket ducks keep their real HP; invalid moves are free', () => {
   const s = newMatch();
   assert(!applyCommand(s, 'zombies', {kind:'spawn', type:999, row:0}));
   assert(!applyCommand(s, 'zombies', {kind:'spawn', type:2, row:9}));

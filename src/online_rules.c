@@ -5,7 +5,7 @@
 #include <string.h>
 
 const int on_plant_cost[ON_PLANT_TYPES] = {100, 50, 50, 250, 25};
-const int on_duck_type[3] = {ON_DUCK, ON_CONE, ON_HELMET};
+const int on_duck_type[3] = {ON_DUCK, ON_CONE, ON_BUCKET};
 const int on_duck_cost[3] = {50, 100, 175};
 const int on_duck_hp[3] = {180, 420, 750};
 static const int plant_hp[ON_PLANT_TYPES] = {300, 4000, 300, 300, 300};
@@ -54,7 +54,7 @@ int on_match_valid(const OnMatch *s) {
         if (!isfinite(s->duck_cooldown[i])) return 0;
     for (int i = 0; i < s->duck_count; i++) {
         OnDuck d = s->ducks[i];
-        if ((d.type != ON_DUCK && d.type != ON_CONE && d.type != ON_HELMET) ||
+        if ((d.type != ON_DUCK && d.type != ON_CONE && d.type != ON_BUCKET) ||
             d.row < 0 || d.row >= ON_ROWS || !isfinite(d.x) ||
             !isfinite(d.hp) || !isfinite(d.max_hp) || d.max_hp <= 0 ||
             !isfinite(d.speed) || !isfinite(d.anim) || d.id < 1) return 0;

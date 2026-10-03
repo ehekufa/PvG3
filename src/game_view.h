@@ -9,9 +9,10 @@
  * Byte order in memory is RGBA; the LVGL adapter converts to ARGB8888 once. */
 enum {
     PV_ART_BREAD, PV_ART_DIMA, PV_ART_KIRILL, PV_ART_DUCK,
-    PV_ART_ROBOT, PV_ART_PEA, PV_ART_WALNUT, PV_ART_SUNFLOWER,
+    PV_ART_DUCK_CONE, PV_ART_DUCK_BUCKET, PV_ART_ROBOT,
+    PV_ART_PEA, PV_ART_WALNUT, PV_ART_SUNFLOWER,
     PV_ART_JUMPER, PV_ART_LILY, PV_ART_LAWN, PV_ART_WATER, PV_ART_MOWER,
-    PV_ART_COUNT
+    PV_ART_COIN, PV_ART_COUNT
 };
 const uint32_t *game_art_rgba(int id, int *width, int *height);
 
@@ -20,11 +21,12 @@ const uint32_t *game_art_rgba(int id, int *width, int *height);
 void game_online_ui_snapshot(OnMatch *match, int *role, int *selection,
                              char *hint, size_t hint_size, float *hint_seconds);
 
-/* Read-only values from the original campaign, cut-scene and Zen Garden.
- * LVGL does not own game state; old saves and the authoritative rules remain
- * byte-for-byte compatible with pre-LVGL APKs. */
+/* Read-only values from the campaign, cut-scene and Zen Garden.
+ * LVGL does not own game state; legacy save values and authoritative rules
+ * remain supported. */
 typedef struct {
     int level, coins, selection, garden_selection;
+    int garden_mode, garden_map; /* 0 = plants, 1 = geese; maps 1 = lawn, 5 = water */
     int wave_remaining, wave_total, boss_health_percent;
     int intro_step, book_enemy_tab, book_selection;
     float cooldown[5];
@@ -36,7 +38,7 @@ typedef struct {
     int art_id, cost, hp, enemy_variant;
     float recharge;
 } GameBookEntry;
-/* 5 plants; 4 enemies (duck, cone duck, helmet duck, queen/robot). */
+/* 5 plants; 4 enemies (duck, cone duck, bucket duck, queen/robot). */
 int game_book_entry(int enemy_tab, int index, GameBookEntry *out);
 
 #endif
