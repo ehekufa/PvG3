@@ -19,9 +19,9 @@ jobs:
       - name: Install MinGW-w64 toolchain
         uses: msys2/setup-msys2@v2
         with:
-          msystem: MINGW64
+          msystem: UCRT64
           update: true
-          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-winpthreads
+          install: mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-winpthreads
 
       - name: Compile Win32 host and WinHTTP adapter with strict warnings
         shell: msys2 {0}
@@ -29,10 +29,29 @@ jobs:
           set -euo pipefail
           mkdir -p build/windows
           COMMON='-std=c11 -O2 -Wall -Wextra -Werror -pthread -finput-charset=UTF-8 -fexec-charset=UTF-8 -Isrc -Isrc/vendor/lvgl'
-          gcc $COMMON -c src/windows_main.c -o build/windows/windows_main.o
-          gcc $COMMON -c src/windows_online_http.c -o build/windows/windows_online_http.o
-          gcc $COMMON -c src/online_net.c -o build/windows/online_net.o
-          gcc $COMMON -c src/lvgl_ui.c -o build/windows/lvgl_ui.o
+          compile_checked() {
+            local log_file="$1"
+            shift
+            if "$@" >"$log_file" 2>&1; then
+              cat "$log_file"
+              return 0
+            fi
+            echo "Compiler diagnostics ($log_file):"
+            while IFS= read -r line; do
+              line="${line//'%'/'%25'}"
+              line="${line//$'\r'/'%0D'}"
+              printf '::error::%s\n' "$line"
+            done < "$log_file"
+            return 1
+          }
+          compile_checked build/windows/windows_main.log gcc $COMMON \
+            -c src/windows_main.c -o build/windows/windows_main.o
+          compile_checked build/windows/windows_online_http.log gcc $COMMON \
+            -c src/windows_online_http.c -o build/windows/windows_online_http.o
+          compile_checked build/windows/online_net.log gcc $COMMON \
+            -c src/online_net.c -o build/windows/online_net.o
+          compile_checked build/windows/lvgl_ui.log gcc $COMMON \
+            -c src/lvgl_ui.c -o build/windows/lvgl_ui.o
 
       - name: Link standalone GUI executable
         shell: msys2 {0}
