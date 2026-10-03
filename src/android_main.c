@@ -53,6 +53,8 @@ typedef struct {
     int w, h;
     GLuint program, tex;
     int ready, resumed, focused, ui_ready;
+    int touch_active, touch_via_lvgl, legacy_down_phase;
+    int legacy_down_x, legacy_down_y;
 } Engine;
 
 static Engine *G;
@@ -119,10 +121,61 @@ static int engine_init(Engine *e) {
     return 1;
 }
 
+/* Fit the fixed 16:9 game canvas inside any window without stretching its
+ * artwork or hit targets. The same rectangle is used for touch conversion. */
+static void game_viewport(const Engine *e, int *left, int *top,
+                          int *width, int *height) {
+    int w = e->w > 0 ? e->w : GAME_W;
+    int h = e->h > 0 ? e->h : GAME_H;
+    if ((int64_t)w * GAME_H > (int64_t)h * GAME_W) {
+        *height = h;
+        *width = (int)((int64_t)h * GAME_W / GAME_H);
+    } else {
+        *width = w;
+        *height = (int)((int64_t)w * GAME_H / GAME_W);
+    }
+    if (*width < 1) *width = 1;
+    if (*height < 1) *height = 1;
+    *left = (w - *width) / 2;
+    *top = (h - *height) / 2;
+}
+
+static int screen_to_game(const Engine *e, float sx, float sy,
+                          int clamp_to_canvas, int *x, int *y) {
+    int left, top, width, height;
+    game_viewport(e, &left, &top, &width, &height);
+    float right = (float)(left + width);
+    float bottom = (float)(top + height);
+    if (!clamp_to_canvas &&
+        (sx < left || sy < top || sx >= right || sy >= bottom)) return 0;
+    if (sx < left) sx = (float)left;
+    if (sy < top) sy = (float)top;
+    if (sx >= right) sx = right - 1.0f;
+    if (sy >= bottom) sy = bottom - 1.0f;
+    *x = (int)((sx - left) * GAME_W / width);
+    *y = (int)((sy - top) * GAME_H / height);
+    if (*x < 0) *x = 0;
+    if (*x >= GAME_W) *x = GAME_W - 1;
+    if (*y < 0) *y = 0;
+    if (*y >= GAME_H) *y = GAME_H - 1;
+    return 1;
+}
+
 static void engine_draw(Engine *e, const uint32_t *fb) {
+    if (e->app && e->app->window) {
+        e->w = ANativeWindow_getWidth(e->app->window);
+        e->h = ANativeWindow_getHeight(e->app->window);
+    }
     glBindTexture(GL_TEXTURE_2D, e->tex);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, GAME_W, GAME_H, GL_RGBA, GL_UNSIGNED_BYTE, fb);
 
+    glViewport(0, 0, e->w, e->h);
+    glClearColor(0.055f, 0.065f, 0.055f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    int left, top, width, height;
+    game_viewport(e, &left, &top, &width, &height);
+    /* OpenGL's viewport origin is bottom-left; the letterbox is symmetric. */
+    glViewport(left, e->h - top - height, width, height);
     glUseProgram(e->program);
     GLint uloc = glGetUniformLocation(e->program, "u_tex");
     glUniform1i(uloc, 0);
@@ -152,9 +205,17 @@ static void on_app_cmd(struct android_app *app, int32_t cmd) {
         G->focused = 1;
         update_music();
         break;
+    case APP_CMD_WINDOW_RESIZED:
+        if (app->window) {
+            G->w = ANativeWindow_getWidth(app->window);
+            G->h = ANativeWindow_getHeight(app->window);
+        }
+        break;
     case APP_CMD_LOST_FOCUS:
         G->focused = 0;
         if (G->ui_ready) lvgl_ui_cancel();
+        G->touch_active = G->touch_via_lvgl = 0;
+        G->legacy_down_phase = -1;
         update_music();
         campaign_save(app);
         break;
@@ -162,6 +223,8 @@ static void on_app_cmd(struct android_app *app, int32_t cmd) {
     case APP_CMD_STOP:
         G->resumed = 0;
         if (G->ui_ready) lvgl_ui_cancel();
+        G->touch_active = G->touch_via_lvgl = 0;
+        G->legacy_down_phase = -1;
         update_music();
         campaign_save(app);
         garden_save(app);
@@ -172,6 +235,8 @@ static void on_app_cmd(struct android_app *app, int32_t cmd) {
         break;
     case APP_CMD_TERM_WINDOW:
         campaign_save(app);
+        G->touch_active = G->touch_via_lvgl = 0;
+        G->legacy_down_phase = -1;
         G->ready = 0;
         update_music();
         engine_term(G);
@@ -270,32 +335,61 @@ static void campaign_save(struct android_app *app) {
     free(bytes);
 }
 
+static int legacy_renderer_phase(int phase) {
+    return phase == GAME_MENU || phase == GAME_INTRO || phase == GAME_PLAY ||
+           phase == GAME_LEVEL_CLEAR || phase == GAME_WIN || phase == GAME_LOSE ||
+           phase == GAME_GARDEN || phase == GAME_BOOK || phase == GAME_SELECT;
+}
+
 static int32_t on_input(struct android_app *app, AInputEvent *ev) {
     if (AInputEvent_getType(ev) != AINPUT_EVENT_TYPE_MOTION) return 0;
     if (!G->ready || !G->resumed || !G->focused) return 0;
     int action = AMotionEvent_getAction(ev) & AMOTION_EVENT_ACTION_MASK;
-    float x = AMotionEvent_getX(ev, 0);
-    float y = AMotionEvent_getY(ev, 0);
-    int vx = (int)(x * GAME_W / G->w);
-    int vy = (int)(y * GAME_H / G->h);
+    float sx = AMotionEvent_getX(ev, 0);
+    float sy = AMotionEvent_getY(ev, 0);
+    int vx = 0, vy = 0;
+
     if (action == AMOTION_EVENT_ACTION_DOWN) {
-        int was_garden = game_phase() == GAME_GARDEN;
-        int handled = G->ui_ready && lvgl_ui_pointer(vx, vy, 1);
-        if (!handled) game_input_press(vx, vy);
+        G->touch_active = screen_to_game(G, sx, sy, 0, &vx, &vy);
+        G->touch_via_lvgl = 0;
+        G->legacy_down_phase = -1;
+        if (!G->touch_active) return 1; /* Ignore letterbox taps. */
+        int phase = game_phase();
+        int was_garden = phase == GAME_GARDEN;
+        if (!legacy_renderer_phase(phase) && G->ui_ready)
+            G->touch_via_lvgl = lvgl_ui_pointer(vx, vy, 1);
+        if (!G->touch_via_lvgl) {
+            G->legacy_down_phase = phase;
+            G->legacy_down_x = vx;G->legacy_down_y = vy;
+            game_input_press(vx, vy);
+        }
         if (was_garden) garden_save(app); /* also save when leaving the garden */
         campaign_save(app); /* the campaign and online state are separate */
     } else if (action == AMOTION_EVENT_ACTION_MOVE) {
-        if (G->ui_ready) lvgl_ui_move(vx, vy);
+        if (!G->touch_active || !screen_to_game(G, sx, sy, 1, &vx, &vy)) return 1;
+        if (G->ui_ready && G->touch_via_lvgl) lvgl_ui_move(vx, vy);
     } else if (action == AMOTION_EVENT_ACTION_UP) {
+        if (!G->touch_active || !screen_to_game(G, sx, sy, 1, &vx, &vy)) return 1;
         int was_garden = game_phase() == GAME_GARDEN;
-        int handled = G->ui_ready && lvgl_ui_pointer(vx, vy, 0);
+        int handled = G->ui_ready && G->touch_via_lvgl &&
+                      lvgl_ui_pointer(vx, vy, 0);
+        /* The old C screen supports both tap-to-select and a packet drag.
+         * Commit a drag only when it starts on a packet and ends on the lawn. */
+        if (!handled && G->legacy_down_phase == game_phase() &&
+            game_legacy_plant_drag(G->legacy_down_phase,
+                                   G->legacy_down_x, G->legacy_down_y, vx, vy))
+            game_input_press(vx, vy);
         if (!handled) game_input_release(vx, vy);
+        G->touch_active = G->touch_via_lvgl = 0;
+        G->legacy_down_phase = -1;
         /* A drag plants on release, not on DOWN; persist the new board now. */
         if (was_garden) garden_save(app);
         campaign_save(app);
     } else if (action == AMOTION_EVENT_ACTION_CANCEL) {
-        int handled = G->ui_ready && lvgl_ui_cancel();
+        int handled = G->ui_ready && G->touch_via_lvgl && lvgl_ui_cancel();
         if (!handled) game_input_release(vx, vy);
+        G->touch_active = G->touch_via_lvgl = 0;
+        G->legacy_down_phase = -1;
     }
     return 1;
 }
@@ -314,7 +408,7 @@ void android_main(struct android_app *app) {
     garden_load(app);   /* keep reading the existing pvg3-garden.v1 */
     campaign_load(app);
     engine.ui_ready = lvgl_ui_init();
-    game_set_lvgl_ui(engine.ui_ready);
+    game_set_lvgl_ui(engine.ui_ready && !legacy_renderer_phase(game_phase()));
     if (!engine.ui_ready) LOGE("LVGL could not start; using the original renderer");
     if (!android_music_init(app->activity ? app->activity->assetManager : NULL))
         LOGE("music unavailable; the game continues without audio");
@@ -348,13 +442,16 @@ void android_main(struct android_app *app) {
         if (dt < 0) dt = 0;
         if (dt > 0.05f) dt = 0.05f;
 
-        int was_fullscreen_ui = engine.ui_ready && lvgl_ui_fullscreen(game_phase());
+        int phase_before_tick = game_phase();
+        int lvgl_screen = engine.ui_ready && !legacy_renderer_phase(phase_before_tick);
+        game_set_lvgl_ui(lvgl_screen);
+        int was_fullscreen_ui = lvgl_screen && lvgl_ui_fullscreen(phase_before_tick);
         if (was_fullscreen_ui) game_tick(dt, NULL); /* no hidden legacy redraw */
         else game_tick(dt, fb);
-        /* The other player can start a match during game_tick(). Draw the
-         * battlefield immediately instead of briefly uploading an old frame. */
-        if (was_fullscreen_ui && !lvgl_ui_fullscreen(game_phase()))
-            game_tick(0, fb);
+        /* Another player can start a match during game_tick(). Draw the
+         * battlefield immediately instead of uploading a stale frame. */
+        if (was_fullscreen_ui &&
+            !lvgl_ui_fullscreen(game_phase())) game_tick(0, fb);
         /* Each visible story line is spoken once on entry/advance. Replaying
          * level 0 restarts it; skipping/leaving silences the old line. */
         int speak = -1;
@@ -367,7 +464,8 @@ void android_main(struct android_app *app) {
             android_music_intro_line(speak);
             voiced_intro_step = speak;
         }
-        if (engine.ui_ready) lvgl_ui_frame(dt, fb);
+        if (engine.ui_ready && !legacy_renderer_phase(game_phase()))
+            lvgl_ui_frame(dt, fb);
         engine_draw(&engine, fb);
         if (t - last_save >= 1.0) {
             if (game_phase() == GAME_PLAY) campaign_save(app);

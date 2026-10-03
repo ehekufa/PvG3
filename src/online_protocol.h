@@ -2,6 +2,7 @@
 #define PVG3_ONLINE_PROTOCOL_H
 
 #include "online_rules.h"
+#include "online_level.h"
 
 #include <stddef.h>
 #include <stdint.h>

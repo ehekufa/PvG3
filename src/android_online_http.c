@@ -24,10 +24,19 @@ static void property(JNIEnv *env, jobject conn, jmethodID setter,
     if (k) (*env)->DeleteLocalRef(env, k);
     if (v) (*env)->DeleteLocalRef(env, v);
 }
-/* Never allow request paths to escape the single intended /rooms subtree. */
+/* Restrict HTTPS requests to the room protocol and public level catalog. */
 static int safe_path(const char *path) {
-    if (!path || strncmp(path, "rooms", 5) ||
-        (path[5] != '/' && path[5] != '.')) return 0;
+    static const char *const roots[] = {"rooms", "levels", "levels-index"};
+    if (!path) return 0;
+    int allowed = 0;
+    for (size_t i = 0; i < sizeof roots / sizeof roots[0]; i++) {
+        size_t root_len = strlen(roots[i]);
+        if (!strncmp(path, roots[i], root_len) &&
+            (path[root_len] == '/' || path[root_len] == '.')) {
+            allowed = 1;break;
+        }
+    }
+    if (!allowed) return 0;
     size_t n = strlen(path);
     if (n < 9 || n > 88 || strstr(path, "..") || strstr(path, "//") ||
         strcmp(path + n - 5, ".json")) return 0;

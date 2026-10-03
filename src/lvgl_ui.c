@@ -28,15 +28,16 @@
 enum {
     U_MENU_PLAY = 1, U_MENU_LEVELS, U_MENU_GARDEN, U_MENU_BOOK, U_MENU_ONLINE,
     U_MENU_BACK, U_INTRO, U_MAP_LAWN, U_MAP_WATER, U_REFRESH,
-    U_CREATE, U_SEARCH, U_SEARCH_CLOSE, U_SEARCH_ERASE, U_SEARCH_GO,
+    U_CREATE, U_USER_LEVELS, U_SEARCH, U_SEARCH_CLOSE, U_SEARCH_ERASE, U_SEARCH_GO,
     U_ROOMS_BACK, U_LOBBY_EXIT, U_PLANTS, U_ZOMBIES, U_MATCH_BOOK,
     U_MATCH_EXIT, U_MATCH_FINISH, U_MATCH_RETURN,
     U_GARDEN_BOOK, U_GARDEN_EXIT, U_GARDEN_ERASE,
     U_BOOK_BACK, U_BOOK_PLANTS, U_BOOK_ENEMIES,
     U_INTRO_NEXT, U_INTRO_SKIP, U_OFFLINE_BOOK, U_OFFLINE_MENU,
     U_RESULT_NEXT, U_RESULT_RETRY, U_RESULT_MENU,
+    U_CUSTOM_REFRESH, U_CUSTOM_BACK, U_CUSTOM_PREV, U_CUSTOM_NEXT,
     U_LEVEL_BASE = 100, U_ROOM_BASE = 200, U_KEY_BASE = 300,
-    U_BOOK_ENTRY_BASE = 700
+    U_BOOK_ENTRY_BASE = 700, U_CUSTOM_LEVEL_BASE = 900
 };
 
 static lv_display_t *display;
@@ -48,6 +49,8 @@ static lv_image_dsc_t pictures[PV_ART_COUNT];
 static uint32_t *layer;
 static uint8_t *drawbuf;
 static int active_phase = -1, page = 0, chosen_map = 1, search_open;
+static int custom_level_page;
+static lv_obj_t *custom_stick_knob;
 static int pointer_down, captured, touch_x, touch_y, dirty;
 /* A packet is dragged over the author's board. LVGL draws the packet and its
  * ghost; game.c still validates the drop, so invalid water/occupied cells and
@@ -59,6 +62,7 @@ static float drag_notice_left;
 static uint32_t view_sig;
 static char search_code[ON_ROOM_ID_SIZE], local_notice[110];
 static char visible_ids[8][ON_ROOM_ID_SIZE];
+static char visible_level_ids[8][ON_LEVEL_ID_SIZE];
 
 static const lv_font_t *f(int index) { return fonts[index] ? fonts[index] : LV_FONT_DEFAULT; }
 
@@ -148,31 +152,12 @@ static void art(lv_obj_t *parent, int id, int cx, int cy, int scaled) {
     lv_obj_remove_flag(o, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
 }
 
-/* Same original duck with simple cone/helmet geometry on top, as in the
- * legacy renderer. These are protective items, never separate characters. */
+/* Each protected duck is its own complete user drawing, shared by packets,
+ * the picture book, drag previews and battlefield sprites. */
 static void duck_art(lv_obj_t *parent, int cx, int cy, int size, int variant) {
-    art(parent, PV_ART_DUCK, cx, cy, size);
-    if (variant != ON_CONE && variant != ON_HELMET) return;
-    int brim = cy - size / 2 + size * 34 / 100;
-    int head = cx + size * 4 / 100;
-    if (variant == ON_CONE) {
-        int tip = brim - size * 52 / 100;
-        for (int i = 0; i < 10; ++i) {
-            int y = tip + i * (brim - tip) / 10;
-            int half = 2 + i * size * 25 / 1000;
-            box(parent, head - half, y, 2 * half, (brim - tip) / 10 + 1,
-                0, C(EB782C), 0);
-        }
-        box(parent, head - size * 29 / 100, brim - size / 17,
-            size * 58 / 100, size / 13, 1, C(A84929), 0);
-    } else {
-        box(parent, head - size * 30 / 100, brim - size * 27 / 100,
-            size * 60 / 100, size * 27 / 100, size / 7, C(647887), 0);
-        box(parent, head - size * 24 / 100, brim - size * 22 / 100,
-            size * 24 / 100, size / 20 + 2, size / 22, C(A6B8B8), 0);
-        box(parent, head - size * 33 / 100, brim - size / 23,
-            size * 66 / 100, size / 13, 2, C(354F5D), 0);
-    }
+    int image_id = variant == ON_CONE ? PV_ART_DUCK_CONE :
+                   variant == ON_BUCKET ? PV_ART_DUCK_BUCKET : PV_ART_DUCK;
+    art(parent, image_id, cx, cy, size);
 }
 
 static void header(lv_obj_t *root, const char *title, const char *back,
@@ -188,7 +173,9 @@ static void header(lv_obj_t *root, const char *title, const char *back,
 
 static void menu_screen(lv_obj_t *root) {
     header(root, "Растения против гусей 3", NULL, 0);
-    button(root, 730, 51, 220, 64, "Уровни", 2, C(476750), WHITE, U_MENU_LEVELS);
+    button(root, 411, 51, 292, 64, "Уровни игроков", 2, C(476750), WHITE,
+           U_USER_LEVELS);
+    button(root, 730, 51, 220, 64, "Кампания", 2, C(476750), WHITE, U_MENU_LEVELS);
     button(root, 971, 51, 270, 64, "Сад Дзен", 2, C(476750), WHITE, U_MENU_GARDEN);
     /* The characters stand together on the lawn, not in three square frames. */
     box(root, 55, 176, 1170, 355, 34, C(E5EFD9), 0);
@@ -333,8 +320,7 @@ static void play_screen(lv_obj_t *root) {
     box(root, 0, 118, 1280, 3, 0, GOLD, 0);
     lv_obj_t *rail = box(root, 0, 121, 246, 599, 0, C(24382E), 0);
     lv_obj_set_style_bg_opa(rail, 115, 0); /* author's wood stays visible */
-    box(root, 22, 64, 36, 36, 18, GOLD, 0);
-    label(root, 26, 68, 29, 29, "М", 1, INK, LV_TEXT_ALIGN_CENTER);
+    art(root, PV_ART_COIN, 40, 82, 40);
     char coins[25];snprintf(coins, sizeof coins, "%d", state.coins);
     label(root, 72, 53, 157, 58, coins, 3, WHITE, LV_TEXT_ALIGN_LEFT);
     char title[100];
@@ -398,8 +384,8 @@ static void rooms_screen(lv_obj_t *root, const OnNetView *v) {
     lv_obj_set_style_border_width(chosen_map == 1 ? lawn : water, 2, 0);
     lv_obj_set_style_border_color(chosen_map == 1 ? lawn : water,
                                   C(779C73), 0);
-    button(root, 720, 179, 208, 62, "□  Поиск", 2, WHITE, INK, U_SEARCH);
-    button(root, 941, 179, 275, 62, "+  Создать", 2, GOLD, INK, U_CREATE);
+    button(root, 650, 179, 187, 62, "Поиск", 2, WHITE, INK, U_SEARCH);
+    button(root, 856, 179, 208, 62, "+ Создать", 2, GOLD, INK, U_CREATE);
     box(root, 43, 271, 1195, 421, 23, PAPER, 1);
     label(root, 70, 286, 660, 52, "Свободные комнаты", 3, INK,
           LV_TEXT_ALIGN_LEFT);
@@ -475,6 +461,100 @@ static void rooms_screen(lv_obj_t *root, const OnNetView *v) {
            len == 6 ? GOLD : WHITE, INK, U_SEARCH_GO);
 }
 
+static void custom_levels_screen(lv_obj_t *root, const OnNetView *v) {
+    header(root, "Уровни игроков", "В меню", U_CUSTOM_BACK);
+    box(root, 43, 165, 1195, 94, 20, PAPER, 1);
+    label(root, 68, 179, 770, 34, "ОПУБЛИКОВАНО ИЗ БРАУЗЕРНОЙ МАСТЕРСКОЙ",
+          1, MUTED, LV_TEXT_ALIGN_LEFT);
+    label(root, 68, 213, 830, 33,
+          v->levels_busy ? "Подключаемся к каталогу…" :
+          v->levels_notice[0] ? v->levels_notice :
+          v->level_count ? "Выбери уровень, чтобы запустить его в C-игре." :
+                           "Пока нет опубликованных уровней.",
+          2, v->levels_notice[0] ? C(A1513B) : INK, LV_TEXT_ALIGN_LEFT);
+    button(root, 1015, 185, 193, 54, "↻ Обновить", 2, WHITE, INK,
+           U_CUSTOM_REFRESH);
+    memset(visible_level_ids, 0, sizeof visible_level_ids);
+    int pages = (v->level_count + 7) / 8;
+    if (custom_level_page >= pages) custom_level_page = pages > 0 ? pages - 1 : 0;
+    if (v->level_count > 0) {
+        for (int i = 0; i < 8 && custom_level_page * 8 + i < v->level_count; i++) {
+            int index = custom_level_page * 8 + i;
+            int x = 65 + (i % 2) * 579;
+            int y = 280 + (i / 2) * 91;
+            snprintf(visible_level_ids[i], sizeof visible_level_ids[i], "%s",
+                     v->levels[index].id);
+            lv_obj_t *card = button(root, x, y, 548, 78, "", 1, WHITE, INK,
+                                    U_CUSTOM_LEVEL_BASE + i);
+            lv_obj_set_style_border_width(card, 1, 0);
+            lv_obj_set_style_border_color(card, C(D9DDC5), 0);
+            box(card, 13, 15, 90, 47, 10, SAGE, 0);
+            label(card, 15, 17, 86, 43, v->levels[index].id, 2, INK,
+                  LV_TEXT_ALIGN_CENTER);
+            label(card, 119, 7, 410, 32, v->levels[index].title, 2, INK,
+                  LV_TEXT_ALIGN_LEFT);
+            label(card, 121, 39, 410, 33,
+                  v->levels[index].description[0] ? v->levels[index].description :
+                                                    "Нажми, чтобы играть в C-игре",
+                  1, C(477E4D), LV_TEXT_ALIGN_LEFT);
+        }
+    } else if (!v->levels_busy) {
+        box(root, 220, 322, 840, 190, 25, WHITE, 1);
+        art(root, PV_ART_KIRILL, 312, 413, 104);
+        label(root, 420, 365, 600, 74, "Уровней пока нет", 3, INK,
+              LV_TEXT_ALIGN_LEFT);
+        label(root, 422, 432, 576, 58,
+              "Открой редактор в браузере, задай ID и название, затем нажми «Опубликовать».",
+              1, MUTED, LV_TEXT_ALIGN_LEFT);
+    }
+    if (pages > 1) {
+        button(root, 69, 658, 170, 43, "‹ Назад", 1, WHITE, INK, U_CUSTOM_PREV);
+        char page_text[40];
+        snprintf(page_text, sizeof page_text, "%d / %d", custom_level_page + 1, pages);
+        label(root, 514, 659, 252, 40, page_text, 1, MUTED, LV_TEXT_ALIGN_CENTER);
+        button(root, 1040, 658, 170, 43, "Дальше ›", 1, WHITE, INK, U_CUSTOM_NEXT);
+    }
+}
+
+static void custom_platformer_screen(lv_obj_t *root) {
+    lv_obj_set_style_bg_opa(root, LV_OPA_TRANSP, 0);
+    lv_obj_t *bar = box(root, 0, 0, GAME_W, 103, 0, DARK, 0);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_70, 0);
+    char title[ON_LEVEL_TITLE_SIZE + 28];
+    snprintf(title, sizeof title, "ID %s  ·  %s", "", "");
+    OnNetView view;
+    on_net_view(&view);
+    snprintf(title, sizeof title, "ID %s  ·  %s",
+             view.loaded_level.id[0] ? view.loaded_level.id : "—",
+             view.loaded_level.title[0] ? view.loaded_level.title : "Уровень");
+    label(root, 27, 18, 920, 66, title, 2, WHITE, LV_TEXT_ALIGN_LEFT);
+    button(root, 1033, 21, 215, 62, "К уровням", 2, C(476750), WHITE,
+           U_CUSTOM_BACK);
+    lv_obj_t *pad = box(root, 58, 480, 222, 222, 111, DARK, 0);
+    lv_obj_set_style_bg_opa(pad, LV_OPA_50, 0);
+    lv_obj_set_style_border_width(pad, 3, 0);
+    lv_obj_set_style_border_color(pad, C(DDE6C9), 0);
+    lv_obj_t *stick_cross_h = box(root, 104, 587, 130, 8, 4, WHITE, 0);
+    lv_obj_set_style_bg_opa(stick_cross_h, LV_OPA_60, 0);
+    lv_obj_t *stick_cross_v = box(root, 165, 526, 8, 130, 4, WHITE, 0);
+    lv_obj_set_style_bg_opa(stick_cross_v, LV_OPA_60, 0);
+    custom_stick_knob = box(root, 137, 559, 66, 66, 33, GOLD, 1);
+    lv_obj_set_style_border_width(custom_stick_knob, 2, 0);
+    lv_obj_set_style_border_color(custom_stick_knob, WHITE, 0);
+    lv_obj_t *trigger = box(root, 910, 567, 128, 99, 19, C(59C4BD), 1);
+    lv_obj_set_style_bg_opa(trigger, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(trigger, 2, 0);
+    lv_obj_set_style_border_color(trigger, WHITE, 0);
+    label(trigger, 0, 11, 128, 38, "⚡ E", 2, WHITE, LV_TEXT_ALIGN_CENTER);
+    label(trigger, 0, 52, 128, 30, "ТРИГГЕР", 1, WHITE, LV_TEXT_ALIGN_CENTER);
+    lv_obj_t *jump = box(root, 1081, 525, 169, 169, 84, C(F1BE6C), 1);
+    lv_obj_set_style_bg_opa(jump, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(jump, 3, 0);
+    lv_obj_set_style_border_color(jump, WHITE, 0);
+    label(jump, 0, 36, 169, 56, "↑", 4, INK, LV_TEXT_ALIGN_CENTER);
+    label(jump, 0, 92, 169, 44, "ПРЫЖОК", 1, INK, LV_TEXT_ALIGN_CENTER);
+}
+
 static void lobby_screen(lv_obj_t *root, const OnNetView *v) {
     char title[66];
     snprintf(title, sizeof title, "Комната %s", v->room_id);
@@ -524,8 +604,7 @@ static void match_screen(lv_obj_t *root, const OnNetView *v) {
     box(root, 0, 118, 1280, 3, 0, GOLD, 0);
     lv_obj_t *rail = box(root, 0, 121, 246, 599, 0, C(24382E), 0);
     lv_obj_set_style_bg_opa(rail, 115, 0);
-    box(root, 22, 64, 36, 36, 18, GOLD, 0);
-    label(root, 26, 68, 29, 29, "М", 1, INK, LV_TEXT_ALIGN_CENTER);
+    art(root, PV_ART_COIN, 40, 82, 40);
     char cash[24];
     snprintf(cash, sizeof cash, "%d", plants ? state.plant_cash : state.zombie_cash);
     label(root, 72, 53, 157, 58, cash, 3, WHITE, LV_TEXT_ALIGN_LEFT);
@@ -597,6 +676,14 @@ static uint32_t state_signature(int phase, const OnNetView *v) {
         h = mix(h, &v->guest_role, sizeof v->guest_role);
         h = mix(h, &v->busy, sizeof v->busy);
         h = mix(h, v->notice, strlen(v->notice));
+    } else if (phase == GAME_CUSTOM_LEVELS) {
+        h = mix(h, &v->level_count, sizeof v->level_count);
+        h = mix(h, v->levels, (size_t)v->level_count * sizeof v->levels[0]);
+        h = mix(h, &v->levels_busy, sizeof v->levels_busy);
+        h = mix(h, v->levels_notice, strlen(v->levels_notice));
+    } else if (phase == GAME_CUSTOM_PLAY) {
+        h = mix(h, v->loaded_level.id, strlen(v->loaded_level.id));
+        h = mix(h, v->loaded_level.title, strlen(v->loaded_level.title));
     } else if (phase == GAME_ONLINE_MATCH) {
         OnMatch s;
         int role, selected;float secs;
@@ -804,6 +891,13 @@ static void pressed(lv_event_t *ev) {
     }
     if (code == U_ROOM_BASE + 8) {if (page > 0) page--;dirty = 1;return;}
     if (code == U_ROOM_BASE + 9) {page++;dirty = 1;return;}
+    if (code >= U_CUSTOM_LEVEL_BASE && code < U_CUSTOM_LEVEL_BASE + 8) {
+        int n = code - U_CUSTOM_LEVEL_BASE;
+        if (visible_level_ids[n][0]) game_custom_level_request(visible_level_ids[n]);
+        return;
+    }
+    if (code == U_CUSTOM_PREV) {if (custom_level_page > 0) custom_level_page--;dirty = 1;return;}
+    if (code == U_CUSTOM_NEXT) {custom_level_page++;dirty = 1;return;}
     if (code >= U_BOOK_ENTRY_BASE && code < U_BOOK_ENTRY_BASE + 5) {
         game_input_press(300, 181 + (code - U_BOOK_ENTRY_BASE) * 99);
         dirty = 1;return;
@@ -819,12 +913,15 @@ static void pressed(lv_event_t *ev) {
     case U_MENU_GARDEN: game_input_press(1040, 83);break;
     case U_MENU_BOOK: game_input_press(205, 615);break;
     case U_MENU_ONLINE: game_input_press(1058, 615);page = 0;break;
+    case U_USER_LEVELS: custom_level_page = 0;game_custom_levels_open();break;
     case U_MENU_BACK: game_input_press(1150, 55);break;
     case U_INTRO: game_input_press(640, 605);break;
     case U_MAP_LAWN: chosen_map = 1;dirty = 1;break;
     case U_MAP_WATER: chosen_map = 5;dirty = 1;break;
     case U_REFRESH: on_net_refresh();break;
     case U_CREATE: on_net_create(chosen_map);break;
+    case U_CUSTOM_REFRESH: game_custom_levels_refresh();break;
+    case U_CUSTOM_BACK: game_custom_level_exit();break;
     case U_SEARCH: search_open = 1;search_code[0] = local_notice[0] = 0;
                    dirty = 1;break;
     case U_SEARCH_CLOSE: search_open = 0;search_code[0] = 0;dirty = 1;break;
@@ -880,8 +977,11 @@ static void rebuild(int phase, const OnNetView *net) {
     lv_obj_set_style_bg_opa(screen,
                             lvgl_ui_fullscreen(phase) ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
     lv_obj_remove_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
+    custom_stick_knob = NULL;
     if (phase == GAME_MENU) menu_screen(screen);
     else if (phase == GAME_SELECT) levels_screen(screen);
+    else if (phase == GAME_CUSTOM_LEVELS) custom_levels_screen(screen, net);
+    else if (phase == GAME_CUSTOM_PLAY) custom_platformer_screen(screen);
     else if (phase == GAME_GARDEN) garden_screen(screen);
     else if (phase == GAME_BOOK) book_screen(screen);
     else if (phase == GAME_INTRO) intro_screen(screen);
@@ -926,8 +1026,9 @@ int lvgl_ui_init(void) {
         lvgl_ui_shutdown();return 0;
     }
     const int art_ids[] = {PV_ART_BREAD, PV_ART_DIMA, PV_ART_KIRILL,
-                           PV_ART_DUCK, PV_ART_ROBOT, PV_ART_PEA, PV_ART_WALNUT,
-                           PV_ART_SUNFLOWER, PV_ART_JUMPER, PV_ART_LILY};
+                           PV_ART_DUCK, PV_ART_DUCK_CONE, PV_ART_DUCK_BUCKET,
+                           PV_ART_ROBOT, PV_ART_PEA, PV_ART_WALNUT, PV_ART_SUNFLOWER,
+                           PV_ART_JUMPER, PV_ART_LILY, PV_ART_COIN};
     for (size_t j = 0; j < sizeof art_ids / sizeof art_ids[0]; j++) {
         int id = art_ids[j], w = 0, h = 0;
         const uint32_t *original = game_art_rgba(id, &w, &h);
@@ -979,7 +1080,25 @@ void lvgl_ui_shutdown(void) {
 int lvgl_ui_fullscreen(int phase) {
     return phase == GAME_MENU || phase == GAME_SELECT ||
            phase == GAME_BOOK || phase == GAME_ONLINE_ROOMS ||
-           phase == GAME_ONLINE_LOBBY;
+           phase == GAME_ONLINE_LOBBY || phase == GAME_CUSTOM_LEVELS;
+}
+
+static void custom_control_at(int x, int y, int down) {
+    int axis = 0, jump = 0, trigger = 0;
+    if (down && x >= 58 && x <= 280 && y >= 480 && y <= 702) {
+        axis = x < 143 ? -1 : x > 195 ? 1 : 0;
+        if (custom_stick_knob) {
+            float dx = (float)x - 169.0f, dy = (float)y - 591.0f;
+            float length = sqrtf(dx * dx + dy * dy);
+            if (length > 62.0f) {dx *= 62.0f / length;dy *= 62.0f / length;}
+            lv_obj_set_pos(custom_stick_knob, (int)(169 + dx - 33),
+                           (int)(591 + dy - 33));
+        }
+    } else if (down && x >= 1080 && y >= 515) jump = 1;
+    else if (down && x >= 900 && x <= 1045 && y >= 550) trigger = 1;
+    if ((!down || (x < 58 || x > 280 || y < 480 || y > 702)) && custom_stick_knob)
+        lv_obj_set_pos(custom_stick_knob, 137, 559);
+    game_custom_control(axis, jump, trigger);
 }
 
 int lvgl_ui_pointer(int x, int y, int down) {
@@ -989,8 +1108,22 @@ int lvgl_ui_pointer(int x, int y, int down) {
     if (y < 0) y = 0;
     if (y >= GAME_H) y = GAME_H - 1;
     touch_x = x;touch_y = y;
+    int phase = game_phase();
+    if (phase == GAME_CUSTOM_PLAY) {
+        if (down) {
+            if (x >= 1030 && y <= 108) {
+                game_custom_control(0, 0, 0);
+                game_custom_level_exit();
+            } else custom_control_at(x, y, 1);
+            captured = pointer_down = 1;
+            return 1;
+        }
+        int handled = captured;
+        custom_control_at(x, y, 0);
+        captured = pointer_down = 0;
+        return handled;
+    }
     if (down) {
-        int phase = game_phase();
         int index = packet_at(phase, x, y);
         if (index >= 0) {
             /* The LVGL image is draggable, not a two-tap selection button. */
@@ -1038,6 +1171,13 @@ int lvgl_ui_move(int x, int y) {
     if (y < 0) y = 0;
     if (y >= GAME_H) y = GAME_H - 1;
     touch_x = x;touch_y = y;
+    if (game_phase() == GAME_CUSTOM_PLAY && captured && pointer_down) {
+        if (x >= 1030 && y <= 108) {
+            game_custom_control(0, 0, 0);
+            game_custom_level_exit();
+        } else custom_control_at(x, y, 1);
+        return 1;
+    }
     if (drag_index >= 0) drag_position(x, y);
     else if (captured && pointer_down) lv_indev_read(pointer);
     return captured;
@@ -1045,6 +1185,7 @@ int lvgl_ui_move(int x, int y) {
 
 int lvgl_ui_cancel(void) {
     int handled = captured;
+    if (game_phase() == GAME_CUSTOM_PLAY) game_custom_control(0, 0, 0);
     if (pointer_down && pointer) lv_indev_wait_release(pointer);
     pointer_down = captured = 0;
     touch_x = touch_y = 0;
@@ -1072,7 +1213,8 @@ void lvgl_ui_frame(float dt, uint32_t *game_rgba) {
     }
     OnNetView v = {0};
     if (phase == GAME_ONLINE_ROOMS || phase == GAME_ONLINE_LOBBY ||
-        phase == GAME_ONLINE_MATCH) on_net_view(&v);
+        phase == GAME_ONLINE_MATCH || phase == GAME_CUSTOM_LEVELS ||
+        phase == GAME_CUSTOM_PLAY) on_net_view(&v);
     if (drag_index >= 0 &&
         (phase != drag_phase || (phase == GAME_ONLINE_MATCH && v.state.winner))) {
         drag_index = -1;

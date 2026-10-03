@@ -9,7 +9,8 @@
 
     <application
         android:label="PvG3"
-        android:hasCode="false">
+        android:hasCode="false"
+        android:resizeableActivity="true">
 
         <activity
             android:name="android.app.NativeActivity"

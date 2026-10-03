@@ -12,6 +12,42 @@
 #include "font.h"
 #include "online_net.h"
 
+void fake_online_set_levels_enabled(int enabled);
+
+static void custom_level_runtime(void) {
+    fake_online_set_levels_enabled(1);
+    game_init();
+    game_custom_levels_open();
+    on_net_pump_once();
+    OnNetView view;
+    on_net_view(&view);
+    assert(game_phase() == GAME_CUSTOM_LEVELS && view.level_count == 1);
+    assert(!strcmp(view.levels[0].id, "104") &&
+           !strcmp(view.levels[0].title, "Невероятное приключение через тайный мост к финишу") &&
+           !strcmp(view.levels[0].description,
+                   "Найди скрытый мост и монеты, затем доберись до финиша по платформам."));
+
+    game_custom_level_request(view.levels[0].id);
+    on_net_pump_once();
+    on_net_view(&view);
+    assert(view.level_loaded && !strcmp(view.loaded_level.id, "104"));
+    assert(!strcmp(view.loaded_level.description,
+                   "Найди скрытый мост и монеты, затем доберись до финиша по платформам."));
+    assert(view.loaded_level.object_count == 3);
+    game_tick(0, NULL);
+    assert(game_phase() == GAME_CUSTOM_PLAY);
+    float start_x = game_debug_custom_player_x();
+    game_custom_control(1, 0, 0);
+    game_tick(.05f, NULL);
+    assert(game_debug_custom_player_x() > start_x);
+
+    game_custom_level_exit();
+    assert(game_phase() == GAME_CUSTOM_LEVELS);
+    game_custom_level_exit();
+    assert(game_phase() == GAME_MENU);
+    fake_online_set_levels_enabled(0);
+}
+
 /* Match the battle sidebar, the garden header and the 9x5 lawn. */
 static int garden_card_x(int type) { return 260 + type * 130 + 60; }
 static int battle_card_y(int type) { return 137 + type * 107 + 50; }
@@ -101,8 +137,13 @@ int main(void) {
     game_input_press(1130, 50);
     assert(game_phase() == GAME_MENU);
 
-    /* The painted map also opens the selector and level 0 remains replayable. */
-    game_input_press(235, 100);              /* painted map tile */
+    /* The map tile opens the published-player catalog; campaign selection is
+     * kept on its separate, labeled button. */
+    game_input_press(235, 100);
+    assert(game_phase() == GAME_CUSTOM_LEVELS);
+    game_custom_level_exit();
+    assert(game_phase() == GAME_MENU);
+    game_input_press(630, 80);              /* campaign levels */
     assert(game_phase() == GAME_SELECT);
     game_input_press(640, 600);              /* LEVEL 0: cutscene */
     assert(game_phase() == GAME_INTRO && game_level() == 0);
@@ -115,6 +156,9 @@ int main(void) {
     assert(game_debug_coin_balance() == 250 && game_debug_seed_count() == 5);
     game_input_press(1080, 85);              /* garden */
     assert(game_phase() == GAME_GARDEN);
+    assert(game_legacy_plant_drag(GAME_GARDEN, garden_card_x(0), 70,
+                                  cell_x(0), cell_y(0)));
+    assert(!game_legacy_plant_drag(GAME_GARDEN, garden_card_x(0), 70, 20, 20));
     garden_at(2, 0, 1);                       /* Kirill's coin sunflower */
     garden_at(0, 2, 2);                       /* peashooter */
     garden_at(1, 3, 4);                       /* walnut */
@@ -136,13 +180,13 @@ int main(void) {
     assert(game_debug_book_plant() == 3);    /* Jumper's picture and 250 coins */
     game_input_press(320, book_row_y(4));
     assert(game_debug_book_plant() == 4);    /* lily's picture and 25 coins */
-    game_input_press(450, 141);              /* enemy tab, same illustrated duck */
+    game_input_press(450, 141);              /* enemy tab: duck variants and boss */
     game_input_press(320, book_row_y(0));
     assert(game_debug_book_enemy() == 0);    /* original duck: 180 HP */
     game_input_press(320, book_row_y(1));
     assert(game_debug_book_enemy() == 2);    /* cone duck: 420 HP */
     game_input_press(320, book_row_y(2));
-    assert(game_debug_book_enemy() == 3);    /* helmet duck: 750 HP */
+    assert(game_debug_book_enemy() == 3);    /* bucket duck: 750 HP */
     game_input_press(320, book_row_y(3));
     assert(game_debug_book_enemy() == 1);    /* Queen's final robot */
     game_input_press(250, 141);              /* return to illustrated plants */
@@ -178,6 +222,10 @@ int main(void) {
     game_input_press(640, 620);              /* Dima -> Kirill */
     game_input_press(640, 620);              /* Kirill -> battle */
     assert(game_phase() == GAME_PLAY && game_level() == 1);
+    assert(game_legacy_plant_drag(GAME_PLAY, 125, battle_card_y(0),
+                                  cell_x(0), cell_y(0)));
+    assert(!game_legacy_plant_drag(GAME_PLAY, 655, 70,
+                                   cell_x(0), cell_y(0)));
 
     /* Book pauses the wave. Sunflower coins are picked up, not sky income. */
     assert(game_debug_coin_balance() == 250 && game_debug_coin_count() == 0);
@@ -262,7 +310,7 @@ int main(void) {
 
     /* Rewatching level 0 from the selector cannot erase that saved battle. */
     game_input_press(1180, 55);             /* battle -> menu */
-    game_input_press(235, 100);
+    game_input_press(630, 80);
     game_input_press(640, 600);
     assert(game_phase() == GAME_INTRO && game_level() == 0);
     for (int i = 0; i < 3; i++) game_input_press(640, 620);
@@ -367,7 +415,7 @@ int main(void) {
 
     /* A fresh install can pick level 10 directly: only that level is marked. */
     game_init();
-    game_input_press(235, 100);
+    game_input_press(630, 80);
     game_input_press(1070, 470);
     assert(game_phase() == GAME_PLAY && game_level() == 10);
     game_debug_finish_wave(); game_tick(0, NULL);
@@ -383,7 +431,7 @@ int main(void) {
     /* One early duck kill is NOT a victory while seven more still need to
      * spawn. Peashooters actually kill; killing the final duck clears at once. */
     game_init();
-    game_input_press(235, 100); game_input_press(190, 270);
+    game_input_press(630, 80); game_input_press(190, 270);
     seed_at(0, 2, 0);
     game_debug_spawn_duck(2, 500);
     advance(10.0f);
@@ -394,7 +442,7 @@ int main(void) {
 
     /* Even with spawning finished, level 10's boss waits for the LAST duck. */
     game_init();
-    game_input_press(235, 100); game_input_press(1070, 470);
+    game_input_press(630, 80); game_input_press(1070, 470);
     game_debug_finish_wave();
     game_debug_spawn_duck(2, 900);
     game_tick(0, NULL);
@@ -404,7 +452,7 @@ int main(void) {
 
     /* A mower still sweeps the first lawn cell after the sidebar moves. */
     game_init();
-    game_input_press(235, 100);
+    game_input_press(630, 80);
     game_input_press(190, 270);
     game_debug_spawn_duck(1, 310);
     game_tick(0.05f, NULL);
@@ -423,7 +471,7 @@ int main(void) {
     /* The 250-coin Jumper works against a single drawn duck. It vanishes on
      * impact and knocks that duck back exactly three cells, without a kill. */
     game_init();
-    game_input_press(235, 100);
+    game_input_press(630, 80);
     game_input_press(190, 270);              /* choose level 1, no intro */
     assert(game_phase() == GAME_PLAY && game_debug_coin_balance() == 250);
     seed_at(3, 2, 5);
@@ -488,7 +536,7 @@ int main(void) {
     /* Level 5 uses the author's canal map: rows 2 and 3 (zero-based 1,2)
      * need a lily BEFORE any normal plant. Land still accepts normal plants. */
     game_init();
-    game_input_press(235, 100);
+    game_input_press(630, 80);
     game_input_press(1070, 270);             /* choose level 5 */
     assert(game_phase() == GAME_PLAY && game_level() == 5);
     assert(game_debug_coin_balance() == 370);
@@ -552,10 +600,10 @@ int main(void) {
     seed_at(0, 1, 2);                         /* water becomes ordinary grass */
     assert(game_debug_plant_type(1, 2) == 0);
 
-    /* Cone and helmet are tougher versions of the SAME illustrated duck;
+    /* The cone and bucket have separate artwork and are tougher than the base duck;
      * both count toward the wave and survive a V6 campaign save/load. */
     game_init();
-    game_input_press(235, 100); game_input_press(190, 270);
+    game_input_press(630, 80); game_input_press(190, 270);
     game_debug_spawn_armored_duck(0, 800, 2);
     game_debug_spawn_armored_duck(1, 960, 3);
     assert(game_debug_first_enemy_type() == 2);
@@ -580,6 +628,7 @@ int main(void) {
     for (int i = 0; i < 12 * 60; i++) game_tick(1.0f / 60, NULL);
     assert(game_phase() == GAME_PLAY && game_level() == 1);
 
-    puts("OK: water/lilies, cone and helmet ducks, enemy book, V1-V6 saves and Cyrillic font");
+    custom_level_runtime();
+    puts("OK: campaign, native level catalog/runtime, touch movement, saves and Cyrillic font");
     return 0;
 }

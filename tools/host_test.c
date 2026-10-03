@@ -64,7 +64,7 @@ int main(void) {
     write_bmp("shots/online_search.bmp", GAME_W, GAME_H, fb);
     game_input_press(950, 133);
     game_input_press(1140, 55);             /* back to offline menu */
-    game_input_press(235, 100);             /* УРОВНИ */
+    game_input_press(630, 80);              /* кампанийные уровни */
     game_tick(0, fb);
     write_bmp("shots/select.bmp", GAME_W, GAME_H, fb);
     game_input_press(640, 600);             /* level 0: replayable story */
@@ -105,9 +105,9 @@ int main(void) {
     game_input_press(320, 160 + 1 * 99 + 44); /* cone duck */
     game_tick(0, fb);
     write_bmp("shots/book_cone.bmp", GAME_W, GAME_H, fb);
-    game_input_press(320, 160 + 2 * 99 + 44); /* helmet duck */
+    game_input_press(320, 160 + 2 * 99 + 44); /* bucket duck */
     game_tick(0, fb);
-    write_bmp("shots/book_helmet.bmp", GAME_W, GAME_H, fb);
+    write_bmp("shots/book_bucket.bmp", GAME_W, GAME_H, fb);
     game_input_press(250, 141);             /* back to the plant tab */
     game_input_press(1130, 50);             /* garden */
     game_input_press(1160, 60);             /* menu */
@@ -140,7 +140,7 @@ int main(void) {
     write_bmp("shots/armored_ducks.bmp", GAME_W, GAME_H, fb);
 
     game_init();
-    game_input_press(235, 100);            /* level selector */
+    game_input_press(630, 80);             /* campaign level selector */
     game_input_press(1070, 270);           /* level 5: author's water map */
     assert(game_phase() == GAME_PLAY && game_level() == 5);
     game_tick(0, fb);

@@ -49,7 +49,7 @@
         <div class="lobby-top"><div><span class="eyebrow">ВЫ В КОМНАТЕ</span><h1 id="lobby-title">Выбери сторону</h1><p class="muted" id="lobby-subtitle">Ждём соперника…</p></div>
           <div class="code-panel"><span class="overline">КОД КОМНАТЫ</span><strong id="room-code">------</strong><button type="button" id="share">Скопировать ссылку ↗</button></div></div>
         <div class="sides"><button type="button" class="side-card plant-side" data-side="plants"><div class="side-art"><img src="../assets/art/peashooter.png" alt="Горохострел"><img src="../assets/art/coin-sunflower.png" alt="Подсолнух"></div><span class="overline">ЗАЩИТА</span><h2>Растения</h2><p>Сажай растения Кирилла, подбирай монеты и не дай уткам пройти к дому.</p><b id="plants-taken">Свободно</b></button>
-          <button type="button" class="side-card duck-side" data-side="zombies"><div class="side-art"><img src="../assets/art/zombie-duck.png" alt="Утка-зомби"><span class="cone-emoji">▲</span></div><span class="overline">НАСТУПЛЕНИЕ</span><h2>Зомби-утки</h2><p>Покупай уток, выбирай ряд и прорвись через растения. Конус и шлем дают больше здоровья.</p><b id="zombies-taken">Свободно</b></button></div>
+          <button type="button" class="side-card duck-side" data-side="zombies"><div class="side-art"><img src="../assets/art/zombie-duck.png" alt="Утка-зомби"><img src="../assets/art/duck-cone.png" alt="Утка с конусом"><img src="../assets/art/duck-bucket.png" alt="Утка с ведром"></div><span class="overline">НАСТУПЛЕНИЕ</span><h2>Зомби-утки</h2><p>Покупай уток, выбирай ряд и прорвись через растения. Конус и ведро дают больше здоровья.</p><b id="zombies-taken">Свободно</b></button></div>
         <div class="lobby-bottom" id="lobby-status">Оба игрока выбирают разные стороны. Бой начнётся автоматически.</div>
       </section>
 
@@ -65,7 +65,7 @@
   <dialog id="book-dialog" class="book-dialog"><form method="dialog"><button class="book-close" aria-label="Закрыть" type="submit">×</button></form>
     <span class="eyebrow">УМНАЯ КНИГА КИРИЛЛА</span><h2>Растения и противники</h2>
     <div class="book-columns"><div><h3>Растения Кирилла</h3><div id="book-plants"></div></div><div><h3>Утки-зомби</h3><div id="book-ducks"></div></div></div>
-    <p class="book-footer">Конус и шлем нарисованы поверх <strong>того же рисунка утки</strong> — это не новые персонажи.</p>
+    <p class="book-footer">Обычная утка, утка с конусом и утка с ведром показаны на отдельных авторских рисунках.</p>
   </dialog>
   <audio id="soundtrack" src="../assets/music/kirill-pond-loop.wav" preload="none" loop></audio>
   <script type="module" src="./app.js"></script>

@@ -25,6 +25,22 @@ static struct {
 } db;
 static const char *FAKE_GUEST = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 static const char *FAKE_HOST = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+static const char *TEST_LEVEL_INDEX =
+    "{\"104\":{\"id\":\"104\",\"title\":\"Невероятное приключение через тайный мост к финишу\","
+    "\"description\":\"Найди скрытый мост и монеты, затем доберись до финиша по платформам.\",\"updatedAt\":1}}";
+static const char *TEST_LEVEL =
+    "{\"format\":\"PVG3-PUBLISHED-LEVEL\",\"version\":1,\"id\":\"104\","
+    "\"title\":\"Невероятное приключение через тайный мост к финишу\","
+    "\"description\":\"Найди скрытый мост и монеты, затем доберись до финиша по платформам.\","
+    "\"project\":{\"format\":\"PVG3-MAKER\","
+    "\"version\":1,\"title\":\"Невероятное приключение через тайный мост к финишу\",\"description\":\"Найди скрытый мост и монеты, затем доберись до финиша по платформам.\",\"levelId\":\"104\","
+    "\"templateId\":\"classic\",\"width\":16,\"height\":10,\"objects\":["
+    "{\"id\":1,\"type\":\"ground\",\"name\":\"Ground\",\"x\":0,\"y\":9,"
+    "\"w\":16,\"h\":1,\"angle\":0,\"color\":\"#64844c\",\"number\":0,\"visible\":true},"
+    "{\"id\":2,\"type\":\"player\",\"name\":\"Start\",\"x\":1,\"y\":8.12,"
+    "\"w\":0.65,\"h\":0.85,\"angle\":0,\"color\":\"#7db9dd\",\"number\":0,\"visible\":true},"
+    "{\"id\":3,\"type\":\"goal\",\"name\":\"Goal\",\"x\":14.7,\"y\":7.8,"
+    "\"w\":0.8,\"h\":1.2,\"angle\":0,\"color\":\"#e8cf77\",\"number\":0,\"visible\":true}]},\"updatedAt\":1}";
 
 static int64_t epoch_ms(void) {
     struct timespec ts;clock_gettime(CLOCK_REALTIME, &ts);
@@ -67,6 +83,10 @@ static int answer(char *response, size_t cap, const char *text, int status) {
 }
 int on_http_request(const char *path, const char *method, const char *body,
                     const char *if_match, char *response, size_t cap) {
+    if (!strcmp(path, "levels-index.json") && !strcmp(method, "GET"))
+        return answer(response, cap, TEST_LEVEL_INDEX, 200);
+    if (!strcmp(path, "levels/104.json") && !strcmp(method, "GET"))
+        return answer(response, cap, TEST_LEVEL, 200);
     if (!strcmp(path, "rooms.json") && !strcmp(method, "GET")) {
         if (!db.present) return answer(response, cap, "null", 200);
         char all[ON_STATE_JSON_CAP + 1050];
@@ -225,6 +245,25 @@ static int run_lvgl_test(void) {
     assert(lvgl_ui_init());
     game_set_lvgl_ui(1);
     ui_snapshot("menu");
+    ui_tap(557, 82);assert(game_phase() == GAME_CUSTOM_LEVELS);
+    tick_pump(2);ui_snapshot("custom_levels");
+    OnNetView catalog = view();
+    assert(catalog.level_count == 1 && !strcmp(catalog.levels[0].id, "104") &&
+           !strcmp(catalog.levels[0].title,
+                   "Невероятное приключение через тайный мост к финишу") &&
+           !strcmp(catalog.levels[0].description,
+                   "Найди скрытый мост и монеты, затем доберись до финиша по платформам."));
+    ui_tap(185, 318);tick_pump(3);
+    assert(game_phase() == GAME_CUSTOM_PLAY);
+    float custom_x = game_debug_custom_player_x();
+    assert(lvgl_ui_pointer(230, 591, 1));
+    for (int i = 0; i < 8; ++i) game_tick(.05f, NULL);
+    assert(lvgl_ui_pointer(230, 591, 0));
+    assert(game_debug_custom_player_x() > custom_x + 50);
+    ui_tap(1140, 55);assert(game_phase() == GAME_CUSTOM_LEVELS);
+    ui_snapshot("custom_level_return");
+    ui_tap(1150, 76);assert(game_phase() == GAME_MENU);
+    ui_snapshot("menu_after_custom");
     ui_tap(1090, 79);assert(game_phase() == GAME_GARDEN);
     ui_snapshot("garden");
     /* Unoccupied soil/wood must be pixel-for-pixel from the author's PNG,
@@ -252,7 +291,7 @@ static int run_lvgl_test(void) {
     GameOfflineUIState offline;
     game_offline_ui_snapshot(&offline);
     assert(offline.book_enemy_tab == 1 && offline.book_selection == 2);
-    ui_snapshot("book_helmet");
+    ui_snapshot("book_bucket");
     ui_tap(225, 525);ui_snapshot("book_robot");
     ui_tap(1150, 76);assert(game_phase() == GAME_GARDEN);
     ui_tap(1150, 44);assert(game_phase() == GAME_MENU);
@@ -306,7 +345,8 @@ static int run_lvgl_test(void) {
     assert(game_save_export(before, bytes));
     ui_tap(1030, 611);assert(game_phase() == GAME_ONLINE_ROOMS);
     tick_pump(1);ui_snapshot("rooms_empty");
-    ui_tap(817, 209);ui_snapshot("search");
+    /* Catalog browsing and custom levels remain separate from online rooms. */
+    ui_tap(727, 210);ui_snapshot("search");
     ui_tap(307, 313);ui_snapshot("search_typed");
     ui_tap(948, 234);ui_tap(948, 137);
     ui_tap(384, 219);ui_tap(1060, 207);
@@ -330,7 +370,7 @@ static int run_lvgl_test(void) {
     ui_snapshot("match_lily_cooldown");
     ui_tap(1141, 75);tick_pump(2);
     assert(game_phase() == GAME_ONLINE_ROOMS && !db.present);
-    /* List join remains distinct from '+' and the square search button. */
+    /* List join remains distinct from room creation and search. */
     db.present = 1;db.map = 1;db.host_ping = epoch_ms();
     strcpy(db.room_id, "ABCDEF");strcpy(db.host_id, FAKE_HOST);
     db.host_role = ON_ROLE_PLANTS;db.guest_id[0] = 0;
@@ -359,8 +399,8 @@ static int run_lvgl_test(void) {
     db.host_ping = epoch_ms();
     on_net_refresh();tick_pump(2);
     ui_snapshot("rooms_after_guest");
-    ui_tap(818, 210);
-    /* The square search action is not '+': it accepts all six real keys. */
+    ui_tap(727, 210);
+    /* Search is separate from room creation actions. */
     for (int i = 0; i < 6; ++i) ui_tap(316 + i * 78, 314);
     ui_snapshot("search_complete");
     ui_tap(640, 625);tick_pump(2);
@@ -375,7 +415,7 @@ static int run_lvgl_test(void) {
     lvgl_ui_shutdown();
     game_set_lvgl_ui(0);
     on_net_shutdown();
-    puts("LVGL uncluttered UI, drag planting, cooldown art, cancel, quick taps, both online roles and saves passed");
+    puts("Legacy and LVGL UI, native published-level list/play and joystick, drag planting, both online roles and saves passed");
     return 0;
 }
 #endif

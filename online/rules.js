@@ -1,6 +1,6 @@
 /* PvG3 Online: the room creator alone simulates the match; the second player
  * sends commands and draws the creator's snapshots. Pure logic, no DOM/network.
- * Only the author's duck PNG is used for all three duck types. */
+ * Each duck variant uses its matching author-drawn PNG. */
 export const W = 1280, H = 720, ROWS = 5, COLS = 9;
 export const X = 250, Y = 120, CW = 114, CH = 112;
 export const WAVE = 18;
@@ -12,9 +12,9 @@ export const PLANTS = [
   {id: 4, name: 'Кувшинка', cost: 25, hp: 300, cooldown: 7.5, image: 'lily-pad.png', detail: 'Только на водной карте: опора для посадки растений.'},
 ];
 export const DUCKS = [
-  {id: 0, name: 'Утка-зомби', cost: 50, hp: 180, cooldown: 2, detail: 'Обычная нарисованная утка-противник.'},
-  {id: 2, name: 'Утка с конусом', cost: 100, hp: 420, cooldown: 3, detail: 'Конус защищает ту же утку: 420 здоровья.'},
-  {id: 3, name: 'Утка в шлеме', cost: 175, hp: 750, cooldown: 5, detail: 'Шлем защищает ту же утку: 750 здоровья.'},
+  {id: 0, name: 'Утка-зомби', image: 'zombie-duck.png', cost: 50, hp: 180, cooldown: 2, detail: 'Обычная нарисованная утка-противник.'},
+  {id: 2, name: 'Утка с конусом', image: 'duck-cone.png', cost: 100, hp: 420, cooldown: 3, detail: 'Конус защищает утку: 420 здоровья.'},
+  {id: 3, name: 'Утка с ведром', image: 'duck-bucket.png', cost: 175, hp: 750, cooldown: 5, detail: 'Ведро защищает утку: 750 здоровья.'},
 ];
 const coinValue = 25;
 const cell = (r, c) => r * COLS + c;

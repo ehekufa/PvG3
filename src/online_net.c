@@ -17,7 +17,8 @@
 
 enum { A_NONE, A_CREATE, A_JOIN, A_ROLE, A_LEAVE, A_REFRESH };
 enum { T_IDLE, T_CREATE, T_JOIN, T_ROLE, T_LEAVE, T_REFRESH,
-       T_LIST, T_POLL, T_HEARTBEAT, T_COMMAND, T_PUBLISH };
+       T_LIST, T_POLL, T_HEARTBEAT, T_COMMAND, T_PUBLISH,
+       T_LEVEL_LIST, T_LEVEL_GET };
 
 typedef struct {
     OnNetView view;
@@ -33,6 +34,9 @@ typedef struct {
     unsigned pub_revision, sent_revision;
     int next_seq;
     int64_t next_list, next_room, next_ping, next_publish;
+    int level_list_requested, level_fetch_requested;
+    unsigned level_generation;
+    char level_fetch_id[ON_LEVEL_ID_SIZE];
     char *response;
 } Net;
 static Net net;
@@ -179,6 +183,41 @@ void on_net_refresh(void) {
     if (net.view.mode == ON_NET_ROOMS) net.next_list = 0;
     pthread_mutex_unlock(&mu);
 }
+void on_net_levels_refresh(void) {
+    pthread_mutex_lock(&mu);
+    net.level_list_requested = 1;
+    net.level_fetch_requested = 0;
+    net.level_generation++;
+    net.view.levels_busy = 1;
+    net.view.level_loaded = 0;
+    net.view.levels_notice[0] = 0;
+    pthread_mutex_unlock(&mu);
+}
+void on_net_level_fetch(const char *id) {
+    if (!on_protocol_valid_level_id(id)) return;
+    pthread_mutex_lock(&mu);
+    net.level_fetch_requested = 1;
+    net.level_list_requested = 0;
+    net.level_generation++;
+    snprintf(net.level_fetch_id, sizeof net.level_fetch_id, "%s", id);
+    net.view.levels_busy = 1;
+    net.view.level_loaded = 0;
+    net.view.levels_notice[0] = 0;
+    pthread_mutex_unlock(&mu);
+}
+void on_net_level_cancel(void) {
+    pthread_mutex_lock(&mu);
+    net.level_fetch_requested = net.level_list_requested = 0;
+    net.level_generation++;
+    net.view.levels_busy = 0;
+    net.view.level_loaded = 0;
+    pthread_mutex_unlock(&mu);
+}
+void on_net_level_consumed(void) {
+    pthread_mutex_lock(&mu);
+    net.view.level_loaded = 0;
+    pthread_mutex_unlock(&mu);
+}
 void on_net_create(int map) {
     pthread_mutex_lock(&mu);
     if (net.view.mode == ON_NET_ROOMS && !net.view.busy) {
@@ -258,8 +297,9 @@ int on_net_send(OnCommand command) {
 
 void on_net_pump_once(void) {
     int task = T_IDLE, map = 1, role = 0, slot = 0;
-    unsigned gen;
+    unsigned gen, level_gen;
     char id[ON_ROOM_ID_SIZE] = {0}, player[ON_PLAYER_ID_SIZE] = {0};
+    char level_id[ON_LEVEL_ID_SIZE] = {0};
     OnCommand command = {0};
     OnMatch state;
     unsigned revision = 0;
@@ -269,9 +309,16 @@ void on_net_pump_once(void) {
         (net.view.mode == ON_NET_CLOSED && net.action != A_LEAVE)) {
         pthread_mutex_unlock(&mu);return;
     }
-    gen = net.generation;
+    gen = net.generation;level_gen = net.level_generation;
     memcpy(player, net.player_id, sizeof(player));
-    if (net.action) {
+    if (net.level_fetch_requested) {
+        task = T_LEVEL_GET;
+        memcpy(level_id, net.level_fetch_id, sizeof(level_id));
+        net.level_fetch_requested = 0;
+    } else if (net.level_list_requested) {
+        task = T_LEVEL_LIST;
+        net.level_list_requested = 0;
+    } else if (net.action) {
         task = net.action == A_CREATE ? T_CREATE : net.action == A_JOIN ? T_JOIN :
                net.action == A_ROLE ? T_ROLE : net.action == A_LEAVE ? T_LEAVE : T_REFRESH;
         net.action = A_NONE;
@@ -301,6 +348,57 @@ void on_net_pump_once(void) {
 
     char path[96], body[256];
     int code;
+    if (task == T_LEVEL_LIST) {
+        code = request("levels-index.json", "GET", NULL, NULL);
+        if (code != 200) {
+            pthread_mutex_lock(&mu);
+            if (level_gen == net.level_generation) {
+                net.view.levels_busy = 0;
+                snprintf(net.view.levels_notice, sizeof net.view.levels_notice,
+                    code == 401 || code == 403 ?
+                    "Firebase запретил чтение /levels-index. Проверь правила." :
+                    "Не удалось получить каталог уровней. Проверь интернет.");
+            }
+            pthread_mutex_unlock(&mu);return;
+        }
+        OnPublishedLevelSummary levels[ON_LEVEL_LIST_CAP];
+        int count = on_protocol_level_index(net.response, levels, ON_LEVEL_LIST_CAP);
+        pthread_mutex_lock(&mu);
+        if (level_gen == net.level_generation) {
+            net.view.levels_busy = 0;
+            net.view.level_loaded = 0;
+            if (count < 0) {
+                snprintf(net.view.levels_notice, sizeof net.view.levels_notice,
+                         "Каталог уровней повреждён или слишком велик.");
+            } else {
+                memcpy(net.view.levels, levels, (size_t)count * sizeof levels[0]);
+                net.view.level_count = count;net.view.levels_notice[0] = 0;
+            }
+        }
+        pthread_mutex_unlock(&mu);return;
+    }
+    if (task == T_LEVEL_GET) {
+        snprintf(path, sizeof path, "levels/%s.json", level_id);
+        code = request(path, "GET", NULL, NULL);
+        OnPublishedLevel loaded;
+        int valid = code == 200 && on_protocol_published_level(net.response, level_id, &loaded);
+        pthread_mutex_lock(&mu);
+        if (level_gen == net.level_generation) {
+            net.view.levels_busy = 0;
+            net.view.level_loaded = valid;
+            if (valid) {
+                net.view.loaded_level = loaded;
+                net.view.levels_notice[0] = 0;
+            } else {
+                snprintf(net.view.levels_notice, sizeof net.view.levels_notice,
+                    code == 401 || code == 403 ?
+                    "Firebase запретил чтение уровня. Проверь правила /levels." :
+                    code == 200 ? "Уровень не найден или его формат не поддерживается." :
+                    "Не удалось загрузить уровень. Проверь интернет.");
+            }
+        }
+        pthread_mutex_unlock(&mu);return;
+    }
     if (task == T_REFRESH) {on_net_refresh();return;}
     if (task == T_LIST) {
         code = request("rooms.json", "GET", NULL, NULL);

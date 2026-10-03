@@ -12,7 +12,8 @@
 /* Public phases (use these names rather than assuming integer values). */
 enum { GAME_MENU, GAME_INTRO, GAME_PLAY, GAME_LEVEL_CLEAR, GAME_WIN, GAME_LOSE,
        GAME_GARDEN, GAME_BOOK, GAME_SELECT,
-       GAME_ONLINE_ROOMS, GAME_ONLINE_LOBBY, GAME_ONLINE_MATCH };
+       GAME_ONLINE_ROOMS, GAME_ONLINE_LOBBY, GAME_ONLINE_MATCH,
+       GAME_CUSTOM_LEVELS, GAME_CUSTOM_PLAY };
 
 /* Reset the game back to the title screen. */
 void game_init(void);
@@ -38,8 +39,15 @@ int game_save_import(const void *src, size_t length);
 /* Pointer events in virtual coordinates (0..GAME_W, 0..GAME_H). */
 void game_input_press(int x, int y);
 void game_input_release(int x, int y);
+/* True when a legacy seed/garden packet drag can be committed onto the lawn. */
+int game_legacy_plant_drag(int phase, int from_x, int from_y, int to_x, int to_y);
 /* The menu's ONLINE button enters native rooms inside this game; networking
  * runs on a separate thread. The campaign and garden save formats exclude it. */
+void game_custom_levels_open(void);
+void game_custom_levels_refresh(void);
+void game_custom_level_request(const char *id);
+void game_custom_level_exit(void);
+void game_custom_control(int horizontal, int jump, int trigger);
 
 /* Advance by dt seconds. If fb is non-NULL, render to GAME_W*GAME_H pixels
  * in RGBA8 byte order. Pass NULL to simulate without drawing (tests). */
@@ -86,6 +94,7 @@ int game_debug_mower_used(int row);
 int game_debug_coin_balance(void);
 int game_debug_coin_count(void);
 float game_debug_cooldown(int plant);
+float game_debug_custom_player_x(void);
 int game_debug_garden_plant_type(int row, int col);
 int game_debug_book_plant(void);
 int game_debug_book_enemy(void);

@@ -1,6 +1,6 @@
 /* Firebase Realtime Database REST adapter. No SDK, password, API key, or
- * privileged service account is embedded in the website or the APK. The
- * database must permit the relevant /rooms reads/writes for this demo. */
+ * privileged service account is embedded in the website or the APK. Demo
+ * rules must permit the relevant /rooms and public-level catalog operations. */
 export const DATABASE = 'https://pvg3-ae824-default-rtdb.firebaseio.com';
 const ROOM_PATH = 'rooms';
 const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';

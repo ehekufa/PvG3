@@ -292,17 +292,11 @@ function populateBook() {
   }
   for (const d of DUCKS) {
     const item = document.createElement('div');item.className = 'book-entry';
-    const pic = document.createElement('div');pic.className = 'book-duck-art';
-    const img = document.createElement('img');img.src = '../assets/art/zombie-duck.png';img.alt = '';
-    pic.append(img);
-    if (d.id === 2 || d.id === 3) {
-      const hat = document.createElement('span');hat.className = d.id === 3 ? 'hat helmet' : 'hat';
-      hat.textContent = d.id === 2 ? '▲' : '●';pic.append(hat);
-    }
+    const img = document.createElement('img');img.src = `../assets/art/${d.image}`;img.alt = '';
     const text = document.createElement('div');
     const name = document.createElement('strong');name.textContent = d.name;
     const detail = document.createElement('small');detail.textContent = `${d.cost} монет · ${d.hp} HP. ${d.detail}`;
-    text.append(name, detail);item.append(pic, text);$('book-ducks').append(item);
+    text.append(name, detail);item.append(img, text);$('book-ducks').append(item);
   }
 }
 

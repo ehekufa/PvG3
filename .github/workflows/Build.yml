@@ -121,9 +121,32 @@ jobs:
           "$TC/armv7a-linux-androideabi29-clang" $CFLAGS -shared $SRC $LIBS \
             -o staging/lib/armeabi-v7a/libpvg3.so
 
-      - name: Package, align and sign single APK
+      - name: Prepare persistent Android signing key
+        env:
+          PVG3_KEYSTORE_BASE64: ${{ secrets.PVG3_KEYSTORE_BASE64 }}
+          PVG3_KEYSTORE_PASSWORD: ${{ secrets.PVG3_KEYSTORE_PASSWORD }}
+          PVG3_KEY_ALIAS: ${{ secrets.PVG3_KEY_ALIAS }}
+          PVG3_KEY_PASSWORD: ${{ secrets.PVG3_KEY_PASSWORD }}
         run: |
-          set -e
+          set -euo pipefail
+          if [[ -z "$PVG3_KEYSTORE_BASE64" || -z "$PVG3_KEYSTORE_PASSWORD" || \
+                -z "$PVG3_KEY_ALIAS" || -z "$PVG3_KEY_PASSWORD" ]]; then
+            echo "::error::Configure PVG3_KEYSTORE_BASE64, PVG3_KEYSTORE_PASSWORD, PVG3_KEY_ALIAS and PVG3_KEY_PASSWORD in GitHub Actions secrets."
+            exit 1
+          fi
+          umask 077
+          printf '%s' "$PVG3_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/pvg3-release.jks"
+          keytool -list -keystore "$RUNNER_TEMP/pvg3-release.jks" \
+            -storepass "$PVG3_KEYSTORE_PASSWORD" -alias "$PVG3_KEY_ALIAS" >/dev/null
+          echo "Persistent Android signing key is ready."
+
+      - name: Package, align and sign single APK
+        env:
+          PVG3_KEYSTORE_PASSWORD: ${{ secrets.PVG3_KEYSTORE_PASSWORD }}
+          PVG3_KEY_ALIAS: ${{ secrets.PVG3_KEY_ALIAS }}
+          PVG3_KEY_PASSWORD: ${{ secrets.PVG3_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
           SDK="$ANDROID_HOME"
           BT="$SDK/build-tools/34.0.0"
 
@@ -139,19 +162,30 @@ jobs:
           cp assets/music/kirill-pond-loop.wav staging/assets/music/
           cp assets/voice/intro-{bread,dima,kirill}.wav staging/assets/voice/
 
-          "$BT/aapt" package -f -M AndroidManifest.xml \
+          # Each CI artifact has a strictly increasing version so Android
+          # accepts it as an update when signed with the same persistent key.
+          VERSION_CODE=$((100000 + GITHUB_RUN_NUMBER))
+          VERSION_NAME="2.2.${GITHUB_RUN_NUMBER}"
+          sed -E \
+            -e "s/android:versionCode=\"[0-9]+\"/android:versionCode=\"$VERSION_CODE\"/" \
+            -e "s/android:versionName=\"[^\"]+\"/android:versionName=\"$VERSION_NAME\"/" \
+            AndroidManifest.xml > "$RUNNER_TEMP/pvg3-AndroidManifest.xml"
+
+          "$BT/aapt" package -f -M "$RUNNER_TEMP/pvg3-AndroidManifest.xml" \
             -I "$SDK/platforms/android-34/android.jar" \
             -F unsigned.apk ./staging/
 
           "$BT/zipalign" -f 4 unsigned.apk aligned.apk
 
-          keytool -genkey -v -keystore pvg3.keystore -storepass android \
-            -alias pvg3 -keypass android -keyalg RSA -keysize 2048 \
-            -validity 10000 -dname "CN=PvG3" 2>/dev/null || true
-
-          "$BT/apksigner" sign --ks pvg3.keystore --ks-pass pass:android \
+          "$BT/apksigner" sign \
+            --ks "$RUNNER_TEMP/pvg3-release.jks" \
+            --ks-key-alias "$PVG3_KEY_ALIAS" \
+            --ks-pass env:PVG3_KEYSTORE_PASSWORD \
+            --key-pass env:PVG3_KEY_PASSWORD \
             --out PvG3.apk aligned.apk
           "$BT/apksigner" verify --verbose PvG3.apk
+          "$BT/aapt" dump badging PvG3.apk | \
+            grep "versionCode='$VERSION_CODE' versionName='$VERSION_NAME'"
           "$BT/aapt" dump permissions PvG3.apk | grep 'android.permission.INTERNET'
           unzip -l PvG3.apk | grep 'lib/arm64-v8a/libpvg3.so'
           unzip -l PvG3.apk | grep 'lib/armeabi-v7a/libpvg3.so'
@@ -163,6 +197,10 @@ jobs:
           unzip -l PvG3.apk | grep 'assets/voice/intro-bread.wav'
           unzip -l PvG3.apk | grep 'assets/voice/intro-dima.wav'
           unzip -l PvG3.apk | grep 'assets/voice/intro-kirill.wav'
+
+      - name: Remove temporary signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/pvg3-release.jks"
 
       - uses: actions/upload-artifact@v4
         with:
