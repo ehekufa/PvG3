@@ -182,8 +182,26 @@ export function isPublishedRecord(record, expectedId = record?.id) {
 }
 
 export function resolveControlMode(preference, coarsePointer) {
-  if (['buttons', 'joystick', 'keyboard'].includes(preference)) return preference;
+  if (preference === 'buttons' || preference === 'keyboard') return preference;
   return coarsePointer ? 'buttons' : 'keyboard';
+}
+
+export function createTouchButtonState() {
+  const held = {back: new Set(), forward: new Set()};
+  const pointers = new Map();
+  return {
+    press(pointerId, direction) {
+      if (!Object.hasOwn(held, direction) || pointers.has(pointerId)) return false;
+      pointers.set(pointerId, direction);held[direction].add(pointerId);return true;
+    },
+    release(pointerId) {
+      const direction = pointers.get(pointerId);
+      if (!direction) return false;
+      pointers.delete(pointerId);held[direction].delete(pointerId);return true;
+    },
+    clear() {held.back.clear();held.forward.clear();pointers.clear();},
+    get axis() {return Number(held.forward.size > 0) - Number(held.back.size > 0);},
+  };
 }
 
 export function createPreviewState(level) {

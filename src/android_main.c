@@ -349,10 +349,48 @@ static int legacy_renderer_phase(int phase) {
            phase == GAME_GARDEN || phase == GAME_BOOK || phase == GAME_SELECT;
 }
 
+static int32_t custom_multitouch_input(AInputEvent *ev, int action) {
+    int masked = action & AMOTION_EVENT_ACTION_MASK;
+    int index = (action & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >>
+                AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
+    if (masked == AMOTION_EVENT_ACTION_CANCEL) {
+        (void)lvgl_ui_cancel();
+        return 1;
+    }
+    if (masked == AMOTION_EVENT_ACTION_MOVE) {
+        size_t count = AMotionEvent_getPointerCount(ev);
+        for (size_t i = 0; i < count; ++i) {
+            int id = AMotionEvent_getPointerId(ev, i), x = -1, y = -1;
+            (void)screen_to_game(G, AMotionEvent_getX(ev, i),
+                                 AMotionEvent_getY(ev, i), 0, &x, &y);
+            (void)lvgl_ui_touch_pointer(id, x, y, 1);
+        }
+        return 1;
+    }
+    if (masked == AMOTION_EVENT_ACTION_DOWN ||
+        masked == AMOTION_EVENT_ACTION_POINTER_DOWN ||
+        masked == AMOTION_EVENT_ACTION_UP ||
+        masked == AMOTION_EVENT_ACTION_POINTER_UP) {
+        size_t count = AMotionEvent_getPointerCount(ev);
+        if ((size_t)index >= count) return 1;
+        int id = AMotionEvent_getPointerId(ev, (size_t)index), x = -1, y = -1;
+        (void)screen_to_game(G, AMotionEvent_getX(ev, (size_t)index),
+                             AMotionEvent_getY(ev, (size_t)index), 0, &x, &y);
+        int pressed = masked == AMOTION_EVENT_ACTION_DOWN ||
+                      masked == AMOTION_EVENT_ACTION_POINTER_DOWN;
+        (void)lvgl_ui_touch_pointer(id, x, y, pressed);
+        return 1;
+    }
+    return 1;
+}
+
 static int32_t on_input(struct android_app *app, AInputEvent *ev) {
     if (AInputEvent_getType(ev) != AINPUT_EVENT_TYPE_MOTION) return 0;
     if (!G->ready || !G->resumed || !G->focused) return 0;
-    int action = AMotionEvent_getAction(ev) & AMOTION_EVENT_ACTION_MASK;
+    int raw_action = AMotionEvent_getAction(ev);
+    int action = raw_action & AMOTION_EVENT_ACTION_MASK;
+    if (game_phase() == GAME_CUSTOM_PLAY && G->ui_ready)
+        return custom_multitouch_input(ev, raw_action);
     float sx = AMotionEvent_getX(ev, 0);
     float sy = AMotionEvent_getY(ev, 0);
     int vx = 0, vy = 0;

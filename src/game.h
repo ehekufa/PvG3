@@ -108,6 +108,7 @@ int game_debug_coin_balance(void);
 int game_debug_coin_count(void);
 float game_debug_cooldown(int plant);
 float game_debug_custom_player_x(void);
+float game_debug_custom_player_y(void);
 int game_debug_garden_plant_type(int row, int col);
 int game_debug_book_plant(void);
 int game_debug_book_enemy(void);

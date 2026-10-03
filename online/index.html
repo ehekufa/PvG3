@@ -130,17 +130,14 @@
           <div class="canvas-wrap ws-canvas-wrap"><canvas id="ws-preview-canvas" width="1280" height="720" aria-label="Предпросмотр платформерного уровня"></canvas></div>
           <div class="ws-control-panel">
             <label class="ws-control-select">Управление
-              <select id="ws-control-select"><option value="auto">Авто</option><option value="buttons">Кнопки</option><option value="joystick">Джойстик</option><option value="keyboard">Клавиатура</option></select>
+              <select id="ws-control-select"><option value="auto">Авто</option><option value="buttons">Кнопки</option><option value="keyboard">Клавиатура</option></select>
             </label>
-            <p id="ws-control-help" class="muted">На телефоне можно выбрать кнопки или джойстик.</p>
+            <p id="ws-control-help" class="muted">На телефоне доступны экранные кнопки; нажимай направление и прыжок одновременно.</p>
             <div class="ws-touch-controls hidden" id="ws-buttons-controls" aria-label="Экранные кнопки">
-              <button type="button" data-ws-hold="left" aria-label="Влево">◀</button><button type="button" data-ws-hold="right" aria-label="Вправо">▶</button>
-              <button type="button" data-ws-press="jump">ПРЫЖОК</button><button type="button" data-ws-press="trigger">ДЕЙСТВИЕ</button>
-            </div>
-            <div class="ws-joystick-row hidden" id="ws-joystick-controls">
-              <div class="ws-joystick" id="ws-joystick" role="application" aria-label="Джойстик: веди влево или вправо"><span></span></div>
-              <button class="ws-jump" type="button" data-ws-press="jump">ПРЫЖОК</button>
-              <button class="ws-action" type="button" data-ws-press="trigger">ДЕЙСТВИЕ</button>
+              <button type="button" data-ws-hold="back" aria-label="Назад"><span class="ws-control-arrow ws-arrow-back" aria-hidden="true"></span><span>НАЗАД</span></button>
+              <button type="button" data-ws-hold="forward" aria-label="Вперёд"><span class="ws-control-arrow ws-arrow-forward" aria-hidden="true"></span><span>ВПЕРЁД</span></button>
+              <button type="button" data-ws-press="jump">ПРЫЖОК</button>
+              <button type="button" data-ws-press="trigger">ДЕЙСТВИЕ</button>
             </div>
           </div>
           <p id="ws-preview-status" class="ws-status" aria-live="polite">Доберись до финиша и попробуй собрать монеты.</p>

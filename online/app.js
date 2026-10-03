@@ -7,7 +7,7 @@ import {preloadArtwork, drawGame} from './draw.js';
 import {LEVEL_WIDTH, LEVEL_HEIGHT, MAX_LEVEL_OBJECTS, TYPE_LABELS, newDraft,
         addObject, findObjectAt, validateDraft, draftFromPublished,
         createPreviewState, stepPreview, drawEditorCanvas, drawPreviewCanvas,
-        resolveControlMode} from './workshop.js';
+        resolveControlMode, createTouchButtonState} from './workshop.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('battle');
@@ -26,8 +26,8 @@ let wsPage = 'home', wsDraft = loadWorkshopDraft(), wsTool = 'build', wsType = '
 let wsSelectedId = 0, wsDrag = null, wsCatalogGeneration = 0, wsCatalog = [];
 let wsPreviewState = null, wsPreviewLevel = null, wsPreviewReturn = 'editor';
 let wsControlPreference = localSetting(WS_CONTROL_KEY, 'auto'), wsControlMode = 'keyboard';
-let wsJoystickAxis = 0, wsJumpQueued = false, wsTriggerQueued = false;
-const wsHeld = {left: false, right: false};
+let wsJumpQueued = false, wsTriggerQueued = false;
+const wsTouchButtons = createTouchButtonState();
 const wsKeys = new Set();
 let wsWinAnnounced = false;
 // A browser tab keeps its seat after reload, while a second tab is a second
@@ -310,23 +310,20 @@ function drawCurrentPreview() {
   if (wsPreviewState) drawPreviewCanvas($('ws-preview-canvas'), wsPreviewState, wsControlMode);
 }
 function applyWorkshopControl(preference) {
-  wsControlPreference = ['auto', 'buttons', 'joystick', 'keyboard'].includes(preference) ? preference : 'auto';
+  wsControlPreference = ['auto', 'buttons', 'keyboard'].includes(preference) ? preference : 'auto';
   try {localStorage.setItem(WS_CONTROL_KEY, wsControlPreference);} catch {}
   const coarsePointer = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
   wsControlMode = resolveControlMode(wsControlPreference === 'auto' ? '' : wsControlPreference, coarsePointer);
   $('ws-control-select').value = wsControlPreference;
   $('ws-buttons-controls').classList.toggle('hidden', wsControlMode !== 'buttons');
-  $('ws-joystick-controls').classList.toggle('hidden', wsControlMode !== 'joystick');
   $('ws-control-help').textContent = wsControlMode === 'keyboard' ?
     'Клавиши A / D или ← / → для движения, пробел или ↑ для прыжка, E для действия.' :
-    wsControlMode === 'joystick' ? 'Веди джойстик влево или вправо; кнопки справа отвечают за прыжок и действие.' :
-    'Удерживай ◀ / ▶ для движения. Нажми «Прыжок»; «Действие» запускает ручные триггеры.';
+    'Удерживай «Назад» или «Вперёд». Одновременно нажми «Прыжок»; «Действие» запускает ручные триггеры.';
   clearWorkshopInput();drawCurrentPreview();
 }
 function clearWorkshopInput() {
-  wsHeld.left = wsHeld.right = false;wsJoystickAxis = 0;
+  wsTouchButtons.clear();
   wsJumpQueued = wsTriggerQueued = false;wsKeys.clear();
-  const knob = $('ws-joystick')?.querySelector('span');if (knob) knob.style.transform = '';
 }
 function resetWorkshopPreview() {
   if (!wsPreviewLevel) return;
@@ -336,8 +333,7 @@ function resetWorkshopPreview() {
 }
 function workshopFrame(dt) {
   if (screen !== 'workshop' || wsPage !== 'preview' || !wsPreviewState) return;
-  const axis = wsControlMode === 'joystick' ? wsJoystickAxis : wsControlMode === 'buttons' ?
-    Number(wsHeld.right) - Number(wsHeld.left) :
+  const axis = wsControlMode === 'buttons' ? wsTouchButtons.axis :
     Number(wsKeys.has('d') || wsKeys.has('arrowright')) - Number(wsKeys.has('a') || wsKeys.has('arrowleft'));
   const jump = wsJumpQueued || (wsControlMode === 'keyboard' &&
     (wsKeys.has(' ') || wsKeys.has('arrowup') || wsKeys.has('w')));
@@ -685,38 +681,25 @@ $('ws-trigger-target').addEventListener('change', e => updateSelectedTrigger('ta
 $('ws-trigger-value').addEventListener('change', e => updateSelectedTrigger('value', e.target.value));
 $('ws-control-select').addEventListener('change', e => applyWorkshopControl(e.target.value));
 for (const button of document.querySelectorAll('[data-ws-hold]')) {
-  const key = button.dataset.wsHold;
+  const direction = button.dataset.wsHold;
   button.addEventListener('pointerdown', event => {
-    event.preventDefault();wsHeld[key] = true;button.setPointerCapture?.(event.pointerId);
+    event.preventDefault();
+    if (!wsTouchButtons.press(event.pointerId, direction)) return;
+    button.setPointerCapture?.(event.pointerId);
   });
-  const release = () => {wsHeld[key] = false;};
-  button.addEventListener('pointerup', release);button.addEventListener('pointercancel', release);
+  const release = event => {wsTouchButtons.release(event.pointerId);};
+  button.addEventListener('pointerup', release);
+  button.addEventListener('pointercancel', release);
   button.addEventListener('lostpointercapture', release);
 }
 for (const button of document.querySelectorAll('[data-ws-press]')) {
   const action = button.dataset.wsPress === 'jump' ? 'jump' : 'trigger';
   const press = () => {if (action === 'jump') wsJumpQueued = true;else wsTriggerQueued = true;};
-  button.addEventListener('pointerdown', event => {event.preventDefault();press();});
-  button.addEventListener('click', press);
+  button.addEventListener('pointerdown', event => {
+    event.preventDefault();button.setPointerCapture?.(event.pointerId);press();
+  });
+  button.addEventListener('click', event => {if (event.detail === 0) press();});
 }
-const joystick = $('ws-joystick'), joystickKnob = joystick.querySelector('span');
-let joystickPointer = null;
-function updateJoystick(event) {
-  const rect = joystick.getBoundingClientRect();
-  const dx = Math.max(-39, Math.min(39, event.clientX - (rect.left + rect.width / 2)));
-  const dy = Math.max(-39, Math.min(39, event.clientY - (rect.top + rect.height / 2)));
-  wsJoystickAxis = dx / 39;joystickKnob.style.transform = `translate(${dx}px, ${dy}px)`;
-}
-joystick.addEventListener('pointerdown', event => {
-  event.preventDefault();joystickPointer = event.pointerId;joystick.setPointerCapture?.(event.pointerId);updateJoystick(event);
-});
-joystick.addEventListener('pointermove', event => {if (event.pointerId === joystickPointer) updateJoystick(event);});
-function releaseJoystick(event) {
-  if (event && event.pointerId !== joystickPointer) return;
-  joystickPointer = null;wsJoystickAxis = 0;joystickKnob.style.transform = '';
-}
-joystick.addEventListener('pointerup', releaseJoystick);joystick.addEventListener('pointercancel', releaseJoystick);
-joystick.addEventListener('lostpointercapture', releaseJoystick);
 window.addEventListener('keydown', event => {
   if (screen !== 'workshop' || wsPage !== 'preview' || wsControlMode !== 'keyboard') return;
   const key = event.key.toLowerCase();

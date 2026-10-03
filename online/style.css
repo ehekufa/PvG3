@@ -290,24 +290,54 @@ main { min-width: 0; }
 .ws-control-select select { min-height: 44px; border: 2px solid var(--outline); border-radius: 4px; }
 .ws-control-panel > .muted { margin: 0; }
 .ws-touch-controls { grid-column: 1 / -1; display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
-.ws-touch-controls button, .ws-joystick-row button {
-  min-width: 62px;
-  min-height: 58px;
+.ws-touch-controls button {
+  display: inline-flex;
+  min-width: 96px;
+  min-height: 72px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   padding: 9px 14px;
   border: 3px solid var(--outline);
   border-radius: 5px;
   color: var(--button-ink);
   background: var(--button-white);
-  font-size: 18px;
+  font-size: 16px;
   font-weight: bold;
   touch-action: none;
   user-select: none;
 }
-.ws-touch-controls button[data-ws-press="jump"], .ws-joystick-row .ws-jump { min-width: 142px; background: var(--button-gray); }
-.ws-touch-controls button[data-ws-press="trigger"], .ws-joystick-row .ws-action { min-width: 112px; }
-.ws-joystick-row { grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
-.ws-joystick { position: relative; display: grid; width: 116px; height: 116px; flex: 0 0 116px; place-items: center; border: 3px solid var(--outline); border-radius: 50%; background: var(--gray-light); touch-action: none; user-select: none; }
-.ws-joystick span { width: 48px; height: 48px; border: 3px solid var(--outline); border-radius: 50%; background: var(--white); pointer-events: none; }
+.ws-touch-controls button[data-ws-press="jump"] { min-width: 142px; background: var(--button-gray); }
+.ws-touch-controls button[data-ws-press="trigger"] { min-width: 112px; }
+.ws-control-arrow {
+  position: relative;
+  display: inline-block;
+  width: 34px;
+  height: 10px;
+  flex: 0 0 34px;
+  border-radius: 2px;
+  background: currentColor;
+}
+.ws-control-arrow::before {
+  position: absolute;
+  top: 50%;
+  width: 0;
+  height: 0;
+  content: "";
+  transform: translateY(-50%);
+}
+.ws-arrow-back::before {
+  left: -2px;
+  border-top: 19px solid transparent;
+  border-right: 20px solid currentColor;
+  border-bottom: 19px solid transparent;
+}
+.ws-arrow-forward::before {
+  right: -2px;
+  border-top: 19px solid transparent;
+  border-bottom: 19px solid transparent;
+  border-left: 20px solid currentColor;
+}
 .ws-catalog-list { display: grid; gap: 9px; margin-top: 15px; }
 .ws-level-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 14px; border: 2px solid var(--outline); border-radius: 5px; color: var(--ink); background: var(--white); }
 .ws-level-card h3 { margin: 0 0 3px; font-size: 19px; }
@@ -460,8 +490,8 @@ button, .panel, .map-card, .room-item, .side-card, .code-panel, .canvas-wrap,
   .ws-control-panel { grid-template-columns: 1fr; }
   .ws-control-select { max-width: none; }
   .ws-control-panel > .muted { font-size: 14px; }
-  .ws-touch-controls button, .ws-joystick-row button { flex: 1 1 70px; }
-  .ws-touch-controls button[data-ws-press="jump"], .ws-joystick-row .ws-jump { flex: 1 1 130px; }
+  .ws-touch-controls button { flex: 1 1 70px; }
+  .ws-touch-controls button[data-ws-press="jump"] { flex: 1 1 130px; }
   .ws-level-card { grid-template-columns: 1fr; }
   .ws-level-card button { width: 100%; }
 }

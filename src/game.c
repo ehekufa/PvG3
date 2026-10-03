@@ -2993,6 +2993,7 @@ float game_debug_cooldown(int plant) {
     return (unsigned)plant < PT_COUNT ? cooldown[plant] : -1;
 }
 float game_debug_custom_player_x(void) {return custom_player_x;}
+float game_debug_custom_player_y(void) {return custom_player_y;}
 int game_debug_garden_plant_type(int row, int col) {
     if ((unsigned)row >= ROWS || (unsigned)col >= COLS) return PT_NONE;
     return garden[row][col];

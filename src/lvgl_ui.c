@@ -8,6 +8,7 @@
 #include "font.h"
 #include "online_net.h"
 #include "vendor/lvgl/lvgl.h"
+#include "vendor/lvgl/src/draw/lv_draw_triangle.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -70,7 +71,6 @@ enum {
     U_WORKSHOP_LAYER_BASE = 1450, U_WORKSHOP_LOCK_X_BASE = 1460,
     U_WORKSHOP_LOCK_Y_BASE = 1470, U_WORKSHOP_COLOR_SET_BASE = 1480
 };
-enum { CUSTOM_CONTROL_JOYSTICK, CUSTOM_CONTROL_BUTTONS };
 
 static lv_display_t *display;
 static lv_indev_t *pointer;
@@ -82,9 +82,10 @@ static uint32_t *layer;
 static uint8_t *drawbuf;
 static int active_phase = -1, page = 0, chosen_map = 1, search_open;
 static int custom_level_page;
-static int custom_control_mode = CUSTOM_CONTROL_JOYSTICK;
-static lv_obj_t *custom_stick_knob;
 static int pointer_down, captured, touch_x, touch_y, dirty;
+#define CUSTOM_TOUCH_MAX 10
+typedef struct {int id, active, axis, jump, trigger;} CustomTouch;
+static CustomTouch custom_touches[CUSTOM_TOUCH_MAX];
 /* A packet is dragged over the author's board. LVGL draws the packet and its
  * ghost; game.c still validates the drop, so invalid water/occupied cells and
  * unaffordable moves never spend coins or send network commands. */
@@ -1205,6 +1206,55 @@ static void workshop_preview(void) {
     (void)game_workshop_preview(&level);
 }
 
+/* Direction and jump symbols are vector geometry, not image assets: each
+ * arrow is a rectangle shaft and a triangle head positioned by formulas. */
+static void vector_arrow_draw(lv_event_t *event) {
+    if (lv_event_get_code(event) != LV_EVENT_DRAW_MAIN) return;
+    lv_obj_t *object = lv_event_get_current_target(event);
+    lv_layer_t *layer = lv_event_get_layer(event);
+    lv_area_t bounds;
+    lv_obj_get_coords(object, &bounds);
+    int direction = (int)(intptr_t)lv_event_get_user_data(event);
+    int cx = (bounds.x1 + bounds.x2) / 2;
+    int cy = (bounds.y1 + bounds.y2) / 2;
+    lv_area_t shaft;
+    lv_draw_rect_dsc_t shaft_dsc;
+    lv_draw_rect_dsc_init(&shaft_dsc);
+    shaft_dsc.bg_color = BUTTON_TEXT;
+    shaft_dsc.bg_opa = LV_OPA_COVER;
+    shaft_dsc.radius = 4;
+    lv_draw_triangle_dsc_t head;
+    lv_draw_triangle_dsc_init(&head);
+    head.color = BUTTON_TEXT;
+    head.opa = LV_OPA_COVER;
+    if (direction < 0) {
+        shaft = (lv_area_t){cx - 1, cy - 8, cx + 27, cy + 8};
+        head.p[0] = (lv_point_precise_t){cx - 32, cy};
+        head.p[1] = (lv_point_precise_t){cx - 1, cy - 24};
+        head.p[2] = (lv_point_precise_t){cx - 1, cy + 24};
+    } else if (direction > 0) {
+        shaft = (lv_area_t){cx - 27, cy - 8, cx + 1, cy + 8};
+        head.p[0] = (lv_point_precise_t){cx + 32, cy};
+        head.p[1] = (lv_point_precise_t){cx + 1, cy - 24};
+        head.p[2] = (lv_point_precise_t){cx + 1, cy + 24};
+    } else {
+        shaft = (lv_area_t){cx - 8, cy - 1, cx + 8, cy + 27};
+        head.p[0] = (lv_point_precise_t){cx, cy - 32};
+        head.p[1] = (lv_point_precise_t){cx - 24, cy - 1};
+        head.p[2] = (lv_point_precise_t){cx + 24, cy - 1};
+    }
+    lv_draw_rect(layer, &shaft_dsc, &shaft);
+    lv_draw_triangle(layer, &head);
+}
+
+static void vector_arrow(lv_obj_t *parent, int x, int y, int direction) {
+    lv_obj_t *icon = box(parent, x, y, 74, 74, 0, BUTTON_WHITE, 0);
+    lv_obj_set_style_bg_opa(icon, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(icon, 0, 0);
+    lv_obj_add_event_cb(icon, vector_arrow_draw, LV_EVENT_DRAW_MAIN,
+                        (void *)(intptr_t)direction);
+}
+
 static void custom_platformer_screen(lv_obj_t *root) {
     lv_obj_set_style_bg_opa(root, LV_OPA_TRANSP, 0);
     lv_obj_t *bar = box(root, 0, 0, GAME_W, 103, 0, BUTTON_GRAY, 0);
@@ -1217,38 +1267,31 @@ static void custom_platformer_screen(lv_obj_t *root) {
              view.loaded_level.id[0] ? view.loaded_level.id : "—",
              view.loaded_level.title[0] ? view.loaded_level.title : "Уровень");
     label(root, 27, 18, 750, 66, title, 2, INK, LV_TEXT_ALIGN_LEFT);
-    button(root, 790, 21, 228, 62,
-           custom_control_mode == CUSTOM_CONTROL_JOYSTICK ?
-           "Управление: джойстик" : "Управление: кнопки", 0, 0);
+    label(root, 790, 24, 228, 56, "Кнопки · мультитач", 1, MUTED,
+          LV_TEXT_ALIGN_CENTER);
     button(root, 1033, 21, 215, 62, "К уровням", 2,
            U_CUSTOM_BACK);
-    if (custom_control_mode == CUSTOM_CONTROL_JOYSTICK) {
-        lv_obj_t *pad = box(root, 58, 480, 222, 222, 111, BUTTON_GRAY, 0);
-        lv_obj_set_style_border_width(pad, 3, 0);
-        lv_obj_set_style_border_color(pad, C(000000), 0);
-        lv_obj_t *stick_cross_h = box(root, 104, 587, 130, 8, 4, C(777777), 0);
-        lv_obj_set_style_bg_opa(stick_cross_h, LV_OPA_60, 0);
-        lv_obj_t *stick_cross_v = box(root, 165, 526, 8, 130, 4, C(777777), 0);
-        lv_obj_set_style_bg_opa(stick_cross_v, LV_OPA_60, 0);
-        custom_stick_knob = box(root, 137, 559, 66, 66, 33, BUTTON_GRAY, 1);
-        lv_obj_set_style_border_width(custom_stick_knob, 2, 0);
-        lv_obj_set_style_border_color(custom_stick_knob, C(000000), 0);
-    } else {
-        lv_obj_t *left = box(root, 58, 525, 100, 170, 12, BUTTON_GRAY, 0);
-        lv_obj_t *right = box(root, 178, 525, 100, 170, 12, BUTTON_GRAY, 0);
-        label(left, 0, 48, 100, 60, "◀", 4, BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
-        label(right, 0, 48, 100, 60, "▶", 4, BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
-    }
+
+    lv_obj_t *back = box(root, 58, 525, 100, 170, 12, BUTTON_WHITE, 0);
+    vector_arrow(back, 13, 17, -1);
+    label(back, 3, 111, 94, 43, "НАЗАД", 1, BUTTON_TEXT,
+          LV_TEXT_ALIGN_CENTER);
+    lv_obj_t *forward = box(root, 178, 525, 100, 170, 12, BUTTON_WHITE, 0);
+    vector_arrow(forward, 13, 17, 1);
+    label(forward, 1, 111, 98, 43, "ВПЕРЁД", 0, BUTTON_TEXT,
+          LV_TEXT_ALIGN_CENTER);
+
     lv_obj_t *trigger = box(root, 910, 567, 128, 99, 19, BUTTON_WHITE, 1);
     lv_obj_set_style_border_width(trigger, 2, 0);
     lv_obj_set_style_border_color(trigger, C(000000), 0);
-    label(trigger, 0, 11, 128, 38, "⚡ E", 2, BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
-    label(trigger, 0, 52, 128, 30, "ТРИГГЕР", 1, BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
+    label(trigger, 5, 21, 118, 56, "ДЕЙСТВИЕ", 1, BUTTON_TEXT,
+          LV_TEXT_ALIGN_CENTER);
     lv_obj_t *jump = box(root, 1081, 525, 169, 169, 84, BUTTON_GRAY, 1);
     lv_obj_set_style_border_width(jump, 3, 0);
     lv_obj_set_style_border_color(jump, C(000000), 0);
-    label(jump, 0, 36, 169, 56, "↑", 4, BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
-    label(jump, 0, 92, 169, 44, "ПРЫЖОК", 1, BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
+    vector_arrow(jump, 47, 13, 0);
+    label(jump, 4, 102, 161, 44, "ПРЫЖОК", 1, BUTTON_TEXT,
+          LV_TEXT_ALIGN_CENTER);
 }
 
 static void lobby_screen(lv_obj_t *root, const OnNetView *v) {
@@ -1854,7 +1897,6 @@ static void rebuild(int phase, const OnNetView *net) {
     lv_obj_set_style_bg_opa(screen,
                             lvgl_ui_fullscreen(phase) ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
     lv_obj_remove_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
-    custom_stick_knob = NULL;
     if (phase == GAME_MENU) menu_screen(screen);
     else if (phase == GAME_SELECT) levels_screen(screen);
     else if (phase == GAME_WORKSHOP) workshop_home_screen(screen);
@@ -1965,26 +2007,69 @@ int lvgl_ui_fullscreen(int phase) {
            phase == GAME_CUSTOM_LEVELS;
 }
 
-static void custom_control_at(int x, int y, int down) {
-    int axis = 0, jump = 0, trigger = 0;
-    if (custom_control_mode == CUSTOM_CONTROL_JOYSTICK && down &&
-        x >= 58 && x <= 280 && y >= 480 && y <= 702) {
-        axis = x < 143 ? -1 : x > 195 ? 1 : 0;
-        if (custom_stick_knob) {
-            float dx = (float)x - 169.0f, dy = (float)y - 591.0f;
-            float length = sqrtf(dx * dx + dy * dy);
-            if (length > 62.0f) {dx *= 62.0f / length;dy *= 62.0f / length;}
-            lv_obj_set_pos(custom_stick_knob, (int)(169 + dx - 33),
-                           (int)(591 + dy - 33));
+static CustomTouch *custom_touch_find(int id) {
+    for (int i = 0; i < CUSTOM_TOUCH_MAX; ++i)
+        if (custom_touches[i].active && custom_touches[i].id == id)
+            return &custom_touches[i];
+    return NULL;
+}
+
+static CustomTouch *custom_touch_allocate(int id) {
+    CustomTouch *touch = custom_touch_find(id);
+    if (touch) return touch;
+    for (int i = 0; i < CUSTOM_TOUCH_MAX; ++i) {
+        if (custom_touches[i].active) continue;
+        memset(&custom_touches[i], 0, sizeof custom_touches[i]);
+        custom_touches[i].id = id;
+        custom_touches[i].active = 1;
+        return &custom_touches[i];
+    }
+    return NULL;
+}
+
+static void custom_controls_sync(void) {
+    int left = 0, right = 0, jump = 0, trigger = 0;
+    for (int i = 0; i < CUSTOM_TOUCH_MAX; ++i) {
+        const CustomTouch *touch = &custom_touches[i];
+        if (!touch->active) continue;
+        left |= touch->axis < 0;
+        right |= touch->axis > 0;
+        jump |= touch->jump;
+        trigger |= touch->trigger;
+    }
+    game_custom_control((int)right - (int)left, jump, trigger);
+}
+
+static void custom_controls_clear(void) {
+    memset(custom_touches, 0, sizeof custom_touches);
+    game_custom_control(0, 0, 0);
+}
+
+int lvgl_ui_touch_pointer(int pointer_id, int x, int y, int down) {
+    if (!display || game_phase() != GAME_CUSTOM_PLAY) return 0;
+    if (x < 0) x = 0;
+    if (x >= GAME_W) x = GAME_W - 1;
+    if (y < 0) y = 0;
+    if (y >= GAME_H) y = GAME_H - 1;
+    if (down && x >= 1030 && y <= 108) {
+        custom_controls_clear();
+        game_custom_level_exit();
+        dirty = 1;
+        return 1;
+    }
+    CustomTouch *touch = down ? custom_touch_allocate(pointer_id) :
+                                 custom_touch_find(pointer_id);
+    if (touch) {
+        if (!down) memset(touch, 0, sizeof *touch);
+        else {
+            touch->axis = y >= 525 && y < 695 && x >= 58 && x < 158 ? -1 :
+                          y >= 525 && y < 695 && x >= 178 && x < 278 ? 1 : 0;
+            touch->jump = x >= 1081 && x < 1250 && y >= 525 && y < 695;
+            touch->trigger = x >= 910 && x < 1038 && y >= 567 && y < 666;
         }
-    } else if (custom_control_mode == CUSTOM_CONTROL_BUTTONS && down &&
-               x >= 58 && x <= 280 && y >= 515 && y <= 702) {
-        axis = x < 168 ? -1 : 1;
-    } else if (down && x >= 1080 && y >= 515) jump = 1;
-    else if (down && x >= 900 && x <= 1045 && y >= 550) trigger = 1;
-    if ((!down || (x < 58 || x > 280 || y < 480 || y > 702)) && custom_stick_knob)
-        lv_obj_set_pos(custom_stick_knob, 137, 559);
-    game_custom_control(axis, jump, trigger);
+    }
+    custom_controls_sync();
+    return 1;
 }
 
 int lvgl_ui_pointer(int x, int y, int down) {
@@ -1997,19 +2082,11 @@ int lvgl_ui_pointer(int x, int y, int down) {
     int phase = game_phase();
     if (phase == GAME_CUSTOM_PLAY) {
         if (down) {
-            if (x >= 1030 && y <= 108) {
-                game_custom_control(0, 0, 0);
-                game_custom_level_exit();
-            } else if (x >= 790 && x <= 1018 && y <= 103) {
-                custom_control_mode = custom_control_mode == CUSTOM_CONTROL_JOYSTICK ?
-                                     CUSTOM_CONTROL_BUTTONS : CUSTOM_CONTROL_JOYSTICK;
-                game_custom_control(0, 0, 0);dirty = 1;
-            } else custom_control_at(x, y, 1);
             captured = pointer_down = 1;
-            return 1;
+            return lvgl_ui_touch_pointer(-1, x, y, 1);
         }
         int handled = captured;
-        custom_control_at(x, y, 0);
+        (void)lvgl_ui_touch_pointer(-1, x, y, 0);
         captured = pointer_down = 0;
         return handled;
     }
@@ -2061,13 +2138,8 @@ int lvgl_ui_move(int x, int y) {
     if (y < 0) y = 0;
     if (y >= GAME_H) y = GAME_H - 1;
     touch_x = x;touch_y = y;
-    if (game_phase() == GAME_CUSTOM_PLAY && captured && pointer_down) {
-        if (x >= 1030 && y <= 108) {
-            game_custom_control(0, 0, 0);
-            game_custom_level_exit();
-        } else custom_control_at(x, y, 1);
-        return 1;
-    }
+    if (game_phase() == GAME_CUSTOM_PLAY && captured && pointer_down)
+        return lvgl_ui_touch_pointer(-1, x, y, 1);
     if (drag_index >= 0) drag_position(x, y);
     else if (captured && pointer_down) lv_indev_read(pointer);
     return captured;
@@ -2075,7 +2147,8 @@ int lvgl_ui_move(int x, int y) {
 
 int lvgl_ui_cancel(void) {
     int handled = captured;
-    if (game_phase() == GAME_CUSTOM_PLAY) game_custom_control(0, 0, 0);
+    if (game_phase() == GAME_CUSTOM_PLAY) custom_controls_clear();
+    else memset(custom_touches, 0, sizeof custom_touches);
     if (pointer_down && pointer) lv_indev_wait_release(pointer);
     pointer_down = captured = 0;
     touch_x = touch_y = 0;

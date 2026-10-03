@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {LEVEL_TYPES, MAX_LEVEL_OBJECTS, newDraft, addObject, validateDraft,
         publishedRecord, isPublishedRecord, draftFromPublished, resolveControlMode,
-        createPreviewState, stepPreview} from '../workshop.js';
+        createTouchButtonState, createPreviewState, stepPreview} from '../workshop.js';
 
 test('new drafts are valid and object placement keeps player and finish unique', () => {
   const level = newDraft('draft-test');
@@ -50,8 +50,32 @@ test('published records round-trip through the browser/native wire schema', () =
 test('control mode defaults to buttons on touch devices and can be chosen explicitly', () => {
   assert.equal(resolveControlMode('', true), 'buttons');
   assert.equal(resolveControlMode('', false), 'keyboard');
-  assert.equal(resolveControlMode('joystick', false), 'joystick');
+  assert.equal(resolveControlMode('unknown', true), 'buttons');
   assert.equal(resolveControlMode('buttons', false), 'buttons');
+});
+
+test('multitouch keeps forward/back pointers independent for movement plus jump', () => {
+  const controls = createTouchButtonState();
+  assert(controls.press(4, 'forward'));
+  assert(controls.press(9, 'back'));
+  assert.equal(controls.axis, 0);
+  assert.equal(controls.release(9), true);
+  assert.equal(controls.axis, 1);
+  assert(controls.press(12, 'back'));
+  assert.equal(controls.axis, 0);
+  assert.equal(controls.release(4), true);
+  assert.equal(controls.axis, -1);
+  assert.equal(controls.release(12), true);
+  assert.equal(controls.axis, 0);
+  assert(controls.press(20, 'forward'));
+  assert(controls.press(21, 'forward'));
+  assert.equal(controls.release(20), true);
+  assert.equal(controls.axis, 1);
+  assert.equal(controls.release(21), true);
+  assert.equal(controls.axis, 0);
+  controls.clear();
+  assert.equal(controls.axis, 0);
+  assert.equal(controls.press(1, 'invalid'), false);
 });
 
 test('preview physics lands, jumps, collects coins, activates triggers and reaches the goal', () => {

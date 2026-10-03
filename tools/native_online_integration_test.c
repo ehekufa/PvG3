@@ -288,8 +288,12 @@ static void ui_snapshot(const char *name) {
     assert(!fclose(f));
 }
 static void ui_tap(int x, int y) {
-    assert(lvgl_ui_pointer(x, y, 1));ui_snapshot("tap_down");
-    assert(lvgl_ui_pointer(x, y, 0));ui_snapshot("tap_up");
+    int down = lvgl_ui_pointer(x, y, 1);
+    if (!down) fprintf(stderr, "LVGL tap DOWN missed at %d,%d in phase %d\n", x, y, game_phase());
+    assert(down);ui_snapshot("tap_down");
+    int up = lvgl_ui_pointer(x, y, 0);
+    if (!up) fprintf(stderr, "LVGL tap UP missed at %d,%d in phase %d\n", x, y, game_phase());
+    assert(up);ui_snapshot("tap_up");
 }
 static void ui_quick_tap(int x, int y) {
     /* Android may deliver DOWN+UP before one render frame; never miss a tap. */
@@ -375,16 +379,23 @@ static int run_lvgl_test(void) {
                    "Найди скрытый мост и монеты, затем доберись до финиша по платформам."));
     ui_tap(185, 318);tick_pump(3);
     assert(game_phase() == GAME_CUSTOM_PLAY);
+    game_tick(.05f, NULL); /* settle on the ground before jumping */
     float custom_x = game_debug_custom_player_x();
-    assert(lvgl_ui_pointer(230, 591, 1));
-    for (int i = 0; i < 8; ++i) game_tick(.05f, NULL);
-    assert(lvgl_ui_pointer(230, 591, 0));
-    assert(game_debug_custom_player_x() > custom_x + 50);
-    ui_tap(904, 51);ui_snapshot("custom_controls_buttons");
-    custom_x = game_debug_custom_player_x();
-    assert(lvgl_ui_pointer(110, 591, 1));
+    float custom_y = game_debug_custom_player_y();
+    assert(lvgl_ui_touch_pointer(17, 230, 591, 1)); /* forward */
+    assert(lvgl_ui_touch_pointer(23, 1150, 591, 1)); /* second finger: jump */
     for (int i = 0; i < 5; ++i) game_tick(.05f, NULL);
-    assert(lvgl_ui_pointer(110, 591, 0));
+    assert(game_debug_custom_player_x() > custom_x + 50);
+    assert(game_debug_custom_player_y() < custom_y - 20);
+    assert(lvgl_ui_touch_pointer(23, 1150, 591, 0));
+    custom_x = game_debug_custom_player_x();
+    for (int i = 0; i < 4; ++i) game_tick(.05f, NULL);
+    assert(game_debug_custom_player_x() > custom_x + 40); /* forward remains held */
+    assert(lvgl_ui_touch_pointer(17, 230, 591, 0));
+    custom_x = game_debug_custom_player_x();
+    assert(lvgl_ui_touch_pointer(31, 110, 591, 1)); /* back */
+    for (int i = 0; i < 5; ++i) game_tick(.05f, NULL);
+    assert(lvgl_ui_touch_pointer(31, 110, 591, 0));
     assert(game_debug_custom_player_x() < custom_x);
     ui_tap(1140, 55);assert(game_phase() == GAME_CUSTOM_LEVELS);
     ui_snapshot("custom_level_return");
@@ -574,7 +585,7 @@ static int run_lvgl_test(void) {
     lvgl_ui_shutdown();
     game_set_lvgl_ui(0);
     on_net_shutdown();
-    puts("Legacy and LVGL UI, native published-level list/play and joystick, drag planting, both online roles and saves passed");
+    puts("Legacy and LVGL UI, native published-level list/play and multitouch controls, drag planting, both online roles and saves passed");
     return 0;
 }
 #endif
