@@ -287,7 +287,24 @@ export function stepPreview(state, input = {}, dt = 1 / 60) {
   return state;
 }
 
-export function drawEditorCanvas(canvas, level, selectedId = 0, tool = 'build') {
+function drawWorkshopArt(ctx, art, type, x, y, w, h) {
+  const image = art?.[type];
+  if (!image?.naturalWidth) return false;
+  if (type !== 'ground') {
+    ctx.drawImage(image, x, y, w, h);
+    return true;
+  }
+  // The platform drawing is a 2×1 tile. Repeat it instead of stretching one
+  // tiny picture across a long floor; partial edge tiles are clipped by size.
+  const tileW = 2 * TILE_W, tileH = TILE_H;
+  for (let dy = 0; dy < h; dy += tileH)
+    for (let dx = 0; dx < w; dx += tileW)
+      ctx.drawImage(image, x + dx, y + dy,
+        Math.min(tileW, w - dx), Math.min(tileH, h - dy));
+  return true;
+}
+
+export function drawEditorCanvas(canvas, level, selectedId = 0, tool = 'build', art = {}) {
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = '#14283c';ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -305,11 +322,15 @@ export function drawEditorCanvas(canvas, level, selectedId = 0, tool = 'build') 
     const x = o.x * TILE_W + 3, y = o.y * TILE_H + 3;
     const w = o.w * TILE_W - 6, h = o.h * TILE_H - 6;
     ctx.fillStyle = o.color || DEFAULT_COLORS[o.type];
-    if (o.type === 'coin') {
+    if (o.type === 'trigger' && art.trigger?.naturalWidth) {
+      ctx.globalAlpha = .2;ctx.fillRect(x, y, w, h);ctx.globalAlpha = 1;
+    }
+    const hasArt = drawWorkshopArt(ctx, art, o.type, x, y, w, h);
+    if (!hasArt && o.type === 'coin') {
       ctx.beginPath();ctx.arc(x + w / 2, y + h / 2, Math.min(w, h) / 2, 0, Math.PI * 2);ctx.fill();
-    } else if (o.type === 'hazard') {
+    } else if (!hasArt && o.type === 'hazard') {
       ctx.beginPath();ctx.moveTo(x + w / 2, y);ctx.lineTo(x + w, y + h);ctx.lineTo(x, y + h);ctx.closePath();ctx.fill();
-    } else {
+    } else if (!hasArt) {
       ctx.fillRect(x, y, w, h);
       if (o.type === 'trigger') {ctx.strokeStyle = '#fff2d8';ctx.lineWidth = 3;ctx.strokeRect(x + 2, y + 2, w - 4, h - 4);}
       if (o.type === 'goal') {ctx.fillStyle = '#fff2d8';ctx.fillRect(x + w * .65, y, 4, h);}
@@ -326,7 +347,7 @@ export function drawEditorCanvas(canvas, level, selectedId = 0, tool = 'build') 
   ctx.fillText(tool === 'delete' ? 'Выбери объект для удаления' : 'Сетка 16 × 10 · касание по клетке', 18, 29);
 }
 
-export function drawPreviewCanvas(canvas, state, control = 'keyboard') {
+export function drawPreviewCanvas(canvas, state, control = 'keyboard', art = {}) {
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = '#8bc7df';ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -339,6 +360,11 @@ export function drawPreviewCanvas(canvas, state, control = 'keyboard') {
     if (!o.visible || o.type === 'player') continue;
     const x = o.x * TILE_W, y = o.y * TILE_H, w = o.w * TILE_W, h = o.h * TILE_H;
     ctx.fillStyle = o.color || DEFAULT_COLORS[o.type];
+    if (o.type === 'trigger' && art.trigger?.naturalWidth) {
+      ctx.globalAlpha = .18;ctx.fillRect(x, y, w, h);ctx.globalAlpha = 1;
+    }
+    const hasArt = drawWorkshopArt(ctx, art, o.type, x, y, w, h);
+    if (hasArt) continue;
     if (o.type === 'hazard') {
       ctx.beginPath();ctx.moveTo(x + w / 2, y);ctx.lineTo(x + w, y + h);ctx.lineTo(x, y + h);ctx.closePath();ctx.fill();
     } else if (o.type === 'coin') {
@@ -353,10 +379,12 @@ export function drawPreviewCanvas(canvas, state, control = 'keyboard') {
   const player = state.objects.find(o => o.type === 'player');
   if (player) {
     const x = state.x, y = state.y, w = player.w * TILE_W, h = player.h * TILE_H;
-    ctx.fillStyle = player.color || DEFAULT_COLORS.player;
-    ctx.fillRect(x, y, w, h);
-    ctx.fillStyle = '#fff';ctx.fillRect(x + w * .2, y + h * .22, 8, 9);ctx.fillRect(x + w * .62, y + h * .22, 8, 9);
-    ctx.fillStyle = '#111';ctx.fillRect(x + w * .25, y + h * .24, 3, 5);ctx.fillRect(x + w * .67, y + h * .24, 3, 5);
+    if (!drawWorkshopArt(ctx, art, 'player', x, y, w, h)) {
+      ctx.fillStyle = player.color || DEFAULT_COLORS.player;
+      ctx.fillRect(x, y, w, h);
+      ctx.fillStyle = '#fff';ctx.fillRect(x + w * .2, y + h * .22, 8, 9);ctx.fillRect(x + w * .62, y + h * .22, 8, 9);
+      ctx.fillStyle = '#111';ctx.fillRect(x + w * .25, y + h * .24, 3, 5);ctx.fillRect(x + w * .67, y + h * .24, 3, 5);
+    }
   }
   ctx.fillStyle = '#14283c';ctx.fillRect(0, 0, canvas.width, 64);
   ctx.fillStyle = '#fff';ctx.font = '22px PTSans, sans-serif';

@@ -273,6 +273,20 @@ static void screenshot(const char *name) {
 /* Exercises actual LVGL pointer events and the existing in-memory Firebase.
  * Also writes screenshots if PVG3_LVGL_SHOTS=1; never touches the live DB. */
 static uint32_t ui_pixels[GAME_W * GAME_H];
+static void assert_platformer_art(void) {
+    const int ids[] = {PV_ART_LEVEL_BLOCK, PV_ART_LEVEL_PLATFORM,
+                       PV_ART_LEVEL_TRIGGER, PV_ART_LEVEL_FLAG,
+                       PV_ART_LEVEL_SPIKE};
+    const int widths[] = {100, 100, 100, 50, 100};
+    const int heights[] = {100, 50, 100, 100, 100};
+    for (size_t i = 0; i < sizeof ids / sizeof ids[0]; ++i) {
+        int width = 0, height = 0, visible = 0;
+        const uint32_t *pixels = game_art_rgba(ids[i], &width, &height);
+        assert(pixels && width == widths[i] && height == heights[i]);
+        for (int p = 0; p < width * height; ++p) visible |= pixels[p] >> 24;
+        assert(visible);
+    }
+}
 static void ui_snapshot(const char *name) {
     game_tick(0, lvgl_ui_fullscreen(game_phase()) ? NULL : ui_pixels);
     lvgl_ui_frame(.050f, ui_pixels);
@@ -319,6 +333,7 @@ static int run_lvgl_test(void) {
     static uint8_t before[20000], after[20000];
     size_t bytes = game_save_size();assert(bytes < sizeof before);
     game_init();assert(game_save_export(before, bytes));
+    assert_platformer_art();
     assert(lvgl_ui_init());
     game_set_lvgl_ui(1);
     ui_snapshot("menu");

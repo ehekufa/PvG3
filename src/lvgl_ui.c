@@ -817,6 +817,19 @@ static const char *workshop_object_name(int type) {
     }
 }
 
+static int workshop_object_art(int type) {
+    switch (type) {
+    case ON_LEVEL_BLOCK: return PV_ART_LEVEL_BLOCK;
+    case ON_LEVEL_GROUND: return PV_ART_LEVEL_PLATFORM;
+    case ON_LEVEL_HAZARD: return PV_ART_LEVEL_SPIKE;
+    case ON_LEVEL_COIN: return PV_ART_COIN;
+    case ON_LEVEL_ENEMY: return PV_ART_DUCK;
+    case ON_LEVEL_GOAL: return PV_ART_LEVEL_FLAG;
+    case ON_LEVEL_TRIGGER: return PV_ART_LEVEL_TRIGGER;
+    default: return -1;
+    }
+}
+
 static int workshop_target_object_id(int group_id) {
     if (group_id <= 0) return 3; /* the built-in finish */
     for (int i = 0; i < workshop_object_count; ++i)
@@ -1115,18 +1128,37 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
         if (o->row + h > WS_GRID_ROWS) h = WS_GRID_ROWS - o->row;
         lv_color_t color = lv_color_hex(
             workshop_colors[o->color_set % 4][o->color_index % 8]);
-        lv_obj_t *shape = box(root, x, y, w * cell - 6, h * cell - 6,
-                              4, color, 0);
-        if (i == workshop_selected) {
-            lv_obj_set_style_border_color(shape, WS_CYAN, 0);
-            lv_obj_set_style_border_width(shape, 4, 0);
+        int shape_w = w * cell - 6, shape_h = h * cell - 6;
+        lv_obj_t *shape = box(root, x, y, shape_w, shape_h, 4, color, 0);
+        int art_id = workshop_object_art(o->type);
+        if (art_id >= 0 && pictures[art_id].data) {
+            int source_w = pictures[art_id].header.w;
+            int source_h = pictures[art_id].header.h;
+            int image_w = shape_w - 6;
+            int image_h = shape_h - 6;
+            if (image_w * source_h > image_h * source_w)
+                image_w = image_h * source_w / source_h;
+            art(root, art_id, x + shape_w / 2, y + shape_h / 2, image_w);
+            if (i == workshop_selected) {
+                lv_obj_t *selection = box(root, x, y, shape_w, shape_h,
+                                          0, color, 0);
+                lv_obj_set_style_bg_opa(selection, LV_OPA_TRANSP, 0);
+                lv_obj_set_style_border_color(selection, WS_CYAN, 0);
+                lv_obj_set_style_border_width(selection, 4, 0);
+                lv_obj_set_style_radius(selection, 0, 0);
+            }
+        } else {
+            if (i == workshop_selected) {
+                lv_obj_set_style_border_color(shape, WS_CYAN, 0);
+                lv_obj_set_style_border_width(shape, 4, 0);
+            }
+            label(shape, 1, 4, w * cell - 8, h * cell - 12,
+                  o->type == ON_LEVEL_HAZARD ? "▲" :
+                  o->type == ON_LEVEL_COIN ? "●" :
+                  o->type == ON_LEVEL_GOAL ? "F" :
+                  o->type == ON_LEVEL_TRIGGER ? "T" : "",
+                  1, BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
         }
-        label(shape, 1, 4, w * cell - 8, h * cell - 12,
-              o->type == ON_LEVEL_HAZARD ? "▲" :
-              o->type == ON_LEVEL_COIN ? "●" :
-              o->type == ON_LEVEL_GOAL ? "F" :
-              o->type == ON_LEVEL_TRIGGER ? "T" : "",
-              1, BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
     }
     for (int row = 0; row < WS_GRID_ROWS; ++row)
         for (int col = 0; col < WS_GRID_COLS; ++col) {
@@ -1950,7 +1982,10 @@ int lvgl_ui_init(void) {
     const int art_ids[] = {PV_ART_BREAD, PV_ART_DIMA, PV_ART_KIRILL,
                            PV_ART_DUCK, PV_ART_DUCK_CONE, PV_ART_DUCK_BUCKET,
                            PV_ART_ROBOT, PV_ART_PEA, PV_ART_WALNUT, PV_ART_SUNFLOWER,
-                           PV_ART_JUMPER, PV_ART_LILY, PV_ART_COIN};
+                           PV_ART_JUMPER, PV_ART_LILY, PV_ART_COIN,
+                           PV_ART_LEVEL_BLOCK, PV_ART_LEVEL_PLATFORM,
+                           PV_ART_LEVEL_TRIGGER, PV_ART_LEVEL_FLAG,
+                           PV_ART_LEVEL_SPIKE};
     for (size_t j = 0; j < sizeof art_ids / sizeof art_ids[0]; j++) {
         int id = art_ids[j], w = 0, h = 0;
         const uint32_t *original = game_art_rgba(id, &w, &h);

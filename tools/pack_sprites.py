@@ -31,6 +31,11 @@ IMAGES = [
     ("WATER_MAP", "assets/art/water-map.png"),
     ("MOWER", "assets/art/lawnmower.png"),
     ("COIN", "assets/art/coin-token.png"),
+    ("LEVEL_BLOCK", "assets/art/Блок.png"),
+    ("LEVEL_PLATFORM", "assets/art/Платформа.png"),
+    ("LEVEL_TRIGGER", "assets/art/Триггер-движения.png"),
+    ("LEVEL_FLAG", "assets/art/Флажок - финиш.png"),
+    ("LEVEL_SPIKE", "assets/art/Шип.png"),
 ]
 
 

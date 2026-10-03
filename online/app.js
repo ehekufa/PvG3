@@ -30,6 +30,23 @@ let wsJumpQueued = false, wsTriggerQueued = false;
 const wsTouchButtons = createTouchButtonState();
 const wsKeys = new Set();
 let wsWinAnnounced = false;
+const WS_ART_FILES = {
+  block: 'Блок.png', ground: 'Платформа.png', hazard: 'Шип.png',
+  coin: 'coin-token.png', enemy: 'zombie-duck.png', player: 'khlebushek.png',
+  goal: 'Флажок - финиш.png', trigger: 'Триггер-движения.png',
+};
+const wsArt = Object.fromEntries(Object.entries(WS_ART_FILES).map(([type, file]) => {
+  const image = new Image();
+  image.decoding = 'async';
+  image.addEventListener('load', () => {
+    if (screen !== 'workshop') return;
+    if (wsPage === 'editor')
+      drawEditorCanvas($('ws-editor-canvas'), wsDraft, wsSelectedId, wsTool, wsArt);
+    else if (wsPage === 'preview') drawCurrentPreview();
+  }, {once: true});
+  image.src = new URL(`../assets/art/${file}`, import.meta.url).href;
+  return [type, image];
+}));
 // A browser tab keeps its seat after reload, while a second tab is a second
 // player. A shared localStorage ID would incorrectly identify both as one.
 const savedId = sessionStorage.getItem('pvg3-online-player');
@@ -101,7 +118,7 @@ function renderWorkshopEditor() {
   for (const button of document.querySelectorAll('[data-ws-type]'))
     button.classList.toggle('active', button.dataset.wsType === wsType);
   renderSelectedObject();
-  drawEditorCanvas($('ws-editor-canvas'), wsDraft, wsSelectedId, wsTool);
+  drawEditorCanvas($('ws-editor-canvas'), wsDraft, wsSelectedId, wsTool, wsArt);
 }
 function notice(text, duration = 4400) {
   $('toast').textContent = text;
@@ -155,7 +172,7 @@ function renderSelectedObject() {
 }
 function wsRedrawEditor() {
   renderSelectedObject();
-  drawEditorCanvas($('ws-editor-canvas'), wsDraft, wsSelectedId, wsTool);
+  drawEditorCanvas($('ws-editor-canvas'), wsDraft, wsSelectedId, wsTool, wsArt);
   $('ws-object-count').textContent = `${wsDraft.objects.length} / ${MAX_LEVEL_OBJECTS} объектов`;
 }
 function setWorkshopTool(tool) {
@@ -307,7 +324,7 @@ function startWorkshopPreview(level, title, returnPage) {
   setWorkshopPage('preview');
 }
 function drawCurrentPreview() {
-  if (wsPreviewState) drawPreviewCanvas($('ws-preview-canvas'), wsPreviewState, wsControlMode);
+  if (wsPreviewState) drawPreviewCanvas($('ws-preview-canvas'), wsPreviewState, wsControlMode, wsArt);
 }
 function applyWorkshopControl(preference) {
   wsControlPreference = ['auto', 'buttons', 'keyboard'].includes(preference) ? preference : 'auto';

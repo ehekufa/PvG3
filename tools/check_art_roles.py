@@ -21,6 +21,11 @@ EXPECTED = {
     "WATER_MAP": "assets/art/water-map.png",
     "MOWER": "assets/art/lawnmower.png",
     "COIN": "assets/art/coin-token.png",
+    "LEVEL_BLOCK": "assets/art/Блок.png",
+    "LEVEL_PLATFORM": "assets/art/Платформа.png",
+    "LEVEL_TRIGGER": "assets/art/Триггер-движения.png",
+    "LEVEL_FLAG": "assets/art/Флажок - финиш.png",
+    "LEVEL_SPIKE": "assets/art/Шип.png",
 }
 
 assert len(IMAGES) == len(EXPECTED) == len(dict(IMAGES)), "Unexpected extra/missing sprite"
@@ -35,4 +40,4 @@ for name in ("DUCK_CONE", "DUCK_BUCKET", "COIN"):
     _, _, pixels = png_pixels(ROOT / EXPECTED[name])
     assert pixels[0] == 0, (name, "expected transparent top-left corner")
 
-print("OK: sixteen named sprites, including cone/bucket ducks and the polished coin token")
+print("OK: twenty-one named sprites, including platformer blocks, flag, spike and trigger art")

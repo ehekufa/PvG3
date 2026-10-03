@@ -2,7 +2,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {LEVEL_TYPES, MAX_LEVEL_OBJECTS, newDraft, addObject, validateDraft,
         publishedRecord, isPublishedRecord, draftFromPublished, resolveControlMode,
-        createTouchButtonState, createPreviewState, stepPreview} from '../workshop.js';
+        createTouchButtonState, createPreviewState, stepPreview,
+        drawEditorCanvas, drawPreviewCanvas} from '../workshop.js';
+
+function recordingCanvas() {
+  const images = [];
+  const context = {
+    clearRect() {}, fillRect() {}, beginPath() {}, moveTo() {}, lineTo() {},
+    closePath() {}, fill() {}, stroke() {}, arc() {}, ellipse() {},
+    strokeRect() {}, fillText() {},
+    drawImage(image, ...bounds) {images.push({image, bounds});},
+  };
+  return {canvas: {width: 1280, height: 720, getContext: () => context}, images};
+}
 
 test('new drafts are valid and object placement keeps player and finish unique', () => {
   const level = newDraft('draft-test');
@@ -52,6 +64,23 @@ test('control mode defaults to buttons on touch devices and can be chosen explic
   assert.equal(resolveControlMode('', false), 'keyboard');
   assert.equal(resolveControlMode('unknown', true), 'buttons');
   assert.equal(resolveControlMode('buttons', false), 'buttons');
+});
+
+test('workshop editor and preview use the supplied level artwork and tile wide platforms', () => {
+  const level = newDraft();
+  const art = Object.fromEntries(LEVEL_TYPES.map(type => [type,
+    {type, naturalWidth: 100, naturalHeight: type === 'ground' ? 50 : 100}]));
+  const editor = recordingCanvas();
+  drawEditorCanvas(editor.canvas, level, 0, 'build', art);
+  assert(editor.images.some(call => call.image.type === 'player'));
+  assert(editor.images.some(call => call.image.type === 'goal'));
+  assert.equal(editor.images.filter(call => call.image.type === 'ground').length, 16);
+
+  const preview = recordingCanvas();
+  drawPreviewCanvas(preview.canvas, createPreviewState(level), 'keyboard', art);
+  assert(preview.images.some(call => call.image.type === 'player'));
+  assert(preview.images.some(call => call.image.type === 'goal'));
+  assert.equal(preview.images.filter(call => call.image.type === 'ground').length, 16);
 });
 
 test('multitouch keeps forward/back pointers independent for movement plus jump', () => {

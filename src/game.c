@@ -119,6 +119,11 @@ _Static_assert((int)PV_ART_BREAD == (int)SPR_KHLEBUSHEK &&
                (int)PV_ART_PEA == (int)SPR_PEA &&
                (int)PV_ART_MOWER == (int)SPR_MOWER &&
                (int)PV_ART_COIN == (int)SPR_COIN &&
+               (int)PV_ART_LEVEL_BLOCK == (int)SPR_LEVEL_BLOCK &&
+               (int)PV_ART_LEVEL_PLATFORM == (int)SPR_LEVEL_PLATFORM &&
+               (int)PV_ART_LEVEL_TRIGGER == (int)SPR_LEVEL_TRIGGER &&
+               (int)PV_ART_LEVEL_FLAG == (int)SPR_LEVEL_FLAG &&
+               (int)PV_ART_LEVEL_SPIKE == (int)SPR_LEVEL_SPIKE &&
                (int)PV_ART_COUNT == (int)SPR_COUNT,
                "LVGL art IDs must match the PNG packer");
 static uint32_t *sprite_pixels[SPR_COUNT];
@@ -183,7 +188,8 @@ static void sprite_crop(int id, int x, int y, int w, int h,
 }
 
 static void sprite_draw(int id, int x, int y, int w, int h, int flip) {
-    sprite_crop(id, x, y, w, h, 0, 0, SPRITE_DATA[id].w, SPRITE_DATA[id].h, flip);
+    sprite_crop(id, x, y, w, h, 0, 0, SPRITE_DATA[id].w,
+                SPRITE_DATA[id].h, flip);
 }
 
 /* ------------------------------------------------------------------ */
@@ -2326,27 +2332,6 @@ static void custom_platformer_update(float dt) {
     if (custom_trigger_request) custom_fire_triggers(ON_TRIGGER_MANUAL);
     custom_trigger_request = 0;
 }
-static void custom_triangle(int x0, int y0, int x1, int y1, int x2, int y2,
-                            uint32_t color) {
-    int minx = x0 < x1 ? x0 : x1, maxx = x0 > x1 ? x0 : x1;
-    int miny = y0 < y1 ? y0 : y1, maxy = y0 > y1 ? y0 : y1;
-    if (x2 < minx) minx = x2;
-    if (x2 > maxx) maxx = x2;
-    if (y2 < miny) miny = y2;
-    if (y2 > maxy) maxy = y2;
-    if (minx < 0) minx = 0;
-    if (miny < 0) miny = 0;
-    if (maxx >= GAME_W) maxx = GAME_W - 1;
-    if (maxy >= GAME_H) maxy = GAME_H - 1;
-    int area = (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0);
-    if (!area) return;
-    for (int y = miny; y <= maxy; y++) for (int x = minx; x <= maxx; x++) {
-        int a = (x1 - x0) * (y - y0) - (y1 - y0) * (x - x0);
-        int b = (x2 - x1) * (y - y1) - (y2 - y1) * (x - x1);
-        int c = (x0 - x2) * (y - y2) - (y0 - y2) * (x - x2);
-        if ((a >= 0 && b >= 0 && c >= 0) || (a <= 0 && b <= 0 && c <= 0)) setpix(x, y, color);
-    }
-}
 static void custom_draw_object(const OnLevelObject *o) {
     int x = (int)lrintf(o->x * CUSTOM_TILE_W), y = (int)lrintf(o->y * CUSTOM_TILE_H);
     int w = (int)lrintf(o->w * CUSTOM_TILE_W), h = (int)lrintf(o->h * CUSTOM_TILE_H);
@@ -2354,24 +2339,24 @@ static void custom_draw_object(const OnLevelObject *o) {
     uint32_t fill = custom_color(o->color);
     switch (o->type) {
     case ON_LEVEL_BLOCK:
-        rect(x, y, x + w - 1, y + h - 1, fill);
-        rect(x + 3, y + 3, x + w - 4, y + 7, COL(255, 255, 255));
-        rect(x, y + h - 5, x + w - 1, y + h - 1, COL(102, 64, 37));
+        sprite_draw(PV_ART_LEVEL_BLOCK, x, y, w, h, 0);
         break;
-    case ON_LEVEL_GROUND:
-        rect(x, y, x + w - 1, y + h - 1, fill);
-        rect(x, y, x + w - 1, y + (h > 8 ? 7 : 0), COL(177, 216, 116));
-        rect(x, y + (h > 8 ? 8 : 0), x + w - 1, y + h - 1, COL(78, 119, 65));
+    case ON_LEVEL_GROUND: {
+        /* Platform artwork is a 2×1 tile; repeat it across wide floors. */
+        const int tile_w = (int)(CUSTOM_TILE_W * 2.0f);
+        const int tile_h = (int)CUSTOM_TILE_H;
+        for (int dy = 0; dy < h; dy += tile_h)
+            for (int dx = 0; dx < w; dx += tile_w) {
+                int draw_w = w - dx < tile_w ? w - dx : tile_w;
+                int draw_h = h - dy < tile_h ? h - dy : tile_h;
+                sprite_draw(PV_ART_LEVEL_PLATFORM, x + dx, y + dy,
+                            draw_w, draw_h, 0);
+            }
         break;
-    case ON_LEVEL_HAZARD: {
-        int count = w / 28;if (count < 1) count = 1;if (count > 14) count = 14;
-        for (int i = 0; i < count; i++) {
-            int left = x + i * w / count, right = x + (i + 1) * w / count;
-            custom_triangle(left, y + h - 1, (left + right) / 2, y + 2,
-                            right, y + h - 1, fill);
-        }
-        rect(x, y + h - 4, x + w - 1, y + h - 1, COL(106, 49, 45));break;
     }
+    case ON_LEVEL_HAZARD:
+        sprite_draw(PV_ART_LEVEL_SPIKE, x, y, w, h, 0);
+        break;
     case ON_LEVEL_COIN:
         sprite_draw(PV_ART_COIN, x, y, w, h, 0);break;
     case ON_LEVEL_ENEMY:
@@ -2379,18 +2364,12 @@ static void custom_draw_object(const OnLevelObject *o) {
     case ON_LEVEL_PLAYER: /* The moving player is rendered separately. */
         break;
     case ON_LEVEL_GOAL:
-        rect(x + w / 5, y, x + w / 5 + 4, y + h - 1, COL(244, 235, 209));
-        custom_triangle(x + w / 5 + 4, y + 3, x + w - 1, y + h / 5,
-                        x + w / 5 + 4, y + h * 2 / 5, fill);
-        sprite_draw(PV_ART_KIRILL, x + w / 4, y + h / 2, w * 3 / 4, h / 2, 0);
+        sprite_draw(PV_ART_LEVEL_FLAG, x, y, w, h, 0);
         break;
     case ON_LEVEL_TRIGGER:
-        rect_blend(x, y, x + w - 1, y + h - 1, fill, 90);
-        rect(x, y, x + w - 1, y + 3, COL(224, 255, 248));
-        rect(x, y + h - 4, x + w - 1, y + h - 1, COL(224, 255, 248));
-        rect(x, y, x + 3, y + h - 1, COL(224, 255, 248));
-        rect(x + w - 4, y, x + w - 1, y + h - 1, COL(224, 255, 248));
-        draw_text(x + w / 2 - 8, y + h / 2 - 12, 3, COL(255, 255, 255), "E");break;
+        rect_blend(x, y, x + w - 1, y + h - 1, fill, 50);
+        sprite_draw(PV_ART_LEVEL_TRIGGER, x, y, w, h, 0);
+        break;
     }
     if (o->number) draw_int(x + 3, y + 3, 2, COL(255, 255, 255), o->number);
 }
@@ -2408,7 +2387,8 @@ static void custom_platformer_draw(void) {
             custom_draw_object(&custom_objects[i]);
     if (custom_level_active) {
         int px = (int)lrintf(custom_player_x), py = (int)lrintf(custom_player_y);
-        sprite_draw(PV_ART_BREAD, px, py, (int)custom_player_w, (int)custom_player_h, 0);
+        sprite_draw(PV_ART_BREAD, px, py, (int)custom_player_w,
+                    (int)custom_player_h, 0);
     }
     rect(0, 0, GAME_W - 1, 102, COL(190, 190, 190));
     rect(0, 100, GAME_W - 1, 102, COL(0, 0, 0));
