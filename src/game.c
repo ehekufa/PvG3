@@ -279,6 +279,13 @@ static const char *const EN_NAMES[EN_COUNT] = {
 };
 static const int BOOK_ENEMIES[] = { EN_DUCK, EN_CONE, EN_BUCKET, EN_ROBOT };
 #define BOOK_ENEMY_COUNT 4
+#define GARDEN_DUCK_COUNT 3
+static const int GARDEN_DUCKS[GARDEN_DUCK_COUNT] = {
+    EN_DUCK, EN_CONE, EN_BUCKET
+};
+static const char *const GARDEN_DUCK_NAMES[GARDEN_DUCK_COUNT] = {
+    "ГУСЬ", "КОНУС", "ВЕДРО"
+};
 
 typedef struct {
     int cost, hp;
@@ -356,7 +363,9 @@ static int coin_balance;
 static int selected;
 static float cooldown[PT_COUNT];
 static int garden[ROWS][COLS];
-static int garden_selected;            /* -1 nothing, PT_COUNT eraser */
+static int garden_selected;            /* -1 none, PT_COUNT eraser, else deck index */
+static int garden_mode;                /* 0 = plants, 1 = the three goose variants */
+static int garden_map = 1;              /* 1 = lawn, WATER_LEVEL = water */
 static int book_selected;
 static int book_enemy_selected;         /* 0..3 in BOOK_ENEMIES */
 static int book_enemy_tab;              /* the five plants or illustrated foes */
@@ -377,6 +386,11 @@ static char online_code[ON_ROOM_ID_SIZE];
 static char online_hint[110];
 static float online_hint_time;
 static Phase book_return;
+
+static int garden_card_x(int index) {
+    /* Keep the three-goose palette centered in the same five-card rail. */
+    return CARD_X + (garden_mode ? CARD_STEP : 0) + index * CARD_STEP;
+}
 
 void game_set_lvgl_ui(int enabled) {
     enabled = !!enabled;
@@ -655,6 +669,8 @@ void game_init(void) {
     for (int r = 0; r < ROWS; r++)
         for (int c = 0; c < COLS; c++) garden[r][c] = PT_NONE;
     garden_selected = -1;
+    garden_mode = 0;
+    garden_map = 1;
     book_selected = PT_PEA;
     book_enemy_selected = 0;
     book_enemy_tab = 0;
@@ -1191,21 +1207,35 @@ void game_input_press(int x, int y) {
     if (phase == PH_GARDEN) {
         if (inside(x, y, 915, 16, 1070, 63)) { open_book(); return; }
         if (inside(x, y, 1080, 16, 1265, 63)) { phase = PH_MENU; return; }
+        if (inside(x, y, 6, 42, 118, 73)) {
+            garden_mode = 0;garden_selected = -1;return;
+        }
+        if (inside(x, y, 128, 42, 240, 73)) {
+            garden_mode = 1;garden_selected = -1;return;
+        }
+        if (inside(x, y, 6, 78, 118, 109)) {
+            garden_map = 1;garden_selected = -1;return;
+        }
+        if (inside(x, y, 128, 78, 240, 109)) {
+            garden_map = WATER_LEVEL;garden_selected = -1;return;
+        }
         if (inside(x, y, 915, 73, 1265, 116)) { garden_selected = PT_COUNT; return; }
-        if (y >= 12 && y <= 112)
-            for (int i = 0; i < PT_COUNT; i++) {
-                int x0 = CARD_X + i * CARD_STEP;
+        if (y >= 12 && y <= 112) {
+            int count = garden_mode ? GARDEN_DUCK_COUNT : PT_COUNT;
+            for (int i = 0; i < count; i++) {
+                int x0 = garden_card_x(i);
                 if (x >= x0 && x <= x0 + CARD_W) {
                     garden_selected = i;
                     return;
                 }
             }
+        }
         if (x >= LAWN_X && x < LAWN_X + COLS * CELL_W &&
             y >= LAWN_Y && y < LAWN_Y + ROWS * CELL_H) {
             int c = (x - LAWN_X) / CELL_W, r = (y - LAWN_Y) / CELL_H;
             if (garden_selected == PT_COUNT) garden[r][c] = PT_NONE;
             else if (garden_selected >= 0) {
-                garden[r][c] = garden_selected;
+                garden[r][c] = garden_mode ? PT_COUNT + garden_selected : garden_selected;
                 if (use_lvgl_ui) garden_selected = -1;
             }
         }
@@ -1302,8 +1332,9 @@ int game_legacy_plant_drag(int screen_phase, int from_x, int from_y,
             }
         }
     } else if (phase == PH_GARDEN && from_y >= 12 && from_y <= 112) {
-        for (int i = 0; i < PT_COUNT; i++) {
-            int x0 = CARD_X + i * CARD_STEP;
+        int count = garden_mode ? GARDEN_DUCK_COUNT : PT_COUNT;
+        for (int i = 0; i < count; i++) {
+            int x0 = garden_card_x(i);
             if (from_x >= x0 && from_x <= x0 + CARD_W) {
                 source = 1;
                 break;
@@ -1335,7 +1366,8 @@ static void draw_authored_map_band(int id, int y, int h, int sy, int sh) {
 static void draw_background(void) {
     int scene_level = phase == PH_ONLINE_MATCH && online_has_match ?
                       online_match.map : level;
-    int water_scene = scene_level == WATER_LEVEL &&
+    int water_scene = phase == PH_GARDEN ? garden_map == WATER_LEVEL :
+        scene_level == WATER_LEVEL &&
         (phase == PH_PLAY || phase == PH_LEVEL_CLEAR ||
          phase == PH_LOSE || phase == PH_WIN || phase == PH_ONLINE_MATCH);
     int id = water_scene && sprite_pixels[SPR_WATER_MAP] ? SPR_WATER_MAP : SPR_MAP;
@@ -1384,6 +1416,7 @@ void game_offline_ui_snapshot(GameOfflineUIState *out) {
     memset(out, 0, sizeof *out);
     out->level = level;out->coins = coin_balance;
     out->selection = selected;out->garden_selection = garden_selected;
+    out->garden_mode = garden_mode;out->garden_map = garden_map;
     out->wave_remaining = game_wave_remaining();out->wave_total = total_zombies;
     out->intro_step = intro_step;
     out->book_enemy_tab = book_enemy_tab;
@@ -1594,15 +1627,32 @@ static void draw_level_select(void) {
                 "ПОВТОР КАТ-СЦЕНЫ НЕ СБРАСЫВАЕТ СОХРАНЕНИЕ");
 }
 
-/* Free planting space for every plant Kirill has actually drawn. It is
- * separate from the campaign: garden planting never spends battle coins. */
+/* Simple, flat controls shared by the fallback software-rendered garden. */
+static void draw_garden_option(int x0, int y0, int x1, int y1,
+                               const char *text, int active) {
+    rect(x0, y0, x1, y1, COL(47, 37, 28));
+    rect(x0 + 3, y0 + 3, x1 - 3, y1 - 3,
+         active ? COL(179, 207, 143) : COL(236, 224, 188));
+    draw_text_c((x0 + x1) / 2, y0 + 8, 1,
+                active ? COL(39, 54, 35) : COL(64, 48, 35), text);
+}
+
+/* Plants and geese share a free-placement garden; campaign rules and currency
+ * are not involved. The map choice only changes the artwork beneath them. */
 static void draw_garden(void) {
     draw_background();
     for (int r = 0; r < ROWS; r++)
-        for (int c = 0; c < COLS; c++)
-            if (garden[r][c] >= 0)
-                draw_plant(CELL_CX(c), CELL_CY(r), garden[r][c],
+        for (int c = 0; c < COLS; c++) {
+            int item = garden[r][c];
+            if (item >= 0 && item < PT_COUNT) {
+                draw_plant(CELL_CX(c), CELL_CY(r), item,
                            sinf(global_t * 2 + r + c));
+            } else if (item >= PT_COUNT && item < PT_COUNT + GARDEN_DUCK_COUNT) {
+                ellipse(CELL_CX(c), CELL_CY(r) + 36, 41, 8, COL(48, 120, 34));
+                draw_duck_variant(CELL_CX(c) - 46, CELL_CY(r) - 49, 92,
+                                  GARDEN_DUCKS[item - PT_COUNT], 0);
+            }
+        }
 
     if (use_lvgl_ui) return; /* LVGL paints the packets and garden actions. */
     if (sprite_pixels[SPR_MAP])
@@ -1612,18 +1662,30 @@ static void draw_garden(void) {
     rect_blend(0, 0, GAME_W - 1, LAWN_Y - 1, COL(31, 25, 30), 148);
     rect(LAWN_X, LAWN_Y - 5, GAME_W - 1, LAWN_Y - 1, COL(70, 46, 28));
     draw_text(28, 13, 4, COL(255, 229, 157), "САД ДЗЕН");
-    draw_text(28, 68, 2, COL(255, 241, 193), "СОЗДАНИЯ КИРИЛЛА");
+    draw_garden_option(8, 43, 116, 78, "РАСТЕНИЯ", !garden_mode);
+    draw_garden_option(124, 43, 232, 78, "ГУСИ", garden_mode);
+    draw_garden_option(8, 81, 116, 116, "ГАЗОН", garden_map == 1);
+    draw_garden_option(124, 81, 232, 116, "ВОДА", garden_map == WATER_LEVEL);
 
-    for (int i = 0; i < PT_COUNT; i++) {
-        int x0 = CARD_X + i * CARD_STEP;
+    int count = garden_mode ? GARDEN_DUCK_COUNT : PT_COUNT;
+    for (int i = 0; i < count; i++) {
+        int x0 = garden_card_x(i);
         uint32_t border = garden_selected == i ? COL(255, 225, 82) : COL(65, 44, 31);
         rect(x0 - 3, 9, x0 + CARD_W + 3, 115, border);
         rect(x0, 12, x0 + CARD_W, 112, COL(236, 224, 188));
-        rect(x0, 12, x0 + CARD_W, 18, PDEF[i].body);
-        sprite_draw(PDEF[i].sprite, x0 + (CARD_W - 60) / 2, 19, 60, 60, 0);
-        int size = text_w(2, PDEF[i].short_name) <= CARD_W - 8 ? 2 : 1;
-        draw_text_c(x0 + CARD_W / 2, 84, size,
-                    COL(64, 42, 29), PDEF[i].short_name);
+        if (garden_mode) {
+            rect(x0, 12, x0 + CARD_W, 18, COL(194, 159, 75));
+            draw_duck_variant(x0 + (CARD_W - 60) / 2, 19, 60,
+                              GARDEN_DUCKS[i], 0);
+            draw_text_c(x0 + CARD_W / 2, 84, 2, COL(64, 42, 29),
+                        GARDEN_DUCK_NAMES[i]);
+        } else {
+            rect(x0, 12, x0 + CARD_W, 18, PDEF[i].body);
+            sprite_draw(PDEF[i].sprite, x0 + (CARD_W - 60) / 2, 19, 60, 60, 0);
+            int size = text_w(2, PDEF[i].short_name) <= CARD_W - 8 ? 2 : 1;
+            draw_text_c(x0 + CARD_W / 2, 84, size,
+                        COL(64, 42, 29), PDEF[i].short_name);
+        }
     }
     draw_button(915, 16, 1070, 58, "КНИГА", 2);
     draw_button(1080, 16, 1265, 58, "В МЕНЮ", 2);
@@ -1633,7 +1695,7 @@ static void draw_garden(void) {
     draw_text_c(1090, 82, 3, COL(255, 240, 198), "УБРАТЬ");
     rect_blend(95, 679, 1185, 717, COL(13, 29, 22), 220);
     draw_text_c(640, 691, 2, COL(255, 244, 205),
-                "ВЫБЕРИ РАСТЕНИЕ И КЛЕТКУ. В САДУ ВСЁ БЕСПЛАТНО.");
+                "СВОБОДНО СТАВЬ РАСТЕНИЯ И ГУСЕЙ. ВСЁ БЕСПЛАТНО.");
 }
 
 /* Interactive plant book: the list and details come from the SAME plant
@@ -2378,11 +2440,18 @@ void game_garden_export(uint8_t cells[GAME_GARDEN_CELLS]) {
 int game_garden_import(const uint8_t cells[GAME_GARDEN_CELLS]) {
     if (!cells) return 0;
     for (int i = 0; i < GAME_GARDEN_CELLS; i++)
-        if (cells[i] > PT_COUNT) return 0; /* reject malformed saves atomically */
+        if (cells[i] > PT_COUNT + GARDEN_DUCK_COUNT)
+            return 0; /* reject malformed saves atomically */
     for (int r = 0; r < ROWS; r++)
         for (int c = 0; c < COLS; c++)
             garden[r][c] = (int)cells[r * COLS + c] - 1;
     return 1;
+}
+
+int game_garden_map(void) { return garden_map; }
+
+void game_garden_set_map(int map) {
+    if (map == 1 || map == WATER_LEVEL) garden_map = map;
 }
 
 /* The garden remains in pvg3-garden.v1. Campaign V1-V4 had the exact same

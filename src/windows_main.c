@@ -137,11 +137,20 @@ static void campaign_load(void) {
 static void garden_load(void) {
     FILE *file = _wfopen(garden_file, L"rb");
     if (!file) return;
-    uint8_t cells[GAME_GARDEN_CELLS];
-    size_t count = fread(cells, 1, sizeof cells, file);
+    uint8_t bytes[4 + GAME_GARDEN_CELLS + 1];
+    size_t count = fread(bytes, 1, sizeof bytes, file);
     int extra = fgetc(file);
     fclose(file);
-    if (count == sizeof cells && extra == EOF) game_garden_import(cells);
+    if (extra != EOF) return;
+    /* Earlier Windows builds stored just the 45 cells; they default to lawn. */
+    if (count == GAME_GARDEN_CELLS) {
+        if (game_garden_import(bytes)) game_garden_set_map(1);
+    } else if (count == sizeof bytes && memcmp(bytes, "PVG2", 4) == 0 &&
+               (bytes[4 + GAME_GARDEN_CELLS] == 1 ||
+                bytes[4 + GAME_GARDEN_CELLS] == 5) &&
+               game_garden_import(bytes + 4)) {
+        game_garden_set_map(bytes[4 + GAME_GARDEN_CELLS]);
+    }
 }
 
 static void atomic_write(const wchar_t *path, const void *bytes, size_t size) {
@@ -169,9 +178,10 @@ static void campaign_save(void) {
 }
 
 static void garden_save(void) {
-    uint8_t cells[GAME_GARDEN_CELLS];
-    game_garden_export(cells);
-    atomic_write(garden_file, cells, sizeof cells);
+    uint8_t bytes[4 + GAME_GARDEN_CELLS + 1] = { 'P', 'V', 'G', '2' };
+    game_garden_export(bytes + 4);
+    bytes[4 + GAME_GARDEN_CELLS] = (uint8_t)game_garden_map();
+    atomic_write(garden_file, bytes, sizeof bytes);
 }
 
 static void save_all(void) {

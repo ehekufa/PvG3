@@ -21,11 +21,12 @@ const uint32_t *game_art_rgba(int id, int *width, int *height);
 void game_online_ui_snapshot(OnMatch *match, int *role, int *selection,
                              char *hint, size_t hint_size, float *hint_seconds);
 
-/* Read-only values from the original campaign, cut-scene and Zen Garden.
- * LVGL does not own game state; old saves and the authoritative rules remain
- * byte-for-byte compatible with pre-LVGL APKs. */
+/* Read-only values from the campaign, cut-scene and Zen Garden.
+ * LVGL does not own game state; legacy save values and authoritative rules
+ * remain supported. */
 typedef struct {
     int level, coins, selection, garden_selection;
+    int garden_mode, garden_map; /* 0 = plants, 1 = geese; maps 1 = lawn, 5 = water */
     int wave_remaining, wave_total, boss_health_percent;
     int intro_step, book_enemy_tab, book_selection;
     float cooldown[5];

@@ -284,6 +284,32 @@ static int run_lvgl_test(void) {
     game_garden_export(garden);assert(garden[1] == 1);
     ui_board_tap(535, 176); /* garden drag does not leave a seed selected */
     game_garden_export(garden);assert(garden[2] == 0);
+    ui_tap(180, 57); /* switch to the goose palette */
+    GameOfflineUIState garden_state;
+    game_offline_ui_snapshot(&garden_state);
+    assert(garden_state.garden_mode == 1);
+    ui_drag(450, 55, 649, 176, "garden_goose_hover");
+    game_garden_export(garden);assert(garden[3] == 6);
+    ui_tap(180, 93); /* water map is selectable without losing placements */
+    game_offline_ui_snapshot(&garden_state);
+    assert(garden_state.garden_map == 5 && garden[3] == 6);
+    ui_snapshot("garden_water");
+    const uint32_t *garden_water = game_art_rgba(PV_ART_WATER, &w, &h);
+    assert(garden_water && w == 500 && h == 500);
+    int garden_canal_x = 980, garden_canal_y = 300;
+    int garden_src_y = h / 5 + (garden_canal_y - 232) *
+        (h * 27 / 50 - h / 5) / 224;
+    int garden_src_x = w / 2 + (garden_canal_x - 250) *
+        (w - w / 2) / (GAME_W - 250);
+    assert(ui_pixels[garden_canal_y * GAME_W + garden_canal_x] ==
+           garden_water[garden_src_y * w + garden_src_x]);
+    ui_tap(60, 57); /* return to plants while keeping the water map */
+    ui_drag(840, 55, 535, 288, "garden_water_lily");
+    game_garden_export(garden);
+    assert(garden[11] == 5 && game_debug_garden_plant_type(1, 2) == 4);
+    ui_tap(60, 93); /* return to the lawn without losing either placement */
+    game_offline_ui_snapshot(&garden_state);
+    assert(garden_state.garden_mode == 0 && garden_state.garden_map == 1);
     ui_tap(989, 44);assert(game_phase() == GAME_BOOK);
     ui_snapshot("book_plants");
     ui_tap(430, 220);ui_snapshot("book_enemies");

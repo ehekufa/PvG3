@@ -245,8 +245,8 @@ static void on_app_cmd(struct android_app *app, int32_t cmd) {
     }
 }
 
-/* Garden plants survive a normal app restart. Kirill's five plant IDs retain
- * their stable byte values; invalid/truncated files are ignored. */
+/* Garden contents survive app restarts. PVG1 files keep their original five
+ * plant IDs and default to lawn; PVG2 adds goose IDs and the selected map. */
 static int garden_path(struct android_app *app, char path[PATH_MAX]) {
     const char *dir = app->activity ? app->activity->internalDataPath : NULL;
     if (!dir) return 0;
@@ -259,12 +259,19 @@ static void garden_load(struct android_app *app) {
     if (!garden_path(app, path)) return;
     FILE *f = fopen(path, "rb");
     if (!f) return;
-    unsigned char bytes[4 + GAME_GARDEN_CELLS];
+    unsigned char bytes[4 + GAME_GARDEN_CELLS + 1];
     size_t count = fread(bytes, 1, sizeof bytes, f);
     int extra = fgetc(f);
     fclose(f);
-    if (count == sizeof bytes && extra == EOF && memcmp(bytes, "PVG1", 4) == 0)
-        game_garden_import(bytes + 4);
+    if (extra != EOF) return;
+    if (count == 4 + GAME_GARDEN_CELLS && memcmp(bytes, "PVG1", 4) == 0) {
+        if (game_garden_import(bytes + 4)) game_garden_set_map(1);
+    } else if (count == sizeof bytes && memcmp(bytes, "PVG2", 4) == 0 &&
+               (bytes[4 + GAME_GARDEN_CELLS] == 1 ||
+                bytes[4 + GAME_GARDEN_CELLS] == 5) &&
+               game_garden_import(bytes + 4)) {
+        game_garden_set_map(bytes[4 + GAME_GARDEN_CELLS]);
+    }
 }
 
 static void garden_save(struct android_app *app) {
@@ -272,8 +279,9 @@ static void garden_save(struct android_app *app) {
     if (!garden_path(app, path)) return;
     int n = snprintf(tmp, sizeof tmp, "%s.tmp", path);
     if (n <= 0 || n >= (int)sizeof tmp) return;
-    unsigned char bytes[4 + GAME_GARDEN_CELLS] = { 'P', 'V', 'G', '1' };
+    unsigned char bytes[4 + GAME_GARDEN_CELLS + 1] = { 'P', 'V', 'G', '2' };
     game_garden_export(bytes + 4);
+    bytes[4 + GAME_GARDEN_CELLS] = (unsigned char)game_garden_map();
     FILE *f = fopen(tmp, "wb");
     if (!f) { LOGE("cannot open garden save file"); return; }
     size_t count = fwrite(bytes, 1, sizeof bytes, f);

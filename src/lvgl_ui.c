@@ -32,6 +32,7 @@ enum {
     U_ROOMS_BACK, U_LOBBY_EXIT, U_PLANTS, U_ZOMBIES, U_MATCH_BOOK,
     U_MATCH_EXIT, U_MATCH_FINISH, U_MATCH_RETURN,
     U_GARDEN_BOOK, U_GARDEN_EXIT, U_GARDEN_ERASE,
+    U_GARDEN_PLANTS, U_GARDEN_GEESE, U_GARDEN_LAWN, U_GARDEN_WATER,
     U_BOOK_BACK, U_BOOK_PLANTS, U_BOOK_ENEMIES,
     U_INTRO_NEXT, U_INTRO_SKIP, U_OFFLINE_BOOK, U_OFFLINE_MENU,
     U_RESULT_NEXT, U_RESULT_RETRY, U_RESULT_MENU,
@@ -213,27 +214,43 @@ static void levels_screen(lv_obj_t *root) {
 }
 
 /* Offline navigation and HUD share the same real LVGL widgets as online. The
- * plants, map, coins and opponents beneath them are still the original game. */
+ * garden can switch palettes and show either authored map without altering its
+ * stored plants/geese. */
 static void garden_screen(lv_obj_t *root) {
+    GameOfflineUIState state;
+    game_offline_ui_snapshot(&state);
     box(root, 0, 0, 1280, 121, 0, DARK, 0);
     box(root, 0, 118, 1280, 3, 0, GOLD, 0);
-    label(root, 18, 29, 236, 53, "Сад Дзен", 3, WHITE, LV_TEXT_ALIGN_LEFT);
-    for (int i = 0; i < 5; i++) {
+    label(root, 12, 3, 232, 36, "Сад Дзен", 2, WHITE, LV_TEXT_ALIGN_LEFT);
+    button(root, 6, 42, 112, 31, "Растения", 0,
+           state.garden_mode == 0 ? SAGE : WHITE, INK, U_GARDEN_PLANTS);
+    button(root, 128, 42, 112, 31, "Гуси", 0,
+           state.garden_mode == 1 ? SAGE : WHITE, INK, U_GARDEN_GEESE);
+    button(root, 6, 78, 112, 31, "Газон", 0,
+           state.garden_map == 1 ? SAGE : WHITE, INK, U_GARDEN_LAWN);
+    button(root, 128, 78, 112, 31, "Вода", 0,
+           state.garden_map == 5 ? SAGE : WHITE, INK, U_GARDEN_WATER);
+
+    int count = state.garden_mode ? 3 : 5;
+    for (int i = 0; i < count; i++) {
         GameBookEntry entry;
-        if (!game_book_entry(0, i, &entry)) continue;
-        int x = 260 + i * 130;
+        if (!game_book_entry(state.garden_mode, i, &entry)) continue;
+        int x = 260 + (state.garden_mode ? 130 : 0) + i * 130;
         lv_obj_t *slot = button(root, x, 15, 120, 100, "", 0,
                                 DARK, WHITE, 0);
         lv_obj_set_style_bg_opa(slot, LV_OPA_TRANSP, 0);
         lv_obj_set_style_shadow_width(slot, 0, 0);
-        if (drag_phase == GAME_GARDEN && drag_index == i)
+        if (state.garden_selection == i ||
+            (drag_phase == GAME_GARDEN && drag_index == i))
             box(slot, 17, 6, 86, 86, 43, GOLD, 0);
-        art(slot, entry.art_id, 60, 49, 85);
+        if (state.garden_mode)
+            duck_art(slot, 60, 49, 85, entry.enemy_variant);
+        else
+            art(slot, entry.art_id, 60, 49, 85);
     }
     button(root, 918, 22, 145, 44, "Книга", 2, C(476750), WHITE, U_GARDEN_BOOK);
     button(root, 1079, 22, 179, 44, "В меню", 2, C(476750), WHITE, U_GARDEN_EXIT);
     button(root, 918, 77, 340, 39, "Убрать", 2, SAGE, INK, U_GARDEN_ERASE);
-    label(root, 24, 83, 225, 37, "Тяни в сад", 2, GOLD, LV_TEXT_ALIGN_LEFT);
 }
 
 static void book_screen(lv_obj_t *root) {
@@ -511,7 +528,7 @@ static void custom_levels_screen(lv_obj_t *root, const OnNetView *v) {
         label(root, 420, 365, 600, 74, "Уровней пока нет", 3, INK,
               LV_TEXT_ALIGN_LEFT);
         label(root, 422, 432, 576, 58,
-              "Открой редактор в браузере, задай ID и название, затем нажми «Опубликовать».",
+              "Опубликованные уровни появятся здесь.",
               1, MUTED, LV_TEXT_ALIGN_LEFT);
     }
     if (pages > 1) {
@@ -720,8 +737,11 @@ static uint32_t state_signature(int phase, const OnNetView *v) {
                phase == GAME_INTRO || phase == GAME_PLAY) {
         GameOfflineUIState state;
         game_offline_ui_snapshot(&state);
-        if (phase == GAME_GARDEN)
+        if (phase == GAME_GARDEN) {
             h = mix(h, &state.garden_selection, sizeof state.garden_selection);
+            h = mix(h, &state.garden_mode, sizeof state.garden_mode);
+            h = mix(h, &state.garden_map, sizeof state.garden_map);
+        }
         else if (phase == GAME_BOOK) {
             h = mix(h, &state.book_enemy_tab, sizeof state.book_enemy_tab);
             h = mix(h, &state.book_selection, sizeof state.book_selection);
@@ -755,8 +775,13 @@ static int over_board(int x, int y) {
 
 static int packet_at(int phase, int x, int y) {
     if (phase == GAME_GARDEN && y >= 15 && y < 115) {
-        for (int i = 0; i < 5; ++i)
-            if (x >= 260 + i * 130 && x < 380 + i * 130) return i;
+        GameOfflineUIState state;
+        game_offline_ui_snapshot(&state);
+        int count = state.garden_mode ? 3 : 5;
+        int offset = state.garden_mode ? 130 : 0;
+        for (int i = 0; i < count; ++i)
+            if (x >= 260 + offset + i * 130 &&
+                x < 380 + offset + i * 130) return i;
     }
     if (phase == GAME_PLAY && x >= 12 && x < 235) {
         for (int i = 0; i < 5; ++i) {
@@ -862,16 +887,28 @@ static void drag_overlay(lv_obj_t *root, int phase) {
         }
     }
     GameBookEntry entry;
-    if (game_book_entry(0, drag_index, &entry))
+    if (phase == GAME_GARDEN) {
+        GameOfflineUIState state;
+        game_offline_ui_snapshot(&state);
+        if (game_book_entry(state.garden_mode, drag_index, &entry)) {
+            if (state.garden_mode)
+                duck_art(drag_ghost, 55, 55, 96, entry.enemy_variant);
+            else
+                art(drag_ghost, entry.art_id, 55, 55, 95);
+        }
+    } else if (game_book_entry(0, drag_index, &entry)) {
         art(drag_ghost, entry.art_id, 55, 55, 95);
+    }
     drag_position(drag_x, drag_y);
 }
 
 static void drop_packet(int phase, int index, int x, int y) {
     if (!over_board(x, y) || phase != game_phase()) return;
-    if (phase == GAME_GARDEN)
-        game_input_press(320 + index * 130, 60);
-    else if (phase == GAME_PLAY)
+    if (phase == GAME_GARDEN) {
+        GameOfflineUIState state;
+        game_offline_ui_snapshot(&state);
+        game_input_press(320 + (state.garden_mode ? 130 : 0) + index * 130, 60);
+    } else if (phase == GAME_PLAY)
         game_input_press(125, 185 + index * 107);
     else if (phase == GAME_ONLINE_MATCH) {
         int role;
@@ -957,6 +994,10 @@ static void pressed(lv_event_t *ev) {
     case U_GARDEN_BOOK: game_input_press(988, 43);break;
     case U_GARDEN_EXIT: game_input_press(1160, 43);break;
     case U_GARDEN_ERASE: game_input_press(1100, 95);dirty = 1;break;
+    case U_GARDEN_PLANTS: game_input_press(60, 57);dirty = 1;break;
+    case U_GARDEN_GEESE: game_input_press(180, 57);dirty = 1;break;
+    case U_GARDEN_LAWN: game_input_press(60, 93);dirty = 1;break;
+    case U_GARDEN_WATER: game_input_press(180, 93);dirty = 1;break;
     case U_BOOK_BACK: game_input_press(1150, 55);break;
     case U_BOOK_PLANTS: game_input_press(250, 140);dirty = 1;break;
     case U_BOOK_ENEMIES: game_input_press(447, 140);dirty = 1;break;

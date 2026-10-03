@@ -60,11 +60,15 @@ void game_set_lvgl_ui(int enabled);
 void game_debug_snapshot(void);
 void game_debug_armored_snapshot(void);
 
-/* Zen Garden layout is stored by the Android host in the app's private data.
- * 0 = empty plot, 1..5 = one of Kirill's five drawn plants. Old IDs 1..4 stay. */
+/* Zen Garden cell IDs in the 45-byte payload: 0 = empty, 1..5 = the five
+ * existing plants (unchanged), 6 = goose, 7 = cone goose, 8 = bucket goose.
+ * Android and Windows hosts keep reading legacy saves; the versioned wrapper
+ * adds the selected map without changing this cell payload. */
 #define GAME_GARDEN_CELLS 45
 void game_garden_export(uint8_t cells[GAME_GARDEN_CELLS]);
 int game_garden_import(const uint8_t cells[GAME_GARDEN_CELLS]);
+int game_garden_map(void);             /* 1 = lawn, 5 = water */
+void game_garden_set_map(int map);     /* ignores values other than 1 and 5 */
 
 /* Current GAME_* phase. */
 int game_phase(void);

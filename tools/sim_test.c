@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "game.h"
+#include "game_view.h"
 #include "font.h"
 #include "online_net.h"
 
@@ -50,6 +51,7 @@ static void custom_level_runtime(void) {
 
 /* Match the battle sidebar, the garden header and the 9x5 lawn. */
 static int garden_card_x(int type) { return 260 + type * 130 + 60; }
+static int goose_card_x(int type) { return 390 + type * 130 + 60; }
 static int battle_card_y(int type) { return 137 + type * 107 + 50; }
 static int book_row_y(int type) { return 160 + type * 99 + 44; }
 static int cell_x(int col) { return 250 + col * 114 + 57; }
@@ -170,6 +172,32 @@ int main(void) {
     assert(game_debug_garden_plant_type(3, 4) == 1);
     assert(game_debug_garden_plant_type(4, 5) == 3);
     assert(game_debug_coin_balance() == 250); /* garden is free */
+
+    /* Goose palette reuses the old 45 cells without changing plant IDs. */
+    game_input_press(180, 57);               /* switch to geese */
+    GameOfflineUIState garden_ui;
+    game_offline_ui_snapshot(&garden_ui);
+    assert(garden_ui.garden_mode == 1 && garden_ui.garden_map == 1);
+    assert(game_legacy_plant_drag(GAME_GARDEN, goose_card_x(0), 70,
+                                  cell_x(3), cell_y(0)));
+    game_input_press(goose_card_x(0), 70);
+    game_input_press(cell_x(3), cell_y(0));   /* plain goose */
+    game_input_press(goose_card_x(1), 70);
+    game_input_press(cell_x(3), cell_y(1));   /* cone goose */
+    game_input_press(goose_card_x(2), 70);
+    game_input_press(cell_x(4), cell_y(2));   /* bucket goose */
+    assert(game_debug_garden_plant_type(0, 3) == 5);
+    assert(game_debug_garden_plant_type(1, 3) == 6);
+    assert(game_debug_garden_plant_type(2, 4) == 7);
+    uint8_t goose_save[GAME_GARDEN_CELLS];
+    game_garden_export(goose_save);
+    assert(goose_save[3] == 6 && goose_save[12] == 7 && goose_save[22] == 8);
+    game_input_press(60, 57);                 /* return to plants */
+    game_input_press(180, 93);                /* water map */
+    assert(game_garden_map() == 5);
+    game_input_press(60, 93);                 /* lawn map */
+    assert(game_garden_map() == 1);
+
     game_input_press(1100, 114);             /* eraser, then repaint */
     game_input_press(cell_x(2), cell_y(2));
     assert(game_debug_garden_plant_type(2, 2) == -1);
@@ -196,7 +224,7 @@ int main(void) {
     game_input_press(1160, 60);
     assert(game_phase() == GAME_MENU);
 
-    /* Preserve the same legacy 45-cell garden file, including plant ID 4. */
+    /* Keep 45 cells and old plant IDs while round-tripping goose variants. */
     uint8_t garden[GAME_GARDEN_CELLS], bad_garden[GAME_GARDEN_CELLS];
     game_garden_export(garden);
     assert(garden[1 * 9 + 7] == 5 && garden[4 * 9 + 5] == 4);
@@ -205,6 +233,10 @@ int main(void) {
     assert(game_garden_import(garden));
     assert(game_debug_garden_plant_type(4, 5) == 3);
     assert(game_debug_garden_plant_type(1, 7) == 4);
+    assert(game_debug_garden_plant_type(0, 3) == 5);
+    assert(game_debug_garden_plant_type(1, 3) == 6);
+    assert(game_debug_garden_plant_type(2, 4) == 7);
+    assert(game_garden_map() == 1); /* legacy cell payload defaults to lawn */
     memcpy(bad_garden, garden, sizeof garden);
     bad_garden[0] = 255;
     assert(!game_garden_import(bad_garden));
