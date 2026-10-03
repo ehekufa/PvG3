@@ -85,6 +85,7 @@ static void read_pointer(lv_indev_t *in, lv_indev_data_t *data) {
 
 static lv_obj_t *box(lv_obj_t *parent, int x, int y, int w, int h, int radius,
                      lv_color_t color, int shadow) {
+    (void)shadow; /* flat interface: no drop shadows or glossy highlights */
     lv_obj_t *o = lv_obj_create(parent);
     lv_obj_remove_style_all(o);
     lv_obj_set_pos(o, x, y);
@@ -92,12 +93,12 @@ static lv_obj_t *box(lv_obj_t *parent, int x, int y, int w, int h, int radius,
     lv_obj_set_style_bg_color(o, color, 0);
     lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(o, radius, 0);
-    if (shadow) {
-        lv_obj_set_style_shadow_width(o, 12, 0);
-        lv_obj_set_style_shadow_ofs_y(o, 4, 0);
-        lv_obj_set_style_shadow_color(o, C(A9B296), 0);
-        lv_obj_set_style_shadow_opa(o, LV_OPA_60, 0);
+    if (w >= 22 && h >= 22) {
+        lv_obj_set_style_border_width(o, 2, 0);
+        lv_obj_set_style_border_color(o, C(000000), 0);
+        lv_obj_set_style_border_opa(o, LV_OPA_COVER, 0);
     }
+    lv_obj_set_style_shadow_width(o, 0, 0);
     lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     return o;
 }
@@ -128,11 +129,12 @@ static lv_obj_t *button(lv_obj_t *parent, int x, int y, int w, int h,
     lv_obj_set_size(o, w, h);
     lv_obj_set_style_bg_color(o, face, 0);
     lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(o, 15, 0);
-    lv_obj_set_style_shadow_width(o, 8, 0);
-    lv_obj_set_style_shadow_ofs_y(o, 4, 0);
-    lv_obj_set_style_shadow_opa(o, LV_OPA_40, 0);
-    lv_obj_set_style_bg_color(o, C(C9A172), LV_STATE_PRESSED);
+    lv_obj_set_style_radius(o, 5, 0);
+    lv_obj_set_style_border_width(o, 3, 0);
+    lv_obj_set_style_border_color(o, C(000000), 0);
+    lv_obj_set_style_border_opa(o, LV_OPA_COVER, 0);
+    lv_obj_set_style_shadow_width(o, 0, 0);
+    lv_obj_set_style_bg_color(o, face, LV_STATE_PRESSED);
     lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLLABLE);
     if (name && name[0])
         label(o, 7, (h - font_sizes[size] - 3) / 2, w - 14, font_sizes[size] + 6,
@@ -250,7 +252,7 @@ static void book_screen(lv_obj_t *root) {
         if (!game_book_entry(state.book_enemy_tab, i, &entry)) continue;
         int y = 259 + i * 79;
         lv_obj_t *card = button(root, 83, y, 472, 68, "", 0,
-                                state.book_selection == i ? GOLD : WHITE,
+                                state.book_selection == i ? SAGE : WHITE,
                                 INK, U_BOOK_ENTRY_BASE + i);
         if (state.book_enemy_tab && entry.art_id == PV_ART_DUCK)
             duck_art(card, 42, 34, 50, entry.enemy_variant);
@@ -305,7 +307,12 @@ static void packet(lv_obj_t *root, int y, int image_id, int duck_variant,
     lv_obj_t *slot = button(root, 12, y, 223, 100, "", 0, DARK, WHITE, 0);
     lv_obj_set_style_bg_opa(slot, LV_OPA_TRANSP, 0);
     lv_obj_set_style_shadow_width(slot, 0, 0);
-    if (dragging) box(slot, 10, 5, 94, 94, 47, GOLD, 0);
+    if (dragging) {
+        lv_obj_t *ring = box(slot, 10, 5, 94, 94, 47, C(000000), 0);
+        lv_obj_set_style_bg_opa(ring, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(ring, 4, 0);
+        lv_obj_set_style_border_color(ring, C(000000), 0);
+    }
     if (duck_variant >= 0) duck_art(slot, 57, 51, 94, duck_variant);
     else art(slot, image_id, 57, 51, 94);
     if (waiting)
@@ -383,7 +390,7 @@ static void rooms_screen(lv_obj_t *root, const OnNetView *v) {
                               chosen_map == 5 ? BLUE : WHITE, INK, U_MAP_WATER);
     lv_obj_set_style_border_width(chosen_map == 1 ? lawn : water, 2, 0);
     lv_obj_set_style_border_color(chosen_map == 1 ? lawn : water,
-                                  C(779C73), 0);
+                                  C(000000), 0);
     button(root, 650, 179, 187, 62, "Поиск", 2, WHITE, INK, U_SEARCH);
     button(root, 856, 179, 208, 62, "+ Создать", 2, GOLD, INK, U_CREATE);
     box(root, 43, 271, 1195, 421, 23, PAPER, 1);
@@ -486,8 +493,8 @@ static void custom_levels_screen(lv_obj_t *root, const OnNetView *v) {
                      v->levels[index].id);
             lv_obj_t *card = button(root, x, y, 548, 78, "", 1, WHITE, INK,
                                     U_CUSTOM_LEVEL_BASE + i);
-            lv_obj_set_style_border_width(card, 1, 0);
-            lv_obj_set_style_border_color(card, C(D9DDC5), 0);
+            lv_obj_set_style_border_width(card, 2, 0);
+            lv_obj_set_style_border_color(card, C(000000), 0);
             box(card, 13, 15, 90, 47, 10, SAGE, 0);
             label(card, 15, 17, 86, 43, v->levels[index].id, 2, INK,
                   LV_TEXT_ALIGN_CENTER);
@@ -533,24 +540,24 @@ static void custom_platformer_screen(lv_obj_t *root) {
     lv_obj_t *pad = box(root, 58, 480, 222, 222, 111, DARK, 0);
     lv_obj_set_style_bg_opa(pad, LV_OPA_50, 0);
     lv_obj_set_style_border_width(pad, 3, 0);
-    lv_obj_set_style_border_color(pad, C(DDE6C9), 0);
+    lv_obj_set_style_border_color(pad, C(000000), 0);
     lv_obj_t *stick_cross_h = box(root, 104, 587, 130, 8, 4, WHITE, 0);
     lv_obj_set_style_bg_opa(stick_cross_h, LV_OPA_60, 0);
     lv_obj_t *stick_cross_v = box(root, 165, 526, 8, 130, 4, WHITE, 0);
     lv_obj_set_style_bg_opa(stick_cross_v, LV_OPA_60, 0);
     custom_stick_knob = box(root, 137, 559, 66, 66, 33, GOLD, 1);
     lv_obj_set_style_border_width(custom_stick_knob, 2, 0);
-    lv_obj_set_style_border_color(custom_stick_knob, WHITE, 0);
+    lv_obj_set_style_border_color(custom_stick_knob, C(000000), 0);
     lv_obj_t *trigger = box(root, 910, 567, 128, 99, 19, C(59C4BD), 1);
     lv_obj_set_style_bg_opa(trigger, LV_OPA_70, 0);
     lv_obj_set_style_border_width(trigger, 2, 0);
-    lv_obj_set_style_border_color(trigger, WHITE, 0);
+    lv_obj_set_style_border_color(trigger, C(000000), 0);
     label(trigger, 0, 11, 128, 38, "⚡ E", 2, WHITE, LV_TEXT_ALIGN_CENTER);
     label(trigger, 0, 52, 128, 30, "ТРИГГЕР", 1, WHITE, LV_TEXT_ALIGN_CENTER);
     lv_obj_t *jump = box(root, 1081, 525, 169, 169, 84, C(F1BE6C), 1);
     lv_obj_set_style_bg_opa(jump, LV_OPA_70, 0);
     lv_obj_set_style_border_width(jump, 3, 0);
-    lv_obj_set_style_border_color(jump, WHITE, 0);
+    lv_obj_set_style_border_color(jump, C(000000), 0);
     label(jump, 0, 36, 169, 56, "↑", 4, INK, LV_TEXT_ALIGN_CENTER);
     label(jump, 0, 92, 169, 44, "ПРЫЖОК", 1, INK, LV_TEXT_ALIGN_CENTER);
 }
@@ -580,7 +587,7 @@ static void lobby_screen(lv_obj_t *root, const OnNetView *v) {
         label(card, 32, 224, 463, 61,
               side == ON_ROLE_PLANTS ? "Растения" : "Зомби", 3, INK,
               LV_TEXT_ALIGN_CENTER);
-        box(card, 129, 285, 269, 6, 3, chosen ? GOLD : SAGE, 0);
+        box(card, 129, 285, 269, 6, 0, chosen ? C(000000) : SAGE, 0);
         if (taken)
             label(card, 155, 288, 220, 29, "Сторона занята", 1,
                   MUTED, LV_TEXT_ALIGN_CENTER);
@@ -834,11 +841,11 @@ static void drag_position(int x, int y) {
 static void drag_overlay(lv_obj_t *root, int phase) {
     drag_ghost = drag_target = NULL;
     if (drag_index < 0 || drag_phase != phase) return;
-    /* A round, temporary drop halo rather than permanent checkerboard tiles. */
-    drag_target = box(root, 0, 0, ON_CELL_W, ON_CELL_H, ON_CELL_W / 2, GOLD, 0);
-    lv_obj_set_style_bg_opa(drag_target, 45, 0);
-    lv_obj_set_style_border_width(drag_target, 4, 0);
-    lv_obj_set_style_border_color(drag_target, GOLD, 0);
+    /* A flat, transparent drop target with a black outline; no glowing halo. */
+    drag_target = box(root, 0, 0, ON_CELL_W, ON_CELL_H, 0, C(000000), 0);
+    lv_obj_set_style_bg_opa(drag_target, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(drag_target, 3, 0);
+    lv_obj_set_style_border_color(drag_target, C(000000), 0);
     drag_ghost = lv_obj_create(root);
     lv_obj_remove_style_all(drag_ghost);
     lv_obj_set_size(drag_ghost, 110, 110);

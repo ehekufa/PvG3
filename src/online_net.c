@@ -4,14 +4,29 @@
 #define _POSIX_C_SOURCE 200809L
 #include "online_net.h"
 
-#include <fcntl.h>
 #include <pthread.h>
 #include <stdint.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef _WIN32
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0601
+#endif
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <bcrypt.h>
+#define NET_CLOCK_REALTIME 0
+#define NET_CLOCK_MONOTONIC 1
+#else
+#include <fcntl.h>
 #include <time.h>
 #include <unistd.h>
+#define NET_CLOCK_REALTIME CLOCK_REALTIME
+#define NET_CLOCK_MONOTONIC CLOCK_MONOTONIC
+#endif
 
 #define RESPONSE_CAP (1024u * 1024u + 1u)
 
@@ -42,14 +57,32 @@ typedef struct {
 static Net net;
 static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
 
-static int64_t clock_ms(clockid_t clock_id) {
+static int64_t clock_ms(int clock_kind) {
+#ifdef _WIN32
+    if (clock_kind == NET_CLOCK_REALTIME) {
+        FILETIME file_time;
+        ULARGE_INTEGER ticks;
+        GetSystemTimeAsFileTime(&file_time);
+        ticks.LowPart = file_time.dwLowDateTime;
+        ticks.HighPart = file_time.dwHighDateTime;
+        return (int64_t)(ticks.QuadPart / 10000ULL) - 11644473600000LL;
+    }
+    return (int64_t)GetTickCount64();
+#else
     struct timespec ts;
-    if (clock_gettime(clock_id, &ts)) return 0;
+    if (clock_gettime(clock_kind, &ts)) return 0;
     return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+#endif
 }
 static void random_bytes(unsigned char *bytes, size_t n) {
-    int fd = open("/dev/urandom", O_RDONLY);
     size_t got = 0;
+#ifdef _WIN32
+    if (n <= ULONG_MAX &&
+        BCryptGenRandom(NULL, bytes, (ULONG)n,
+                        BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0)
+        got = n;
+#else
+    int fd = open("/dev/urandom", O_RDONLY);
     if (fd >= 0) {
         while (got < n) {
             ssize_t count = read(fd, bytes + got, n - got);
@@ -58,8 +91,9 @@ static void random_bytes(unsigned char *bytes, size_t n) {
         }
         close(fd);
     }
-    uint64_t seed = (uint64_t)clock_ms(CLOCK_REALTIME) ^
-                    ((uint64_t)clock_ms(CLOCK_MONOTONIC) << 19) ^ (uintptr_t)bytes;
+#endif
+    uint64_t seed = (uint64_t)clock_ms(NET_CLOCK_REALTIME) ^
+                    ((uint64_t)clock_ms(NET_CLOCK_MONOTONIC) << 19) ^ (uintptr_t)bytes;
     for (size_t i = got; i < n; i++) {
         seed ^= seed << 13;seed ^= seed >> 7;seed ^= seed << 17;
         bytes[i] = (unsigned char)seed;
@@ -111,8 +145,12 @@ static void *worker(void *arg) {
         pthread_mutex_unlock(&mu);
         if (stop) break;
         on_net_pump_once();
+#ifdef _WIN32
+        Sleep(80);
+#else
         struct timespec wait = {0, 80 * 1000000L};
         nanosleep(&wait, NULL);
+#endif
     }
     return NULL;
 }
@@ -303,7 +341,7 @@ void on_net_pump_once(void) {
     OnCommand command = {0};
     OnMatch state;
     unsigned revision = 0;
-    int64_t now = clock_ms(CLOCK_MONOTONIC);
+    int64_t now = clock_ms(NET_CLOCK_MONOTONIC);
     pthread_mutex_lock(&mu);
     if (net.stopping || !net.response ||
         (net.view.mode == ON_NET_CLOSED && net.action != A_LEAVE)) {
@@ -405,7 +443,7 @@ void on_net_pump_once(void) {
         if (code != 200) {message(gen, http_error(code), 0);return;}
         OnRoomSummary rooms[ON_ROOM_LIST_CAP];
         int count = on_protocol_rooms(net.response, rooms, ON_ROOM_LIST_CAP,
-                                      clock_ms(CLOCK_REALTIME));
+                                      clock_ms(NET_CLOCK_REALTIME));
         if (count < 0) {message(gen, "НЕ УДАЛОСЬ ПРОЧИТАТЬ СПИСОК КОМНАТ", 0);return;}
         pthread_mutex_lock(&mu);
         if (gen == net.generation && net.view.mode == ON_NET_ROOMS) {
@@ -424,7 +462,7 @@ void on_net_pump_once(void) {
             snprintf(body, sizeof body,
                      "{\"version\":1,\"map\":%d,\"host\":{\"id\":\"%s\","
                      "\"ping\":%lld}}", map, player,
-                     (long long)clock_ms(CLOCK_REALTIME));
+                     (long long)clock_ms(NET_CLOCK_REALTIME));
             code = request(path, "PUT", body, "null_etag");
             last = code;
             if (code != 412) break;
@@ -450,12 +488,12 @@ void on_net_pump_once(void) {
         if (code != 200) {message(gen, http_error(code), 0);return;}
         if (!on_protocol_room(net.response, &r) || !r.present ||
             r.guest_id[0] || r.has_state ||
-            clock_ms(CLOCK_REALTIME) - r.host_ping > 600000) {
+            clock_ms(NET_CLOCK_REALTIME) - r.host_ping > 600000) {
             message(gen, "КОМНАТА ЗАКРЫТА ИЛИ УЖЕ ЗАНЯТА", 1);return;
         }
         snprintf(path, sizeof path, "rooms/%s/guest.json", id);
         snprintf(body, sizeof body, "{\"id\":\"%s\",\"ping\":%lld}",
-                 player, (long long)clock_ms(CLOCK_REALTIME));
+                 player, (long long)clock_ms(NET_CLOCK_REALTIME));
         code = request(path, "PUT", body, "null_etag");
         if (code != 200) {message(gen, http_error(code), 0);return;}
         snprintf(path, sizeof path, "rooms/%s.json", id);
@@ -534,7 +572,7 @@ void on_net_pump_once(void) {
         free(json);
         pthread_mutex_lock(&mu);
         if (gen == net.generation && net.view.slot == ON_SLOT_HOST) {
-            net.next_publish = clock_ms(CLOCK_MONOTONIC) + 350;
+            net.next_publish = clock_ms(NET_CLOCK_MONOTONIC) + 350;
             if (code == 200) {
                 net.sent_revision = revision;
                 net.view.connected = 1;
@@ -542,7 +580,7 @@ void on_net_pump_once(void) {
             } else {
                 net.view.connected = 0;
                 snprintf(net.view.notice, sizeof(net.view.notice), "%s", http_error(code));
-                net.next_publish = clock_ms(CLOCK_MONOTONIC) + 1200;
+                net.next_publish = clock_ms(NET_CLOCK_MONOTONIC) + 1200;
             }
         }
         pthread_mutex_unlock(&mu);
@@ -551,7 +589,7 @@ void on_net_pump_once(void) {
     if (task == T_HEARTBEAT) {
         snprintf(path, sizeof path, "rooms/%s/%s/ping.json", id,
                  slot == ON_SLOT_HOST ? "host" : "guest");
-        snprintf(body, sizeof body, "%lld", (long long)clock_ms(CLOCK_REALTIME));
+        snprintf(body, sizeof body, "%lld", (long long)clock_ms(NET_CLOCK_REALTIME));
         code = request(path, "PUT", body, NULL);
         if (code != 200) message(gen, http_error(code), 0);
         return;
@@ -560,7 +598,7 @@ void on_net_pump_once(void) {
         snprintf(path, sizeof path, "rooms/%s.json", id);
         code = request(path, "GET", NULL, NULL);
         pthread_mutex_lock(&mu);
-        if (gen == net.generation) net.next_room = clock_ms(CLOCK_MONOTONIC) + 650;
+        if (gen == net.generation) net.next_room = clock_ms(NET_CLOCK_MONOTONIC) + 650;
         pthread_mutex_unlock(&mu);
         if (code != 200) {message(gen, http_error(code), 0);return;}
         OnRoomData r;

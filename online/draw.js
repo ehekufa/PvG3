@@ -25,6 +25,9 @@ function crop(ctx, file, sx, sy, sw, sh, x, y, w, h) {
   if (pic?.naturalWidth) ctx.drawImage(pic, sx, sy, sw, sh, x, y, w, h);
 }
 function box(ctx, x, y, w, h, color) {ctx.fillStyle = color;ctx.fillRect(x, y, w, h);}
+function outline(ctx, x, y, w, h, width = 2) {
+  ctx.strokeStyle = '#000';ctx.lineWidth = width;ctx.strokeRect(x + width/2, y + width/2, w - width, h - width);
+}
 function label(ctx, text, x, y, size = 20, color = '#fff2ce', align = 'left') {
   ctx.fillStyle = color; ctx.textAlign = align; ctx.textBaseline = 'top';
   ctx.font = `bold ${size}px PTSans, sans-serif`;ctx.fillText(text, x, y);
@@ -34,7 +37,7 @@ function duck(ctx, x, y, size, type, flip = true) {
   image(ctx, file, x, y, size, size, flip);
 }
 function background(ctx, s) {
-  box(ctx, 0, 0, W, H, '#4c7439');
+  box(ctx, 0, 0, W, H, '#d8e9bf');
   crop(ctx, 'lawn-map.png', 0, 0, 246, 500, 0, 0, X - 7, H);
   if (s.map === 5) {
     crop(ctx, 'water-map.png', 274, 0, 226, 100, X, Y, COLS * CW, CH);
@@ -45,13 +48,14 @@ function background(ctx, s) {
     box(ctx, X, Y, COLS * CW, ROWS * CH, '#76a843');
     if (s.map === 5) box(ctx, X, Y + CH, COLS * CW, 2 * CH, '#54adba');
   }
-  ctx.strokeStyle = '#25451d33';ctx.lineWidth = 2;
+  ctx.strokeStyle = '#000';ctx.lineWidth = 2;
   for (let c = 0; c <= COLS; c++) {ctx.beginPath();ctx.moveTo(X + c*CW, Y);ctx.lineTo(X + c*CW, Y + ROWS*CH);ctx.stroke();}
   for (let r = 0; r <= ROWS; r++) {ctx.beginPath();ctx.moveTo(X, Y + r*CH);ctx.lineTo(W, Y + r*CH);ctx.stroke();}
   box(ctx, X - 7, 0, 7, H, '#325c38');
 }
 function cards(ctx, s, role, selected, pending) {
-  box(ctx, 0, 0, X - 7, 130, '#45352ce0');
+  box(ctx, 0, 0, X - 7, 130, '#284735');
+  outline(ctx, 0, 0, X - 7, 130, 2);
   label(ctx, role === 'plants' ? 'МОНЕТЫ РАСТЕНИЙ' : 'МОНЕТЫ ЗОМБИ', 14, 17, 20);
   image(ctx, 'coin-token.png', 8, 50, 46, 46);
   label(ctx, String(role === 'plants' ? s.plantCash : s.zombieCash),
@@ -62,9 +66,10 @@ function cards(ctx, s, role, selected, pending) {
     const h = role === 'plants' ? 98 : 136;
     const available = (role === 'plants' ? s.plantCash >= d.cost && s.plantCooldown[i] <= 0 && (i !== 4 || s.map === 5)
       : s.zombieCash >= d.cost && s.duckCooldown[i] <= 0 && s.left > 0) && !pending;
-    box(ctx, 14, y, 219, h, selected === i ? '#ffe477' : '#523d2a');
-    box(ctx, 19, y+5, 209, h-10, '#f3e2b9');
-    box(ctx, 21, y+5, 6, h-10, role === 'plants' ? '#72aa58' : '#ce8c42');
+    box(ctx, 14, y, 219, h, '#000');
+    box(ctx, 18, y+4, 211, h-8, '#faf5e3');
+    box(ctx, 21, y+5, 6, h-10, role === 'plants' ? '#d8e9bf' : '#f3bc6c');
+    outline(ctx, 14, y, 219, h, selected === i ? 4 : 2);
     if (role === 'plants') image(ctx, d.image, 167, y+8, 54, 54);
     else duck(ctx, 148, y+15, 74, d.id);
     let text = d.name.toUpperCase();
@@ -97,22 +102,27 @@ export function drawGame(canvas, s, {role, selected, pending = false, id = '', l
       const position = d.x - (liveDelay ? d.speed * Math.min(liveDelay,.4) : 0);
       duck(ctx, position-46, Y+r*CH+CH/2-50+Math.sin(d.anim)*2, 92, d.type);
       if (d.hp < d.maxHp) {
-        box(ctx, position-33, Y+r*CH+8, 66, 6, '#55322a');
-        box(ctx, position-33, Y+r*CH+8, 66*Math.max(0,d.hp/d.maxHp), 6, '#f1ac51');
+        box(ctx, position-33, Y+r*CH+8, 66, 6, '#000');
+        box(ctx, position-31, Y+r*CH+10, 62, 2, '#d98a76');
+        box(ctx, position-31, Y+r*CH+10, 62*Math.max(0,d.hp/d.maxHp), 2, '#f3bc6c');
+        outline(ctx, position-33, Y+r*CH+8, 66, 6, 1);
       }
     }
   }
   ctx.fillStyle='#a8e664';for (const p of s.peas){ctx.beginPath();ctx.arc(p.x,p.y,9,0,7);ctx.fill();}
   for (const c of s.coins)
     image(ctx, 'coin-token.png', c.x - 22, c.y - 22, 44, 44);
-  box(ctx, X, 0, W-X, Y-1, '#33291fc9');
+  box(ctx, X, 0, W-X, Y-1, '#284735');
+  outline(ctx, X, 0, W-X, Y-1, 2);
   label(ctx, `ОНЛАЙН • ${id}`, 271, 19, 25, '#ffe6ab');
   label(ctx, role === 'plants' ? 'ТЫ: РАСТЕНИЯ' : 'ТЫ: ЗОМБИ-УТКИ', 635, 22, 23);
   label(ctx, `УТОК ОСТАЛОСЬ: ${s.left + s.ducks.length} / ${WAVE}`, 275, 72, 20, '#dce8c5');
-  box(ctx, 924, 26, 154, 66, '#835b3e');box(ctx, 929, 31, 144, 56, '#a6784e');
-  label(ctx, 'КНИГА', 1001, 47, 23, '#fff1c6','center');
-  box(ctx, 1099, 26, 165, 66, '#835b3e');box(ctx, 1104, 31, 155, 56, '#a6784e');
-  label(ctx, 'ВЫЙТИ', 1181, 47, 23, '#fff1c6','center');
+  box(ctx, 924, 26, 154, 66, '#000');box(ctx, 928, 30, 146, 58, '#d8e9bf');
+  outline(ctx, 924, 26, 154, 66, 2);
+  label(ctx, 'КНИГА', 1001, 47, 23, '#304537','center');
+  box(ctx, 1099, 26, 165, 66, '#000');box(ctx, 1103, 30, 157, 58, '#f3bc6c');
+  outline(ctx, 1099, 26, 165, 66, 2);
+  label(ctx, 'ВЫЙТИ', 1181, 47, 23, '#304537','center');
   cards(ctx, s, role, selected, pending);
   if (s.winner) {
     box(ctx, 243, 119, W-243, H-119, '#162821cc');
