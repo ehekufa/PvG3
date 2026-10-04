@@ -281,7 +281,8 @@ static int color_value(const JD *d, int token, uint32_t *out) {
 }
 static int level_object_type(const JD *d, int token) {
     static const char *const names[] = {
-        "block", "ground", "hazard", "coin", "enemy", "player", "goal", "trigger", "slope"
+        "block", "ground", "hazard", "coin", "enemy", "player", "goal", "trigger",
+        "slope", "orb-yellow", "orb-orange"
     };
     for (int i = 0; i < (int)(sizeof names / sizeof names[0]); i++)
         if (eq(d, token, names[i])) return i;
@@ -304,6 +305,7 @@ static int level_action(const JD *d, int token) {
     if (eq(d, token, "unactivate")) return ON_TRIGGER_UNACTIVATE;
     if (eq(d, token, "invisible")) return ON_TRIGGER_INVISIBLE;
     if (eq(d, token, "no-collision")) return ON_TRIGGER_NO_COLLISION;
+    if (eq(d, token, "set-gravity")) return ON_TRIGGER_SET_GRAVITY;
     return -1;
 }
 static int level_trigger_kind(const JD *d, int token) {
@@ -312,6 +314,7 @@ static int level_trigger_kind(const JD *d, int token) {
     if (eq(d, token, "forever")) return ON_TRIGGER_KIND_FOREVER;
     if (eq(d, token, "invisibility")) return ON_TRIGGER_KIND_INVISIBILITY;
     if (eq(d, token, "no-collision")) return ON_TRIGGER_KIND_NO_COLLISION;
+    if (eq(d, token, "gravity")) return ON_TRIGGER_KIND_GRAVITY;
     return -1;
 }
 int on_protocol_valid_level_id(const char *id) {
@@ -425,7 +428,7 @@ static int parse_level_object(const JD *d, int node, OnLevelObject *out) {
             item.trigger_has_duration = 1;
         }
         if (item.trigger_kind < ON_TRIGGER_KIND_MOVE ||
-            item.trigger_kind > ON_TRIGGER_KIND_NO_COLLISION ||
+            item.trigger_kind > ON_TRIGGER_KIND_GRAVITY ||
             item.trigger_event < 0 || item.trigger_action < 0 ||
             (target_token >= 0 && !int_field(d, trigger, "targetId", &item.target_id)) ||
             (value_y_token >= 0 && !float_field(d, trigger, "valueY", &item.trigger_value_y)) ||
@@ -453,6 +456,12 @@ static int parse_level_object(const JD *d, int node, OnLevelObject *out) {
                     item.trigger_action != ON_TRIGGER_UNACTIVATE) return 0;
             } else if (item.trigger_action > ON_TRIGGER_ROTATE ||
                        item.trigger_value < -100 || item.trigger_value > 100) return 0;
+        } else if (item.trigger_kind == ON_TRIGGER_KIND_GRAVITY) {
+            if (item.trigger_action != ON_TRIGGER_SET_GRAVITY || item.trigger_has_group ||
+                item.target_id != 0 || item.trigger_has_duration || value_token < 0 ||
+                item.trigger_value < -100 || item.trigger_value > 100 ||
+                floorf(item.trigger_value) != item.trigger_value || item.trigger_value_y != 0)
+                return 0;
         } else if (!item.trigger_has_group && item.target_id <= 0) {
             return 0;
         } else if ((item.trigger_kind == ON_TRIGGER_KIND_INVISIBILITY &&
@@ -887,10 +896,10 @@ static int utf8_units(const char *text, size_t cap, size_t limit) {
 }
 static int published_trigger_valid(const OnLevelObject *o) {
     if (!o || o->trigger_kind < ON_TRIGGER_KIND_MOVE ||
-        o->trigger_kind > ON_TRIGGER_KIND_NO_COLLISION ||
+        o->trigger_kind > ON_TRIGGER_KIND_GRAVITY ||
         o->trigger_event < ON_TRIGGER_TOUCH || o->trigger_event > ON_TRIGGER_START ||
         o->trigger_action < ON_TRIGGER_TOGGLE ||
-        o->trigger_action > ON_TRIGGER_NO_COLLISION ||
+        o->trigger_action > ON_TRIGGER_SET_GRAVITY ||
         o->target_id < 0 || o->target_id > 1000000 ||
         (o->trigger_has_group != 0 && o->trigger_has_group != 1) ||
         (o->trigger_has_group &&
@@ -918,6 +927,12 @@ static int published_trigger_valid(const OnLevelObject *o) {
         return o->trigger_action <= ON_TRIGGER_ROTATE &&
             o->trigger_value >= -100 && o->trigger_value <= 100;
     }
+    if (o->trigger_kind == ON_TRIGGER_KIND_GRAVITY)
+        return o->trigger_action == ON_TRIGGER_SET_GRAVITY &&
+            !o->trigger_has_group && o->target_id == 0 &&
+            !o->trigger_has_duration && o->trigger_value >= -100 &&
+            o->trigger_value <= 100 && floorf(o->trigger_value) == o->trigger_value &&
+            o->trigger_value_y == 0;
     if (!o->trigger_has_group && o->target_id <= 0) return 0;
     return (o->trigger_kind == ON_TRIGGER_KIND_INVISIBILITY &&
             o->trigger_action == ON_TRIGGER_INVISIBLE) ||
@@ -939,7 +954,7 @@ static int published_level_valid(const OnPublishedLevel *level) {
     for (int i = 0; i < level->object_count; ++i) {
         const OnLevelObject *o = &level->objects[i];
         if (!mark_level_object_id(seen, o->id) || o->type < ON_LEVEL_BLOCK ||
-            o->type > ON_LEVEL_SLOPE || !memchr(o->name, 0, sizeof o->name) ||
+            o->type > ON_LEVEL_ORB_ORANGE || !memchr(o->name, 0, sizeof o->name) ||
             !utf8_units(o->name, sizeof o->name, 48) || !isfinite(o->x) || !isfinite(o->y) || !isfinite(o->w) ||
             !isfinite(o->h) || !isfinite(o->angle) ||
             o->x < -ON_LEVEL_WORLD_LIMIT || o->y < -ON_LEVEL_WORLD_LIMIT ||
@@ -968,18 +983,20 @@ size_t on_protocol_published_level_json(const OnPublishedLevel *level,
     if ((!out && !measure_only) || (out && !cap) ||
         !published_level_valid(level)) return 0;
     static const char *const types[] = {
-        "block", "ground", "hazard", "coin", "enemy", "player", "goal", "trigger", "slope"
+        "block", "ground", "hazard", "coin", "enemy", "player", "goal", "trigger",
+        "slope", "orb-yellow", "orb-orange"
     };
     static const char *const events[] = {"touch", "coin", "manual", "start"};
     static const char *const actions[] = {
         "toggle", "move", "recolor", "number", "rotate", "activate", "unactivate",
-        "invisible", "no-collision"
+        "invisible", "no-collision", "set-gravity"
     };
     static const char *const trigger_kinds[] = {
-        "move", "rotate", "forever", "invisibility", "no-collision"
+        "move", "rotate", "forever", "invisibility", "no-collision", "gravity"
     };
     static const char *const names[] = {
-        "Блок", "Платформа", "Шипы", "Монета", "Гусь", "Игрок", "Финиш", "Триггер", "Склон"
+        "Блок", "Платформа", "Шипы", "Монета", "Гусь", "Игрок", "Финиш", "Триггер",
+        "Склон", "Жёлтый орб", "Оранжевый орб"
     };
     JW w = {out, measure_only ? SIZE_MAX : cap, 0, 0};
     put(&w, "{\"format\":\"PVG3-PUBLISHED-LEVEL\",\"version\":1,\"id\":");
@@ -1020,6 +1037,8 @@ size_t on_protocol_published_level_json(const OnPublishedLevel *level,
                         (double)o->trigger_value, (double)o->trigger_value);
             } else if (o->trigger_kind == ON_TRIGGER_KIND_FOREVER &&
                        !o->trigger_has_group) {
+                put(&w, ",\"value\":%.4f", (double)o->trigger_value);
+            } else if (o->trigger_kind == ON_TRIGGER_KIND_GRAVITY) {
                 put(&w, ",\"value\":%.4f", (double)o->trigger_value);
             }
             put(&w, ",\"color\":\"#%06x\"}", (unsigned)o->trigger_color);

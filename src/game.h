@@ -109,6 +109,8 @@ int game_debug_coin_count(void);
 float game_debug_cooldown(int plant);
 float game_debug_custom_player_x(void);
 float game_debug_custom_player_y(void);
+float game_debug_custom_player_vy(void);
+float game_debug_custom_gravity(void);
 int game_debug_custom_object(int id, OnLevelObject *out);
 int game_debug_custom_object_invisible(int id);
 int game_debug_garden_plant_type(int row, int col);

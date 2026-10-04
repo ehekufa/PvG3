@@ -31,6 +31,9 @@ EXPECTED = {
     "LEVEL_FLAG": "assets/art/Флажок - финиш.png",
     "LEVEL_SPIKE": "assets/art/Шип.png",
     "LEVEL_SLOPE": "assets/art/Склон.png",
+    "LEVEL_TRIGGER_GRAVITY": "assets/art/Триггер-гравитации.png",
+    "LEVEL_ORB_ORANGE": "assets/art/Оранжевый opб.png",
+    "LEVEL_ORB_YELLOW": "assets/art/Жёлтый орб.png",
 }
 
 assert len(IMAGES) == len(EXPECTED) == len(dict(IMAGES)), "Unexpected extra/missing sprite"
@@ -58,10 +61,11 @@ for name, expected in EXPECTED_ALPHA_BOUNDS.items():
 # they can be composited over the map and UI without a black box.
 for name in ("DUCK_CONE", "DUCK_BUCKET", "COIN", "LEVEL_TRIGGER",
              "LEVEL_TRIGGER_ROTATE", "LEVEL_TRIGGER_FOREVER",
-             "LEVEL_TRIGGER_INVISIBILITY", "LEVEL_TRIGGER_NO_COLLISION"):
+             "LEVEL_TRIGGER_INVISIBILITY", "LEVEL_TRIGGER_NO_COLLISION",
+             "LEVEL_TRIGGER_GRAVITY", "LEVEL_ORB_ORANGE", "LEVEL_ORB_YELLOW"):
     _, _, pixels = png_pixels(ROOT / EXPECTED[name])
     assert pixels[0] == 0, (name, "expected transparent top-left corner")
 _, _, slope_pixels = png_pixels(ROOT / EXPECTED["LEVEL_SLOPE"])
 assert slope_pixels[0] >> 24 <= 16, "slope artwork should fade at its transparent corner"
 
-print("OK: twenty-six named sprites, including block, slope, platform, flag, spike and all five trigger variants")
+print("OK: twenty-nine named sprites, including block, slope, platform, flag, spike, six trigger variants and both orbs")

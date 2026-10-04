@@ -13,38 +13,43 @@ export const MIN_OBJECT_SIZE = .1;
 export const MAX_OBJECT_WIDTH = LEVEL_WIDTH * 4;
 export const MAX_OBJECT_HEIGHT = LEVEL_HEIGHT * 4;
 export const TRIGGER_KINDS = Object.freeze([
-  'move', 'rotate', 'forever', 'invisibility', 'no-collision',
+  'move', 'rotate', 'forever', 'invisibility', 'no-collision', 'gravity',
 ]);
 export const TRIGGER_LABELS = Object.freeze({
   move: 'Движение', rotate: 'Разворот', forever: 'Вечно',
   invisibility: 'Невидимость', 'no-collision': 'Нет столкновения',
+  gravity: 'Гравитация',
 });
 const TRIGGER_ACTIONS = Object.freeze({
   move: 'move', rotate: 'rotate', forever: 'activate',
-  invisibility: 'invisible', 'no-collision': 'no-collision',
+  invisibility: 'invisible', 'no-collision': 'no-collision', gravity: 'set-gravity',
 });
 export const LEVEL_TYPES = Object.freeze([
   'block', 'ground', 'hazard', 'coin', 'enemy', 'player', 'goal', 'trigger', 'slope',
+  'orb-yellow', 'orb-orange',
 ]);
 export const TYPE_LABELS = Object.freeze({
   block: 'Блок', ground: 'Платформа', hazard: 'Шипы', coin: 'Монета',
   enemy: 'Гусь', player: 'Игрок', goal: 'Финиш', trigger: 'Триггер', slope: 'Склон',
+  'orb-yellow': 'Жёлтый орб', 'orb-orange': 'Оранжевый орб',
 });
 const TYPE_SIZES = Object.freeze({
   block: [1, 1], ground: [2, 1], hazard: [1, 1], coin: [.55, .55],
   enemy: [.8, .8], player: [.65, .85], goal: [1, 2], trigger: [1, 1], slope: [1, 1],
+  'orb-yellow': [.7, .7], 'orb-orange': [.7, .7],
 });
 const DEFAULT_COLORS = Object.freeze({
   block: '#55c8ea', ground: '#65a845', hazard: '#e56c5b', coin: '#ffc54e',
   enemy: '#9560bd', player: '#5ab7e8', goal: '#69d16c', trigger: '#f27652',
-  slope: '#e56c5b',
+  slope: '#e56c5b', 'orb-yellow': '#fff400', 'orb-orange': '#ff8a16',
 });
 const TYPE_TO_ID = Object.freeze({
   block: 0, ground: 1, hazard: 2, coin: 3, enemy: 4,
-  player: 5, goal: 6, trigger: 7, slope: 8,
+  player: 5, goal: 6, trigger: 7, slope: 8, 'orb-yellow': 9, 'orb-orange': 10,
 });
 const TYPE_NAMES = Object.freeze([
   'block', 'ground', 'hazard', 'coin', 'enemy', 'player', 'goal', 'trigger', 'slope',
+  'orb-yellow', 'orb-orange',
 ]);
 // Normalized opaque artwork bounds, measured from alpha in the supplied PNGs.
 const ART_ALPHA_BOUNDS = Object.freeze({
@@ -60,6 +65,7 @@ const SPIKE_VERTICES = Object.freeze([[.5, .03], [1, 1], [0, 1]]);
 const EVENTS = new Set(['touch', 'coin', 'manual', 'start']);
 const ACTIONS = new Set([
   'toggle', 'move', 'recolor', 'number', 'rotate', 'invisible', 'no-collision',
+  'set-gravity',
 ]);
 const FOREVER_ACTIONS = new Set(['activate', 'unactivate']);
 const GROUP_ID_MAX = 9999;
@@ -92,10 +98,23 @@ export function setTriggerKind(level, id, kind) {
   trigger.action = TRIGGER_ACTIONS[kind];
   if (kind === 'move' && previousKind !== 'move') {
     trigger.valueX = 1;trigger.valueY = 0;
-  } else if (kind === 'rotate') {
+  }
+  if (kind !== 'gravity' && previousKind === 'gravity') {
+    const target = level.objects.find(item => item.type === 'goal') ||
+      level.objects.find(item => item.id !== object.id);
+    trigger.targetId = target?.id || 0;
+    trigger.groupId = Number.isInteger(target?.number) ? target.number : 0;
+  }
+  if (kind === 'rotate') {
     if (!Number.isInteger(trigger.duration) || trigger.duration < 1 ||
         trigger.duration > ROTATION_DURATION_MAX) trigger.duration = 3;
     delete trigger.degrees;delete trigger.value;
+  } else if (kind === 'gravity') {
+    const value = previousKind === 'gravity' && Number.isFinite(trigger.value) ?
+      Math.trunc(trigger.value) : 0;
+    trigger.value = clamp(value, -100, 100);
+    delete trigger.valueX;delete trigger.valueY;
+    delete trigger.degrees;delete trigger.duration;
   }
   return true;
 }
@@ -126,10 +145,11 @@ export function addObject(level, type, x, y, triggerKind = 'move') {
     const targetGroup = Number.isInteger(target?.number) ? target.number : 0;
     const action = TRIGGER_ACTIONS[kind];
     object.trigger = {kind, event: 'touch', action,
-      targetId: target?.id || 0, groupId: targetGroup,
+      ...(kind === 'gravity' ? {} : {targetId: target?.id || 0, groupId: targetGroup}),
       valueX: kind === 'move' ? 1 : 0, valueY: 0,
       duration: kind === 'rotate' ? 3 : 0,
-      value: kind === 'move' ? 1 : 0, color: '#ffc54e'};
+      value: kind === 'move' ? 1 : 0,
+      color: '#ffc54e'};
   }
   if (type === 'player' || type === 'goal') {
     const old = level.objects.find(o => o.type === type);
@@ -326,17 +346,20 @@ export function validateDraft(level) {
         finite(degrees) && degrees >= -360 && degrees <= 360;
       const foreverConfigured = kind === 'forever' && validGroup;
       const specialKind = kind === 'invisibility' || kind === 'no-collision';
+      const gravityKind = kind === 'gravity';
       const fixedAction = kind === 'invisibility' ? 'invisible' : 'no-collision';
-      const validAction = specialKind ? t?.action === fixedAction :
+      const validAction = gravityKind ? t?.action === 'set-gravity' :
+        specialKind ? t?.action === fixedAction :
         foreverConfigured ? FOREVER_ACTIONS.has(t.action) : ACTIONS.has(t?.action);
       const validValues = kind === 'move' ? finite(moveX) && moveX >= -9999 && moveX <= 9999 &&
           finite(moveY) && moveY >= -9999 && moveY <= 9999 :
         kind === 'rotate' ? validRotation :
         kind === 'forever' ? foreverConfigured ||
           (validTarget && finite(t?.value) && t.value >= -100 && t.value <= 100) :
+        gravityKind ? Number.isInteger(t?.value) && t.value >= -100 && t.value <= 100 :
         specialKind;
       if (!t || !TRIGGER_KINDS.includes(kind) || !EVENTS.has(t.event) ||
-          !validAction || (kind !== 'forever' && !targetConfigured) ||
+          !validAction || (!gravityKind && kind !== 'forever' && !targetConfigured) ||
           (kind === 'forever' && !foreverConfigured && !validTarget) ||
           (specialKind && !validGroup && !directTargetConfigured) ||
           (t.groupId !== undefined && !validGroup) || !validValues || !rgb(t.color))
@@ -359,10 +382,14 @@ function recordObject(object) {
     const t = object.trigger || {};
     const kind = TRIGGER_KINDS.includes(t.kind) ? t.kind : 'move';
     const trigger = {kind, event: t.event || 'touch', action: t.action || 'move',
-      targetId: Number.isInteger(t.targetId) ? t.targetId : 0,
       color: t.color || '#ffc54e'};
-    if (Number.isInteger(t.groupId)) trigger.groupId = t.groupId;
-    if (kind === 'move') {
+    if (kind !== 'gravity') {
+      trigger.targetId = Number.isInteger(t.targetId) ? t.targetId : 0;
+      if (Number.isInteger(t.groupId)) trigger.groupId = t.groupId;
+    }
+    if (kind === 'gravity') {
+      trigger.value = t.value ?? 0;
+    } else if (kind === 'move') {
       trigger.valueX = t.valueX ?? t.value ?? 0;
       trigger.valueY = t.valueY ?? 0;
       trigger.value = trigger.valueX; // legacy readers treat this as the X offset
@@ -455,9 +482,9 @@ export function createPreviewState(level) {
   const player = level.objects.find(o => o.type === 'player');
   if (!player) throw new Error('Уровень без игрока.');
   const state = {objects: copy(level.objects), x: player.x * TILE_W, y: player.y * TILE_H,
-    vx: 0, vy: 0, grounded: false, time: 0, coins: 0, won: false,
+    vx: 0, vy: 0, gravity: 1450, grounded: false, time: 0, coins: 0, won: false,
     collected: [], triggerFired: [], triggerActive: [], triggerTimers: Object.create(null),
-    invisible: [], noCollision: [], groupRotations: [],
+    invisible: [], noCollision: [], groupRotations: [], orbContacts: new Set(),
     spawn: {x: player.x * TILE_W, y: player.y * TILE_H}};
   runTriggers(state, 'start');
   return state;
@@ -523,7 +550,21 @@ function playerTriangleContact(px, py, pw, ph, object, vx, vy, silhouette,
   return {x: normalX, y: normalY, depth: smallestDepth};
 }
 
+function playerOrbContact(px, py, pw, ph, object) {
+  const centerX = (object.x + object.w / 2) * TILE_W;
+  const centerY = (object.y + object.h / 2) * TILE_H;
+  const radius = Math.min(object.w * TILE_W, object.h * TILE_H) * .46;
+  const closestX = clamp(centerX, px, px + pw);
+  const closestY = clamp(centerY, py, py + ph);
+  const dx = closestX - centerX, dy = closestY - centerY;
+  const distance = Math.hypot(dx, dy);
+  if (distance >= radius) return null;
+  return distance > 1e-8 ? {x: dx / distance, y: dy / distance, depth: radius - distance} :
+    {x: 0, y: -1, depth: radius};
+}
 function playerObjectContact(px, py, pw, ph, object, vx = 0, vy = 0) {
+  if (object.type === 'orb-yellow' || object.type === 'orb-orange')
+    return playerOrbContact(px, py, pw, ph, object);
   if (object.type === 'slope')
     return playerTriangleContact(px, py, pw, ph, object, vx, vy,
                                  SLOPE_VERTICES, true);
@@ -590,6 +631,11 @@ function resolvePreviewPlayer(state, player, solids) {
 function executeTrigger(state, trigger) {
   const t = trigger.trigger || {};
   const kind = TRIGGER_KINDS.includes(t.kind) ? t.kind : 'move';
+  if (kind === 'gravity') {
+    const offset = Number.isInteger(t.value) ? clamp(t.value, -100, 100) : 0;
+    state.gravity = 1450 + offset * 10;
+    return;
+  }
   if (kind === 'rotate' && t.duration !== undefined) {
     if (Number.isInteger(t.groupId) && Number.isInteger(t.duration) &&
         t.duration >= 1 && t.duration <= ROTATION_DURATION_MAX) {
@@ -712,13 +758,14 @@ export function stepPreview(state, input = {}, dt = 1 / 60) {
     ['block', 'ground', 'slope'].includes(o.type)) : [];
   state.vx = (input.axis || 0) * 250;
   if (input.jump && state.grounded) {state.vy = -570;state.grounded = false;}
-  const predictedVy = Math.min(780, state.vy + 1450 * dt);
+  const gravity = Number.isFinite(state.gravity) ? state.gravity : 1450;
+  const predictedVy = Math.min(780, state.vy + gravity * dt);
   const displacement = Math.max(Math.abs(state.vx * dt), Math.abs(predictedVy * dt));
   const substeps = clamp(Math.ceil(displacement / 4), 1, 16);
   const subDt = dt / substeps;
   state.grounded = false;
   for (let step = 0; step < substeps; step++) {
-    state.vy = Math.min(780, state.vy + 1450 * subDt);
+    state.vy = Math.min(780, state.vy + gravity * subDt);
     state.x = clamp(state.x + state.vx * subDt,
       -WORLD_LIMIT * TILE_W, WORLD_LIMIT * TILE_W - pw);
     state.y += state.vy * subDt;
@@ -726,20 +773,28 @@ export function stepPreview(state, input = {}, dt = 1 / 60) {
   }
   if (state.y > WORLD_LIMIT * TILE_H) {
     state.x = state.spawn.x;state.y = state.spawn.y;state.vx = state.vy = 0;
-    state.grounded = false;
+    state.grounded = false;state.orbContacts.clear();
   }
+  const currentOrbContacts = new Set();
   if (playerCollisionEnabled) for (const o of state.objects) {
     if (!o.visible || o.type === 'player' || o.type === 'trigger' ||
         state.noCollision.includes(o.id)) continue;
     const box = playerVisibleHitbox(state, player);
     if (!playerObjectContact(box.x, box.y, box.w, box.h, o, state.vx, state.vy)) continue;
-    if (o.type === 'coin' && !state.collected.includes(o.id)) {
+    if (o.type === 'orb-yellow' || o.type === 'orb-orange') {
+      currentOrbContacts.add(o.id);
+      if (!state.orbContacts.has(o.id)) {
+        state.vy = o.type === 'orb-orange' ? -1050 : -650;
+        state.grounded = false;
+      }
+    } else if (o.type === 'coin' && !state.collected.includes(o.id)) {
       state.collected.push(o.id);state.coins++;o.visible = false;runTriggers(state, 'coin');
     } else if (o.type === 'hazard' || o.type === 'enemy') {
       state.x = state.spawn.x;state.y = state.spawn.y;state.vx = state.vy = 0;
-      state.grounded = false;
+      state.grounded = false;state.orbContacts.clear();
     } else if (o.type === 'goal') state.won = true;
   }
+  state.orbContacts = currentOrbContacts;
   runTriggers(state, 'touch');
   if (input.trigger) runTriggers(state, 'manual');
   runForeverTriggers(state, dt);
@@ -751,7 +806,8 @@ function triggerArtKey(kind) {
   return kind === 'rotate' ? 'triggerRotate' :
     kind === 'forever' ? 'triggerForever' :
     kind === 'invisibility' ? 'triggerInvisibility' :
-    kind === 'no-collision' ? 'triggerNoCollision' : 'triggerMove';
+    kind === 'no-collision' ? 'triggerNoCollision' :
+    kind === 'gravity' ? 'triggerGravity' : 'triggerMove';
 }
 function drawWorkshopArt(ctx, art, type, x, y, w, h, triggerKind = 'move') {
   const image = type === 'trigger' ? (art?.[triggerArtKey(triggerKind)] || art?.trigger) : art?.[type];

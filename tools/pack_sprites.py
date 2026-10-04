@@ -41,6 +41,9 @@ IMAGES = [
     ("LEVEL_FLAG", "assets/art/Флажок - финиш.png"),
     ("LEVEL_SPIKE", "assets/art/Шип.png"),
     ("LEVEL_SLOPE", "assets/art/Склон.png"),
+    ("LEVEL_TRIGGER_GRAVITY", "assets/art/Триггер-гравитации.png"),
+    ("LEVEL_ORB_ORANGE", "assets/art/Оранжевый opб.png"),
+    ("LEVEL_ORB_YELLOW", "assets/art/Жёлтый орб.png"),
 ]
 
 

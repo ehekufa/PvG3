@@ -129,6 +129,9 @@ _Static_assert((int)PV_ART_BREAD == (int)SPR_KHLEBUSHEK &&
                (int)PV_ART_LEVEL_FLAG == (int)SPR_LEVEL_FLAG &&
                (int)PV_ART_LEVEL_SPIKE == (int)SPR_LEVEL_SPIKE &&
                (int)PV_ART_LEVEL_SLOPE == (int)SPR_LEVEL_SLOPE &&
+               (int)PV_ART_LEVEL_TRIGGER_GRAVITY == (int)SPR_LEVEL_TRIGGER_GRAVITY &&
+               (int)PV_ART_LEVEL_ORB_ORANGE == (int)SPR_LEVEL_ORB_ORANGE &&
+               (int)PV_ART_LEVEL_ORB_YELLOW == (int)SPR_LEVEL_ORB_YELLOW &&
                (int)PV_ART_COUNT == (int)SPR_COUNT,
                "LVGL art IDs must match the PNG packer");
 static uint32_t *sprite_pixels[SPR_COUNT];
@@ -439,6 +442,7 @@ static int custom_player_index = -1;
 static int custom_id_map[CUSTOM_ID_MAP_CAP];
 static float custom_player_x, custom_player_y, custom_player_w, custom_player_h;
 static float custom_player_vx, custom_player_vy;
+static float custom_gravity = 1450.0f;
 static int custom_player_grounded, custom_control_axis, custom_jump_request;
 static int custom_jump_held, custom_trigger_request, custom_trigger_held;
 static uint8_t custom_trigger_fired[ON_LEVEL_OBJECT_CAP];
@@ -446,6 +450,7 @@ static uint8_t custom_trigger_active[ON_LEVEL_OBJECT_CAP];
 static float custom_trigger_timers[ON_LEVEL_OBJECT_CAP];
 static uint8_t custom_collision_disabled[ON_LEVEL_OBJECT_CAP];
 static uint8_t custom_invisible[ON_LEVEL_OBJECT_CAP];
+static uint8_t custom_orb_touching[ON_LEVEL_OBJECT_CAP];
 static int custom_player_collision_enabled;
 /* A timed rotation completes one full turn per second. */
 #define CUSTOM_GROUP_ROTATION_DEGREES_PER_SECOND 360.0f
@@ -2440,9 +2445,31 @@ static void custom_player_visible_hitbox(float *x, float *y,
     *w = custom_player_w * (right - left);
     *h = custom_player_h * (bottom - top);
 }
+static int custom_player_orb_contact(float px, float py, float pw, float ph,
+                                      const OnLevelObject *object,
+                                      CustomContact *contact) {
+    float center_x = (object->x + object->w * .5f) * CUSTOM_TILE_W;
+    float center_y = (object->y + object->h * .5f) * CUSTOM_TILE_H;
+    float radius = fminf(object->w * CUSTOM_TILE_W,
+                         object->h * CUSTOM_TILE_H) * .46f;
+    float closest_x = fmaxf(px, fminf(center_x, px + pw));
+    float closest_y = fmaxf(py, fminf(center_y, py + ph));
+    float dx = closest_x - center_x, dy = closest_y - center_y;
+    float distance_squared = dx * dx + dy * dy;
+    if (distance_squared >= radius * radius) return 0;
+    if (contact) {
+        float distance = sqrtf(distance_squared);
+        *contact = distance > 1e-6f ?
+            (CustomContact){dx / distance, dy / distance, radius - distance} :
+            (CustomContact){0.0f, -1.0f, radius};
+    }
+    return 1;
+}
 static int custom_player_object_contact(float px, float py, float pw, float ph,
                                         const OnLevelObject *object,
                                         float vx, float vy, CustomContact *contact) {
+    if (object->type == ON_LEVEL_ORB_YELLOW || object->type == ON_LEVEL_ORB_ORANGE)
+        return custom_player_orb_contact(px, py, pw, ph, object, contact);
     float center_x = (object->x + object->w * .5f) * CUSTOM_TILE_W;
     float center_y = (object->y + object->h * .5f) * CUSTOM_TILE_H;
     float conservative_radius =
@@ -2512,6 +2539,7 @@ static void custom_player_reset(void) {
     custom_player_y = player->y * CUSTOM_TILE_H;
     custom_player_vx = custom_player_vy = 0;
     custom_player_grounded = 0;
+    memset(custom_orb_touching, 0, sizeof custom_orb_touching);
 }
 static int custom_platformer_start(const OnPublishedLevel *source) {
     if (!source || source->object_count < 1 ||
@@ -2535,6 +2563,8 @@ static int custom_platformer_start(const OnPublishedLevel *source) {
     memset(custom_trigger_timers, 0, sizeof custom_trigger_timers);
     memset(custom_collision_disabled, 0, sizeof custom_collision_disabled);
     memset(custom_invisible, 0, sizeof custom_invisible);
+    memset(custom_orb_touching, 0, sizeof custom_orb_touching);
+    custom_gravity = 1450.0f;
     custom_player_collision_enabled = 1;
     custom_group_rotation_count = 0;
     memset(custom_group_rotation_slots, 0, sizeof custom_group_rotation_slots);
@@ -2550,6 +2580,8 @@ static int custom_platformer_start(const OnPublishedLevel *source) {
 }
 static void custom_platformer_stop(void) {
     custom_level_active = 0;custom_level_won = 0;custom_object_count = 0;
+    custom_gravity = 1450.0f;
+    memset(custom_orb_touching, 0, sizeof custom_orb_touching);
     custom_group_rotation_count = 0;
     custom_control_axis = custom_jump_request = custom_jump_held = 0;
     custom_trigger_request = custom_trigger_held = 0;
@@ -2627,6 +2659,11 @@ static void custom_update_group_rotations(float dt) {
 }
 static void custom_execute_trigger(OnLevelObject *trigger) {
     if (!trigger || trigger->type != ON_LEVEL_TRIGGER) return;
+    if (trigger->trigger_kind == ON_TRIGGER_KIND_GRAVITY) {
+        float offset = fmaxf(-100.0f, fminf(100.0f, trigger->trigger_value));
+        custom_gravity = 1450.0f + offset * 10.0f;
+        return;
+    }
     if (trigger->trigger_kind == ON_TRIGGER_KIND_FOREVER) {
         if (trigger->trigger_has_group) {
             int activate = trigger->trigger_action == ON_TRIGGER_ACTIVATE;
@@ -2749,7 +2786,7 @@ static void custom_platformer_update(float dt) {
         custom_player_vy = -570.0f;custom_player_grounded = 0;
     }
     custom_jump_request = 0;
-    float predicted_vy = fminf(780.0f, custom_player_vy + 1450.0f * dt);
+    float predicted_vy = fminf(780.0f, custom_player_vy + custom_gravity * dt);
     float displacement = fmaxf(fabsf(custom_player_vx * dt),
                                 fabsf(predicted_vy * dt));
     int substeps = (int)ceilf(displacement / 4.0f);
@@ -2758,7 +2795,7 @@ static void custom_platformer_update(float dt) {
     float sub_dt = dt / (float)substeps;
     custom_player_grounded = 0;
     for (int step = 0; step < substeps; ++step) {
-        custom_player_vy = fminf(780.0f, custom_player_vy + 1450.0f * sub_dt);
+        custom_player_vy = fminf(780.0f, custom_player_vy + custom_gravity * sub_dt);
         custom_player_x += custom_player_vx * sub_dt;
         if (custom_player_x < -CUSTOM_WORLD_LIMIT * CUSTOM_TILE_W)
             custom_player_x = -CUSTOM_WORLD_LIMIT * CUSTOM_TILE_W;
@@ -2775,10 +2812,28 @@ static void custom_platformer_update(float dt) {
         custom_player_visible_hitbox(&player_x, &player_y, &player_w, &player_h);
         for (int i = 0; i < custom_object_count; ++i) {
             OnLevelObject *object = &custom_level.objects[i];
+            int orb = object->type == ON_LEVEL_ORB_YELLOW ||
+                      object->type == ON_LEVEL_ORB_ORANGE;
+            if (orb) {
+                if (!object->visible || custom_object_collision_disabled(object) ||
+                    !custom_player_object_contact(player_x, player_y,
+                        player_w, player_h, object, custom_player_vx,
+                        custom_player_vy, NULL)) {
+                    custom_orb_touching[i] = 0;
+                    continue;
+                }
+                if (!custom_orb_touching[i]) {
+                    custom_player_vy = object->type == ON_LEVEL_ORB_ORANGE ?
+                                       -1050.0f : -650.0f;
+                    custom_player_grounded = 0;
+                }
+                custom_orb_touching[i] = 1;
+                continue;
+            }
             if (!object->visible || object->type == ON_LEVEL_PLAYER ||
                 object->type == ON_LEVEL_TRIGGER ||
-                custom_object_collision_disabled(object)) continue;
-            if (!custom_player_object_contact(player_x, player_y,
+                custom_object_collision_disabled(object) ||
+                !custom_player_object_contact(player_x, player_y,
                     player_w, player_h, object, custom_player_vx,
                     custom_player_vy, NULL)) continue;
             if (object->type == ON_LEVEL_HAZARD || object->type == ON_LEVEL_ENEMY) {
@@ -2834,6 +2889,10 @@ static void custom_draw_object(const OnLevelObject *o) {
         DRAW_LEVEL_ART(PV_ART_LEVEL_SLOPE);break;
     case ON_LEVEL_COIN:
         DRAW_LEVEL_ART(PV_ART_COIN);break;
+    case ON_LEVEL_ORB_YELLOW:
+        DRAW_LEVEL_ART(PV_ART_LEVEL_ORB_YELLOW);break;
+    case ON_LEVEL_ORB_ORANGE:
+        DRAW_LEVEL_ART(PV_ART_LEVEL_ORB_ORANGE);break;
     case ON_LEVEL_ENEMY: {
         int flip_x = !o->flip_x;
         if (rotated) sprite_draw_rotated_flipped(PV_ART_DUCK, x, y, w, h,
@@ -3476,6 +3535,8 @@ float game_debug_cooldown(int plant) {
 }
 float game_debug_custom_player_x(void) {return custom_player_x;}
 float game_debug_custom_player_y(void) {return custom_player_y;}
+float game_debug_custom_player_vy(void) {return custom_player_vy;}
+float game_debug_custom_gravity(void) {return custom_gravity;}
 int game_debug_custom_object(int id, OnLevelObject *out) {
     if (!out) return 0;
     OnLevelObject *object = custom_find_id(id);

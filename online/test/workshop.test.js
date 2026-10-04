@@ -43,7 +43,8 @@ test('new drafts are valid and object placement keeps player and finish unique',
 
 test('the 20,000-object ceiling is combined across blocks, triggers, coins and every other type', () => {
   const level = newDraft('draft-limit');
-  const additionalTypes = ['block', 'ground', 'hazard', 'coin', 'enemy', 'trigger', 'slope'];
+  const additionalTypes = ['block', 'ground', 'hazard', 'coin', 'enemy', 'trigger', 'slope',
+    'orb-yellow', 'orb-orange'];
   level.objects = Array.from({length:MAX_LEVEL_OBJECTS}, (_, index) => {
     const type = index === 0 ? 'player' : index === 1 ? 'goal' : index === 2 ? 'ground' :
       additionalTypes[(index - 3) % additionalTypes.length];
@@ -87,7 +88,7 @@ test('world placement is scrollable across large positive and negative coordinat
   for (const kind of TRIGGER_KINDS)
     assert.equal(addObject(level, 'trigger', kind === 'rotate' ? 8 : 7, 5, kind).trigger.kind, kind);
   assert.deepEqual(TRIGGER_KINDS,
-    ['move', 'rotate', 'forever', 'invisibility', 'no-collision']);
+    ['move', 'rotate', 'forever', 'invisibility', 'no-collision', 'gravity']);
   assert.equal(validateDraft(level).ok, true);
 });
 
@@ -118,6 +119,61 @@ test('published records round-trip through the browser/native wire schema', () =
   assert.equal(restored.objects.find(o => o.id === trigger.id).trigger.event, 'start');
   assert.equal(validateDraft(restored).ok, true);
   assert.throws(() => publishedRecord('0', level), /ID/);
+});
+
+test('gravity triggers round-trip a signed level setting and change preview acceleration', () => {
+  const weak = newDraft('gravity-weak');
+  weak.objects.find(object => object.type === 'ground').y = 30;
+  const trigger = addObject(weak, 'trigger', 100, 100, 'gravity');
+  trigger.trigger.event = 'start';trigger.trigger.value = -100;
+  assert.equal(validateDraft(weak).ok, true);
+  const weakRecord = publishedRecord('711', weak);
+  assert.deepEqual(weakRecord.project.objects.find(object => object.id === trigger.id).trigger,
+    {kind:'gravity', event:'start', action:'set-gravity', color:'#ffc54e', value:-100});
+  assert.equal(isPublishedRecord(weakRecord, '711'), true);
+  const weakDraft = draftFromPublished(weakRecord);
+  const weakState = createPreviewState(weakDraft);
+  assert.equal(weakState.gravity, 450);
+  const switchedBack = structuredClone(weakDraft);
+  assert.equal(setTriggerKind(switchedBack, trigger.id, 'move'), true);
+  assert.equal(validateDraft(switchedBack).ok, true,
+    'switching away from a level-wide trigger restores a valid target group');
+
+  const strong = structuredClone(weakDraft);
+  strong.objects.find(object => object.type === 'trigger').trigger.value = 100;
+  assert.equal(validateDraft(strong).ok, true);
+  const strongState = createPreviewState(strong);
+  assert.equal(strongState.gravity, 2450);
+  for (let i = 0; i < 10; i++) {
+    stepPreview(weakState, {}, .05);
+    stepPreview(strongState, {}, .05);
+  }
+  assert(strongState.y > weakState.y + 100,
+    'positive slider values accelerate downward more strongly than negative values');
+});
+
+test('yellow and orange orbs launch on contact without changing gravity; orange is stronger', () => {
+  const launch = type => {
+    const level = newDraft(`orb-${type}`);
+    level.objects.find(object => object.type === 'ground').y = 30;
+    const player = level.objects.find(object => object.type === 'player');
+    player.x = 3;player.y = 4;
+    assert(addObject(level, type, 3, 4));
+    assert.equal(validateDraft(level).ok, true);
+    const state = createPreviewState(level);
+    const gravity = state.gravity;
+    stepPreview(state, {}, .05);
+    const initialLaunchSpeed = state.vy;
+    stepPreview(state, {}, .05);
+    assert.equal(state.gravity, gravity, 'an orb must not modify the gravity setting');
+    return {state, initialLaunchSpeed};
+  };
+  const yellow = launch('orb-yellow');
+  const orange = launch('orb-orange');
+  assert.equal(yellow.initialLaunchSpeed, -650);
+  assert.equal(orange.initialLaunchSpeed, -1050);
+  assert(orange.state.vy < yellow.state.vy);
+  assert(orange.state.y < yellow.state.y);
 });
 
 test('control mode defaults to buttons on touch devices and can be chosen explicitly', () => {

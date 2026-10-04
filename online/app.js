@@ -34,7 +34,7 @@ const wsPages = {home: $('ws-home-page'), editor: $('ws-editor-page'),
 let wsDraftFromLocalStorage = false;
 let wsPage = 'home', wsDraft = loadWorkshopDraft(), wsTool = 'build', wsType = 'block';
 let wsDraftReady = Promise.resolve();
-let wsTriggerKind = 'move', wsBlockType = 'block', wsPaletteSelected = true;
+let wsTriggerKind = 'move', wsBlockType = 'block', wsOrbType = 'orb-yellow', wsPaletteSelected = true;
 let wsSelectedId = 0, wsSelectedIds = new Set(), wsClipboard = [];
 let wsDrag = null, wsPanDrag = null, wsCatalogGeneration = 0, wsCatalog = [];
 let wsCamera = {x: 0, y: 0};
@@ -52,6 +52,8 @@ const WS_ART_FILES = {
   triggerForever: 'Триггер-вечно.png',
   triggerInvisibility: 'Триггер-невидимости.png',
   triggerNoCollision: 'Триггер-нет столкновения.png',
+  triggerGravity: 'Триггер-гравитации.png',
+  'orb-orange': 'Оранжевый opб.png', 'orb-yellow': 'Жёлтый орб.png',
 };
 const wsArt = Object.fromEntries(Object.entries(WS_ART_FILES).map(([type, file]) => {
   const image = new Image();
@@ -102,6 +104,10 @@ function normalizeWorkshopDraft(saved) {
       object.trigger.duration = 3;
       object.trigger.action = 'rotate';
       delete object.trigger.degrees;delete object.trigger.value;
+    } else if (object.trigger.kind === 'gravity') {
+      object.trigger.action = 'set-gravity';
+      const value = Number.isInteger(object.trigger.value) ? object.trigger.value : 0;
+      object.trigger.value = Math.max(-100, Math.min(100, value));
     }
   }
   return saved;
@@ -237,13 +243,18 @@ function renderPaletteOptions() {
     {kind: 'forever', label: TRIGGER_LABELS.forever, art: 'triggerForever'},
     {kind: 'invisibility', label: TRIGGER_LABELS.invisibility, art: 'triggerInvisibility'},
     {kind: 'no-collision', label: TRIGGER_LABELS['no-collision'], art: 'triggerNoCollision'},
+    {kind: 'gravity', label: TRIGGER_LABELS.gravity, art: 'triggerGravity'},
+  ] : wsType === 'orb' ? [
+    {kind: 'orb-yellow', label: TYPE_LABELS['orb-yellow'], art: 'orb-yellow'},
+    {kind: 'orb-orange', label: TYPE_LABELS['orb-orange'], art: 'orb-orange'},
   ] : [{kind: 'single', label: TYPE_LABELS[wsType], art: wsType}];
   for (const option of options) {
     const button = document.createElement('button');
     button.type = 'button';button.className = 'ws-palette-item';
     const active = wsPaletteSelected &&
       (wsType === 'trigger' ? wsTriggerKind === option.kind :
-        wsType === 'block' ? wsBlockType === option.kind : true);
+        wsType === 'block' ? wsBlockType === option.kind :
+        wsType === 'orb' ? wsOrbType === option.kind : true);
     if (active) button.classList.add('active');
     const icon = document.createElement('img');
     icon.alt = '';icon.setAttribute('aria-hidden', 'true');
@@ -253,6 +264,7 @@ function renderPaletteOptions() {
     button.addEventListener('click', () => {
       if (wsType === 'trigger') wsTriggerKind = option.kind;
       else if (wsType === 'block') wsBlockType = option.kind;
+      else if (wsType === 'orb') wsOrbType = option.kind;
       wsPaletteSelected = true;
       wsTool = 'build';
       renderWorkshopEditor();
@@ -341,21 +353,26 @@ function renderSelectedObject() {
   $('ws-trigger-kind').value = kind;
   const forever = kind === 'forever';
   const rotate = kind === 'rotate';
+  const gravity = kind === 'gravity';
   const moving = kind === 'move';
   const legacyTarget = wsDraft.objects.find(candidate => candidate.id === t.targetId);
   const groupId = Number.isInteger(t.groupId) ? t.groupId :
     Number.isInteger(legacyTarget?.number) ? legacyTarget.number : 0;
   $('ws-trigger-event').value = t.event || 'touch';
-  $('ws-trigger-motion-fields').classList.toggle('hidden', forever);
+  $('ws-trigger-motion-fields').classList.toggle('hidden', forever || gravity);
   $('ws-trigger-move-fields').classList.toggle('hidden', !moving);
   $('ws-trigger-rotate-field').classList.toggle('hidden', !rotate);
   $('ws-trigger-forever-fields').classList.toggle('hidden', !forever);
+  $('ws-trigger-gravity-field').classList.toggle('hidden', !gravity);
   $('ws-trigger-group').value = groupId;
   $('ws-trigger-forever-group').value = groupId;
   $('ws-trigger-action').value = ['activate', 'unactivate'].includes(t.action) ? t.action : 'activate';
   $('ws-trigger-x').value = t.valueX ?? t.value ?? 0;
   $('ws-trigger-y').value = t.valueY ?? 0;
   $('ws-trigger-duration').value = t.duration ?? 3;
+  const gravityValue = Number.isInteger(t.value) ? Math.max(-100, Math.min(100, t.value)) : 0;
+  $('ws-trigger-gravity').value = gravityValue;
+  $('ws-trigger-gravity-value').textContent = `${gravityValue > 0 ? '+' : ''}${gravityValue}`;
 }
 function wsRedrawEditor() {
   renderSelectedObject();
@@ -391,7 +408,8 @@ function wsPointerDown(event) {
     if (!wsPaletteSelected) {
       showWorkshopMessage('Сначала выбери объект в выбранной категории.');return;
     }
-    const objectType = wsType === 'block' ? wsBlockType : wsType;
+    const objectType = wsType === 'block' ? wsBlockType :
+      wsType === 'orb' ? wsOrbType : wsType;
     const placed = addObject(wsDraft, objectType, Math.floor(point.x), Math.floor(point.y), wsTriggerKind);
     if (!placed) {
       showWorkshopMessage(`Достигнут общий лимит ${MAX_LEVEL_OBJECTS} объектов. Удали лишние объекты перед добавлением новых.`);return;
@@ -567,6 +585,10 @@ function updateSelectedTrigger(property, value) {
     t.duration = Math.max(1, Math.min(9999, Math.trunc(n)));
     t.action = 'rotate';
     delete t.degrees;delete t.value;
+  } else if (property === 'gravity') {
+    const n = Number(value);if (!Number.isFinite(n)) return;
+    t.value = Math.max(-100, Math.min(100, Math.trunc(n)));
+    t.action = 'set-gravity';
   } else if (property === 'action') {
     if (!['activate', 'unactivate'].includes(value)) return;
     t.action = value;
@@ -999,6 +1021,7 @@ for (const button of document.querySelectorAll('[data-ws-type]')) button.addEven
   wsType = button.dataset.wsType;
   if (wsType === 'trigger') wsTriggerKind = 'move';
   if (wsType === 'block') wsBlockType = 'block';
+  if (wsType === 'orb') wsOrbType = 'orb-yellow';
   wsPaletteSelected = false;wsTool = 'build';
   renderWorkshopEditor();
 });
@@ -1038,6 +1061,7 @@ $('ws-trigger-forever-group').addEventListener('change', e => updateSelectedTrig
 $('ws-trigger-x').addEventListener('change', e => updateSelectedTrigger('valueX', e.target.value));
 $('ws-trigger-y').addEventListener('change', e => updateSelectedTrigger('valueY', e.target.value));
 $('ws-trigger-duration').addEventListener('change', e => updateSelectedTrigger('duration', e.target.value));
+$('ws-trigger-gravity').addEventListener('input', e => updateSelectedTrigger('gravity', e.target.value));
 $('ws-trigger-action').addEventListener('change', e => updateSelectedTrigger('action', e.target.value));
 $('ws-control-select').addEventListener('change', e => applyWorkshopControl(e.target.value));
 for (const button of document.querySelectorAll('[data-ws-hold]')) {

@@ -306,10 +306,14 @@ static void assert_platformer_art(void) {
                        PV_ART_LEVEL_TRIGGER, PV_ART_LEVEL_TRIGGER_ROTATE,
                        PV_ART_LEVEL_TRIGGER_FOREVER,
                        PV_ART_LEVEL_TRIGGER_INVISIBILITY,
-                       PV_ART_LEVEL_TRIGGER_NO_COLLISION, PV_ART_LEVEL_FLAG,
-                       PV_ART_LEVEL_SPIKE, PV_ART_LEVEL_SLOPE};
-    const int widths[] = {100, 100, 100, 100, 100, 100, 100, 50, 100, 100};
-    const int heights[] = {100, 50, 100, 100, 100, 100, 100, 100, 100, 100};
+                       PV_ART_LEVEL_TRIGGER_NO_COLLISION,
+                       PV_ART_LEVEL_TRIGGER_GRAVITY, PV_ART_LEVEL_FLAG,
+                       PV_ART_LEVEL_SPIKE, PV_ART_LEVEL_SLOPE,
+                       PV_ART_LEVEL_ORB_ORANGE, PV_ART_LEVEL_ORB_YELLOW};
+    const int widths[] = {100, 100, 100, 100, 100, 100, 100, 100, 50,
+                          100, 100, 100, 100};
+    const int heights[] = {100, 50, 100, 100, 100, 100, 100, 100, 100,
+                           100, 100, 100, 100};
     for (size_t i = 0; i < sizeof ids / sizeof ids[0]; ++i) {
         int width = 0, height = 0, visible = 0;
         const uint32_t *pixels = game_art_rgba(ids[i], &width, &height);
@@ -542,6 +546,63 @@ static void native_trigger_runtime_regression(void) {
     assert(game_debug_custom_player_x() < 3 * 72 && highest_y < spawn_y - 35);
     game_custom_level_exit();
 
+    /* The signed gravity trigger changes the whole level's acceleration. */
+    level.object_count = 4;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+        .x=0,.y=30,.w=16,.h=1,.visible=1,.number=3};
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
+        .x=1,.y=1,.w=.65f,.h=.85f,.visible=1,.number=1};
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_TRIGGER,
+        .x=100,.y=100,.w=1,.h=1,.visible=1,
+        .trigger_kind=ON_TRIGGER_KIND_GRAVITY,.trigger_event=ON_TRIGGER_START,
+        .trigger_action=ON_TRIGGER_SET_GRAVITY,.trigger_value=-100,
+        .trigger_color=0xffc54eu};
+    assert(game_workshop_preview(&level));
+    assert(game_debug_custom_gravity() == 450.0f);
+    for (int i = 0; i < 10; ++i) game_tick(.05f, NULL);
+    float weak_gravity_y = game_debug_custom_player_y();
+    game_custom_level_exit();
+    level.objects[3].trigger_value = 100;
+    assert(game_workshop_preview(&level));
+    assert(game_debug_custom_gravity() == 2450.0f);
+    for (int i = 0; i < 10; ++i) game_tick(.05f, NULL);
+    float strong_gravity_y = game_debug_custom_player_y();
+    assert(strong_gravity_y > weak_gravity_y + 100);
+    game_custom_level_exit();
+
+    /* Orbs give independent one-shot upward impulses and leave gravity alone. */
+    level.object_count = 4;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+        .x=0,.y=30,.w=16,.h=1,.visible=1,.number=3};
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
+        .x=3,.y=4,.w=.65f,.h=.85f,.visible=1,.number=1};
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_ORB_YELLOW,
+        .x=3,.y=4,.w=.7f,.h=.7f,.visible=1,.number=4};
+    assert(game_workshop_preview(&level));
+    game_tick(.05f, NULL);
+    assert(game_debug_custom_player_vy() == -650.0f &&
+           game_debug_custom_gravity() == 1450.0f);
+    game_tick(.05f, NULL);
+    assert(game_debug_custom_player_vy() > -650.0f &&
+           game_debug_custom_player_vy() < 0 &&
+           game_debug_custom_gravity() == 1450.0f);
+    float yellow_bounce_y = game_debug_custom_player_y();
+    game_custom_level_exit();
+    level.objects[3].type = ON_LEVEL_ORB_ORANGE;
+    assert(game_workshop_preview(&level));
+    game_tick(.05f, NULL);
+    assert(game_debug_custom_player_vy() == -1050.0f &&
+           game_debug_custom_gravity() == 1450.0f);
+    game_tick(.05f, NULL);
+    assert(game_debug_custom_player_vy() < -900.0f &&
+           game_debug_custom_gravity() == 1450.0f &&
+           game_debug_custom_player_y() < yellow_bounce_y);
+    game_custom_level_exit();
+
     /* The bread's collider starts/ends at its visible alpha bounds, not its PNG canvas. */
     level.object_count = 4;
     level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
@@ -614,6 +675,9 @@ static int run_lvgl_test(void) {
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_FOREVER));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_INVISIBILITY));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_NO_COLLISION));
+    assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_GRAVITY));
+    assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_ORB_ORANGE));
+    assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_ORB_YELLOW));
     game_set_lvgl_ui(1);
     ui_snapshot("menu");
     assert(ui_pixels[60 * GAME_W + 545] == 0xFFFFFFFFu); /* campaign */
@@ -715,7 +779,7 @@ static int run_lvgl_test(void) {
 #endif
     ui_snapshot("workshop_direct_transform");
 
-    ui_tap(674, 596); /* trigger category; movement is the default */
+    ui_tap(595, 596); /* trigger category; movement is the default */
     ui_tap(294, 247); /* place a movement trigger */
     ui_tap(835, 361); /* configure X and Y separately */
     ui_tap(640, 343); /* X: replace 1 with 9999 */
@@ -766,6 +830,46 @@ static int run_lvgl_test(void) {
            ON_TRIGGER_KIND_NO_COLLISION &&
            editor_probe.objects[editor_probe.object_count - 1].trigger_event ==
            ON_TRIGGER_START);
+#endif
+    ui_tap(595, 596); /* trigger category */
+    ui_tap(990, 480); /* gravity trigger */
+    ui_tap(520, 370); /* place it away from the finish */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[editor_probe.object_count - 1].trigger_kind ==
+           ON_TRIGGER_KIND_GRAVITY &&
+           editor_probe.objects[editor_probe.object_count - 1].trigger_action ==
+           ON_TRIGGER_SET_GRAVITY &&
+           !editor_probe.objects[editor_probe.object_count - 1].trigger_has_group &&
+           editor_probe.objects[editor_probe.object_count - 1].target_id == 0);
+#endif
+    ui_tap(835, 361); /* open the gravity settings */
+    ui_tap(158, 319); /* weak gravity is the negative endpoint */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[editor_probe.object_count - 1].trigger_kind ==
+           ON_TRIGGER_KIND_GRAVITY &&
+           editor_probe.objects[editor_probe.object_count - 1].trigger_value <= -95.0f);
+#endif
+    ui_tap(1079, 319); /* strong gravity is the positive endpoint */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[editor_probe.object_count - 1].trigger_kind ==
+           ON_TRIGGER_KIND_GRAVITY &&
+           editor_probe.objects[editor_probe.object_count - 1].trigger_value == 100.0f);
+#endif
+    ui_tap(640, 628); /* save the slider value */
+    ui_tap(680, 596); /* orb category (yellow is the default) */
+    ui_tap(565, 414); /* place a yellow orb */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[editor_probe.object_count - 1].type == ON_LEVEL_ORB_YELLOW);
+#endif
+    ui_tap(1108, 439); /* orange orb variant */
+    ui_tap(607, 414); /* place a stronger orange orb */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[editor_probe.object_count - 1].type == ON_LEVEL_ORB_ORANGE);
 #endif
     ui_tap(1178, 526); /* scroll the infinite workshop map */
     ui_tap(80, 596); /* select the shared blocks category */
@@ -827,6 +931,11 @@ static int run_lvgl_test(void) {
            strstr(uploaded_level_body, "\"action\":\"invisible\"") &&
            strstr(uploaded_level_body, "\"kind\":\"no-collision\"") &&
            strstr(uploaded_level_body, "\"action\":\"no-collision\"") &&
+           strstr(uploaded_level_body, "\"kind\":\"gravity\"") &&
+           strstr(uploaded_level_body, "\"action\":\"set-gravity\"") &&
+           strstr(uploaded_level_body, "\"value\":100.0000") &&
+           strstr(uploaded_level_body, "\"type\":\"orb-yellow\"") &&
+           strstr(uploaded_level_body, "\"type\":\"orb-orange\"") &&
            strstr(uploaded_level_body, "\"event\":\"start\"") &&
            strstr(uploaded_level_body, "\"type\":\"slope\"") &&
            strstr(uploaded_level_body, "\"flipX\":true") &&

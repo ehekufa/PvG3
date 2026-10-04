@@ -83,7 +83,8 @@ enum {
     U_WORKSHOP_BLOCK_VARIANT_BASE = 1490,
     U_WORKSHOP_TRIGGER_BASE = 1500, U_WORKSHOP_PAN_BASE = 1510,
     U_WORKSHOP_NUDGE_BASE = 1520, U_WORKSHOP_SCALE_BASE = 1530,
-    U_WORKSHOP_ROTATE_BASE = 1540, U_WORKSHOP_FLIP_BASE = 1550
+    U_WORKSHOP_ROTATE_BASE = 1540, U_WORKSHOP_FLIP_BASE = 1550,
+    U_WORKSHOP_ORB_VARIANT_BASE = 1560
 };
 
 static lv_display_t *display;
@@ -123,7 +124,8 @@ enum { WS_INPUT_NONE, WS_INPUT_TITLE, WS_INPUT_DESCRIPTION,
 enum { WS_GRID_COLS = 16, WS_GRID_ROWS = 10,
        WS_GRID_ORIGIN_X = 44, WS_GRID_ORIGIN_Y = 132, WS_GRID_CELL_SIZE = 42,
        WS_OBJECT_CAP = ON_LEVEL_OBJECT_CAP - 3, WS_WORLD_LIMIT = ON_LEVEL_WORLD_LIMIT };
-enum { WS_SLIDER_MOVE_X, WS_SLIDER_MOVE_Y, WS_SLIDER_MOVE_TIME };
+enum { WS_SLIDER_MOVE_X, WS_SLIDER_MOVE_Y, WS_SLIDER_MOVE_TIME,
+       WS_SLIDER_TRIGGER_GRAVITY };
 typedef struct {
     int type;
     float x, y, w, h, angle;
@@ -131,7 +133,7 @@ typedef struct {
     int group_id, layer, layer2, z_order;
     int color_set, color_index, trigger_kind;
     int trigger_event, trigger_action, trigger_group_id;
-    int trigger_x, trigger_y, trigger_duration;
+    int trigger_x, trigger_y, trigger_duration, trigger_gravity;
 } WorkshopObject;
 static void workshop_set_trigger_kind(WorkshopObject *object, int kind);
 #define WS_OBJECT_MIN_SIZE .1f
@@ -147,6 +149,7 @@ static int workshop_clipboard_count;
 static int workshop_player_selected, workshop_goal_selected, workshop_ground_selected;
 static int workshop_tool, workshop_palette_type = ON_LEVEL_BLOCK;
 static int workshop_block_variant = ON_LEVEL_BLOCK;
+static int workshop_orb_variant = ON_LEVEL_ORB_YELLOW;
 static int workshop_trigger_kind = ON_TRIGGER_KIND_MOVE;
 static int workshop_camera_x, workshop_camera_y;
 static float workshop_ground_x, workshop_ground_y = 8, workshop_ground_w = 16,
@@ -782,6 +785,7 @@ static void workshop_reset_draft(void) {
     workshop_tool = WS_TOOL_BUILD;
     workshop_palette_type = ON_LEVEL_BLOCK;
     workshop_block_variant = ON_LEVEL_BLOCK;
+    workshop_orb_variant = ON_LEVEL_ORB_YELLOW;
     workshop_trigger_kind = ON_TRIGGER_KIND_MOVE;
     workshop_camera_x = workshop_camera_y = 0;
     workshop_ground_x = 0;workshop_ground_y = 8;
@@ -877,6 +881,7 @@ static float workshop_object_width(int type) {
     case ON_LEVEL_COIN: return .55f;
     case ON_LEVEL_ENEMY: return .8f;
     case ON_LEVEL_PLAYER: return .65f;
+    case ON_LEVEL_ORB_YELLOW: case ON_LEVEL_ORB_ORANGE: return .7f;
     default: return 1.0f;
     }
 }
@@ -887,6 +892,7 @@ static float workshop_object_height(int type) {
     case ON_LEVEL_ENEMY: return .8f;
     case ON_LEVEL_PLAYER: return .85f;
     case ON_LEVEL_GOAL: return 2.0f;
+    case ON_LEVEL_ORB_YELLOW: case ON_LEVEL_ORB_ORANGE: return .7f;
     default: return 1.0f;
     }
 }
@@ -1031,6 +1037,11 @@ static void workshop_load_selected_properties(int object) {
         workshop_color_index = workshop_objects[object].color_index;
         if (workshop_objects[object].type == ON_LEVEL_TRIGGER)
             workshop_trigger_kind = workshop_objects[object].trigger_kind;
+        if (workshop_objects[object].type == ON_LEVEL_ORB_YELLOW ||
+            workshop_objects[object].type == ON_LEVEL_ORB_ORANGE) {
+            workshop_palette_type = ON_LEVEL_ORB_YELLOW;
+            workshop_orb_variant = workshop_objects[object].type;
+        }
     } else if (object == -2) workshop_group_id = 1;
     else if (object == -3) workshop_group_id = 2;
     else if (object == -4) workshop_group_id = 3;
@@ -1099,7 +1110,9 @@ static void workshop_cell_tap(int cell) {
     int found = workshop_selection_at(px, py);
     if (workshop_tool == WS_TOOL_BUILD) {
         int type = workshop_palette_type == ON_LEVEL_BLOCK ?
-                   workshop_block_variant : workshop_palette_type;
+                   workshop_block_variant :
+                   workshop_palette_type == ON_LEVEL_ORB_YELLOW ?
+                   workshop_orb_variant : workshop_palette_type;
         workshop_place_object(type, col, row);
     } else if (workshop_tool == WS_TOOL_EDIT) {
         workshop_select_only(found);
@@ -1330,6 +1343,8 @@ static const char *workshop_object_name(int type) {
     case ON_LEVEL_HAZARD: return "Шипы";
     case ON_LEVEL_SLOPE: return "Склон";
     case ON_LEVEL_COIN: return "Монета";
+    case ON_LEVEL_ORB_YELLOW: return "Жёлтый орб";
+    case ON_LEVEL_ORB_ORANGE: return "Оранжевый орб";
     case ON_LEVEL_ENEMY: return "Гусь";
     case ON_LEVEL_PLAYER: return "Игрок";
     case ON_LEVEL_GOAL: return "Финиш";
@@ -1340,22 +1355,29 @@ static const char *workshop_trigger_name(int kind) {
     return kind == ON_TRIGGER_KIND_ROTATE ? "Разворот" :
            kind == ON_TRIGGER_KIND_FOREVER ? "Вечно" :
            kind == ON_TRIGGER_KIND_INVISIBILITY ? "Невидимость" :
-           kind == ON_TRIGGER_KIND_NO_COLLISION ? "Нет столкновения" : "Движение";
+           kind == ON_TRIGGER_KIND_NO_COLLISION ? "Нет столкновения" :
+           kind == ON_TRIGGER_KIND_GRAVITY ? "Гравитация" : "Движение";
 }
 static int workshop_trigger_action_for_kind(int kind) {
     return kind == ON_TRIGGER_KIND_ROTATE ? ON_TRIGGER_ROTATE :
            kind == ON_TRIGGER_KIND_FOREVER ? ON_TRIGGER_ACTIVATE :
            kind == ON_TRIGGER_KIND_INVISIBILITY ? ON_TRIGGER_INVISIBLE :
            kind == ON_TRIGGER_KIND_NO_COLLISION ? ON_TRIGGER_NO_COLLISION :
+           kind == ON_TRIGGER_KIND_GRAVITY ? ON_TRIGGER_SET_GRAVITY :
            ON_TRIGGER_MOVE;
 }
 static void workshop_set_trigger_kind(WorkshopObject *object, int kind) {
     if (!object || kind < ON_TRIGGER_KIND_MOVE ||
-        kind > ON_TRIGGER_KIND_NO_COLLISION) return;
+        kind > ON_TRIGGER_KIND_GRAVITY) return;
+    int previous_kind = object->trigger_kind;
     object->trigger_kind = kind;
     object->trigger_action = workshop_trigger_action_for_kind(kind);
     if (kind == ON_TRIGGER_KIND_ROTATE && object->trigger_duration < 1)
         object->trigger_duration = 3;
+    if (kind == ON_TRIGGER_KIND_GRAVITY && previous_kind != ON_TRIGGER_KIND_GRAVITY)
+        object->trigger_gravity = 0;
+    if (object->trigger_gravity < -100) object->trigger_gravity = -100;
+    if (object->trigger_gravity > 100) object->trigger_gravity = 100;
 }
 
 static int workshop_object_art(int type, int trigger_kind) {
@@ -1365,6 +1387,8 @@ static int workshop_object_art(int type, int trigger_kind) {
     case ON_LEVEL_HAZARD: return PV_ART_LEVEL_SPIKE;
     case ON_LEVEL_SLOPE: return PV_ART_LEVEL_SLOPE;
     case ON_LEVEL_COIN: return PV_ART_COIN;
+    case ON_LEVEL_ORB_YELLOW: return PV_ART_LEVEL_ORB_YELLOW;
+    case ON_LEVEL_ORB_ORANGE: return PV_ART_LEVEL_ORB_ORANGE;
     case ON_LEVEL_ENEMY: return PV_ART_DUCK;
     case ON_LEVEL_PLAYER: return PV_ART_BREAD;
     case ON_LEVEL_GOAL: return PV_ART_LEVEL_FLAG;
@@ -1373,6 +1397,7 @@ static int workshop_object_art(int type, int trigger_kind) {
                trigger_kind == ON_TRIGGER_KIND_FOREVER ? PV_ART_LEVEL_TRIGGER_FOREVER :
                trigger_kind == ON_TRIGGER_KIND_INVISIBILITY ? PV_ART_LEVEL_TRIGGER_INVISIBILITY :
                trigger_kind == ON_TRIGGER_KIND_NO_COLLISION ? PV_ART_LEVEL_TRIGGER_NO_COLLISION :
+               trigger_kind == ON_TRIGGER_KIND_GRAVITY ? PV_ART_LEVEL_TRIGGER_GRAVITY :
                PV_ART_LEVEL_TRIGGER;
     default: return -1;
     }
@@ -1434,14 +1459,18 @@ static void workshop_build_preview(OnPublishedLevel *level) {
             .trigger_kind=src->trigger_kind,
             .trigger_event=src->trigger_event,
             .trigger_action=src->trigger_action,
-            .target_id=workshop_target_object_id(src->trigger_group_id),
-            .trigger_value=src->trigger_kind == ON_TRIGGER_KIND_ROTATE ?
+            .target_id=src->trigger_kind == ON_TRIGGER_KIND_GRAVITY ? 0 :
+                       workshop_target_object_id(src->trigger_group_id),
+            .trigger_value=src->trigger_kind == ON_TRIGGER_KIND_GRAVITY ?
+                           (float)src->trigger_gravity :
+                           src->trigger_kind == ON_TRIGGER_KIND_ROTATE ?
                            0.0f : (float)src->trigger_x,
             .trigger_value_y=src->trigger_kind == ON_TRIGGER_KIND_MOVE ?
                              (float)src->trigger_y : 0.0f,
             .trigger_color=workshop_colors[workshop_color_set % 4][workshop_color_index % 8],
             .trigger_group_id=src->trigger_group_id,
-            .trigger_has_group=src->type == ON_LEVEL_TRIGGER,
+            .trigger_has_group=src->type == ON_LEVEL_TRIGGER &&
+                               src->trigger_kind != ON_TRIGGER_KIND_GRAVITY,
             .trigger_duration=src->trigger_duration,
             .trigger_has_duration=src->type == ON_LEVEL_TRIGGER &&
                                   src->trigger_kind == ON_TRIGGER_KIND_ROTATE
@@ -1506,6 +1535,12 @@ static void workshop_slider_changed(lv_event_t *ev) {
         workshop_move_y = lv_slider_get_value(slider);break;
     case WS_SLIDER_MOVE_TIME:
         workshop_move_time = lv_slider_get_value(slider);break;
+    case WS_SLIDER_TRIGGER_GRAVITY:
+        if (workshop_selected >= 0 && workshop_selected < workshop_object_count &&
+            workshop_objects[workshop_selected].type == ON_LEVEL_TRIGGER)
+            workshop_objects[workshop_selected].trigger_gravity =
+                lv_slider_get_value(slider);
+        break;
     }
     dirty = 1;
 }
@@ -1996,12 +2031,30 @@ static void workshop_draw_trigger_dialog(lv_obj_t *root) {
           WS_CREAM, LV_TEXT_ALIGN_CENTER);
     workshop_button(root, 845, 144, 66, 58, "›", 2,
                     U_WORKSHOP_TRIGGER_EVENT_NEXT, BUTTON_GRAY);
-    label(root, 158, 229, 310, 42,
-          o->trigger_kind == ON_TRIGGER_KIND_FOREVER ? "Группа" : "Целевая группа",
-          2, WS_YELLOW, LV_TEXT_ALIGN_LEFT);
-    char value[32];snprintf(value, sizeof value, "%d", o->trigger_group_id);
-    workshop_button(root, 490, 216, 300, 64, value, 2,
-                    U_WORKSHOP_TRIGGER_GROUP_EDIT, WS_DARK_VALUE);
+    char value[32];
+    if (o->trigger_kind == ON_TRIGGER_KIND_GRAVITY) {
+        label(root, 158, 229, 310, 42, "Сила гравитации", 2,
+              WS_YELLOW, LV_TEXT_ALIGN_LEFT);
+        box(root, 490, 216, 300, 64, 8, WS_DARK_VALUE, 0);
+        snprintf(value, sizeof value, "%+d / 100", o->trigger_gravity);
+        label(root, 498, 225, 284, 48, value, 2,
+              WS_CREAM, LV_TEXT_ALIGN_CENTER);
+        workshop_slider(root, 158, 304, 922, 30, -100, 100,
+                        o->trigger_gravity, WS_SLIDER_TRIGGER_GRAVITY);
+        label(root, 158, 347, 922, 38,
+              "−100 · слабее       0 · обычная       +100 · сильнее", 1,
+              WS_CREAM, LV_TEXT_ALIGN_CENTER);
+        label(root, 158, 397, 950, 45,
+              "Ползунок задаёт гравитацию всего уровня; орбы действуют отдельно.",
+              1, WS_CREAM, LV_TEXT_ALIGN_CENTER);
+    } else {
+        label(root, 158, 229, 310, 42,
+              o->trigger_kind == ON_TRIGGER_KIND_FOREVER ? "Группа" : "Целевая группа",
+              2, WS_YELLOW, LV_TEXT_ALIGN_LEFT);
+        snprintf(value, sizeof value, "%d", o->trigger_group_id);
+        workshop_button(root, 490, 216, 300, 64, value, 2,
+                        U_WORKSHOP_TRIGGER_GROUP_EDIT, WS_DARK_VALUE);
+    }
     if (o->trigger_kind == ON_TRIGGER_KIND_MOVE) {
         label(root, 158, 326, 260, 42, "Смещение X", 2,
               WS_YELLOW, LV_TEXT_ALIGN_LEFT);
@@ -2034,7 +2087,7 @@ static void workshop_draw_trigger_dialog(lv_obj_t *root) {
         label(root, 158, 435, 950, 46,
               "Группа останется в выбранном состоянии до другого триггера.",
               1, WS_CREAM, LV_TEXT_ALIGN_CENTER);
-    } else {
+    } else if (o->trigger_kind != ON_TRIGGER_KIND_GRAVITY) {
         const char *description = o->trigger_kind == ON_TRIGGER_KIND_INVISIBILITY ?
             "Объекты исчезнут с экрана, но сохранят столкновения." :
             "После события у объектов группы отключится столкновение.";
@@ -2044,11 +2097,12 @@ static void workshop_draw_trigger_dialog(lv_obj_t *root) {
     label(root, 158, 480, 260, 26, "Вид триггера", 0,
           WS_YELLOW, LV_TEXT_ALIGN_LEFT);
     static const char *const trigger_names[] = {
-        "Движение", "Разворот", "Вечно", "Невидимость", "Нет столкновения"
+        "Движение", "Разворот", "Вечно", "Невидимость", "Нет столкновения", "Гравитация"
     };
-    static const int trigger_x[] = {158, 364, 570, 776, 982};
-    for (int i = 0; i < 5; ++i)
-        workshop_button(root, trigger_x[i], 508, 190, 40, trigger_names[i], 0,
+    static const int trigger_x[] = {158, 364, 570, 776, 982, 982};
+    static const int trigger_y[] = {508, 508, 508, 508, 508, 552};
+    for (int i = 0; i < 6; ++i)
+        workshop_button(root, trigger_x[i], trigger_y[i], 190, 40, trigger_names[i], 0,
                         U_WORKSHOP_TRIGGER_BASE + i,
                         o->trigger_kind == i ? WS_CYAN : BUTTON_GRAY);
     workshop_button(root, 500, 596, 280, 64, "ОК", 3,
@@ -2379,6 +2433,8 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
                               workshop_tool == WS_TOOL_BUILD;
     int show_trigger_variants = workshop_palette_type == ON_LEVEL_TRIGGER &&
                                 workshop_tool == WS_TOOL_BUILD;
+    int show_orb_variants = workshop_palette_type == ON_LEVEL_ORB_YELLOW &&
+                            workshop_tool == WS_TOOL_BUILD;
     if (show_block_variants) {
         label(root, 769, 394, 448, 27, "ВАРИАНТЫ БЛОКОВ", 0,
               WS_YELLOW, LV_TEXT_ALIGN_LEFT);
@@ -2396,20 +2452,30 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
         label(root, 769, 394, 448, 27, "ВАРИАНТЫ ТРИГГЕРА", 0,
               WS_YELLOW, LV_TEXT_ALIGN_LEFT);
         static const char *const trigger_names[] = {
-            "Движение", "Разворот", "Вечно", "Невидимость", "Нет столкновения"
+            "Движение", "Разворот", "Вечно", "Невидимость", "Без столкн.", "Гравитация"
         };
-        static const int trigger_x[] = {760, 916, 1072, 760, 998};
-        static const int trigger_y[] = {420, 420, 420, 461, 461};
-        static const int trigger_w[] = {148, 148, 148, 222, 222};
-        for (int i = 0; i < 5; ++i)
-            workshop_button(root, trigger_x[i], trigger_y[i], trigger_w[i], 38,
+        static const int trigger_x[] = {760, 916, 1072, 760, 1072, 916};
+        static const int trigger_y[] = {420, 420, 420, 461, 461, 461};
+        for (int i = 0; i < 6; ++i)
+            workshop_button(root, trigger_x[i], trigger_y[i], 148, 38,
                             trigger_names[i], 0, U_WORKSHOP_TRIGGER_BASE + i,
                             workshop_trigger_kind == i ? WS_CYAN : BUTTON_GRAY);
+    }
+    if (show_orb_variants) {
+        label(root, 769, 394, 448, 27, "ВАРИАНТЫ ОРБА", 0,
+              WS_YELLOW, LV_TEXT_ALIGN_LEFT);
+        static const char *const orb_names[] = {"Жёлтый", "Оранжевый"};
+        static const int orb_types[] = {ON_LEVEL_ORB_YELLOW, ON_LEVEL_ORB_ORANGE};
+        static const int orb_x[] = {760, 998};
+        for (int i = 0; i < 2; ++i)
+            workshop_button(root, orb_x[i], 420, 222, 38, orb_names[i], 0,
+                            U_WORKSHOP_ORB_VARIANT_BASE + i,
+                            workshop_orb_variant == orb_types[i] ? WS_CYAN : BUTTON_GRAY);
     }
     char camera_label[48];
     snprintf(camera_label, sizeof camera_label, "Карта X %d  Y %d",
              workshop_camera_x, workshop_camera_y);
-    int camera_y = (show_block_variants || show_trigger_variants) ? 507 : 414;
+    int camera_y = (show_block_variants || show_trigger_variants || show_orb_variants) ? 507 : 414;
     label(root, 768, camera_y, 214, 38, camera_label, 0,
           WS_CREAM, LV_TEXT_ALIGN_LEFT);
     workshop_arrow_button(root, 984, camera_y - 3, 52, 45,
@@ -2422,17 +2488,18 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
                           U_WORKSHOP_PAN_BASE + 3, WS_CYAN, 1);
 
     const int palette_types[] = {ON_LEVEL_BLOCK, ON_LEVEL_HAZARD, ON_LEVEL_COIN,
-        ON_LEVEL_ENEMY, ON_LEVEL_PLAYER, ON_LEVEL_GOAL, ON_LEVEL_TRIGGER};
+        ON_LEVEL_ENEMY, ON_LEVEL_PLAYER, ON_LEVEL_GOAL, ON_LEVEL_TRIGGER,
+        ON_LEVEL_ORB_YELLOW};
     const char *palette_names[] = {"Блоки", "Шипы", "Монета", "Гусь",
-        "Игрок", "Финиш", "Триггер"};
-    for (int i = 0; i < 7; ++i) {
-        int x = 39 + i * 98;
+        "Игрок", "Финиш", "Триггер", "Орбы"};
+    for (int i = 0; i < 8; ++i) {
+        int x = 39 + i * 86;
         int art_id = workshop_object_art(palette_types[i], workshop_trigger_kind);
-        workshop_button(root, x, 565, 92, 62, "", 0,
+        workshop_button(root, x, 565, 80, 62, "", 0,
                         U_WORKSHOP_PALETTE_BASE + i,
                         workshop_palette_type == palette_types[i] ? WS_CYAN : BUTTON_GRAY);
-        if (art_id >= 0) art(root, art_id, x + 46, 583, 26);
-        label(root, x + 1, 599, 90, 24, palette_names[i], 0,
+        if (art_id >= 0) art(root, art_id, x + 40, 583, 26);
+        label(root, x + 1, 599, 78, 24, palette_names[i], 0,
               BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
     }
     label(root, 43, 637, 193, 28, "ДВИГАТЬ ОБЪЕКТЫ", 0,
@@ -3251,12 +3318,15 @@ static void pressed(lv_event_t *ev) {
         dirty = 1;return;
     }
     if (code >= U_WORKSHOP_PALETTE_BASE &&
-        code < U_WORKSHOP_PALETTE_BASE + 7) {
+        code < U_WORKSHOP_PALETTE_BASE + 8) {
         static const int types[] = {ON_LEVEL_BLOCK, ON_LEVEL_HAZARD, ON_LEVEL_COIN,
-            ON_LEVEL_ENEMY, ON_LEVEL_PLAYER, ON_LEVEL_GOAL, ON_LEVEL_TRIGGER};
+            ON_LEVEL_ENEMY, ON_LEVEL_PLAYER, ON_LEVEL_GOAL, ON_LEVEL_TRIGGER,
+            ON_LEVEL_ORB_YELLOW};
         workshop_palette_type = types[code - U_WORKSHOP_PALETTE_BASE];
         if (workshop_palette_type == ON_LEVEL_BLOCK)
             workshop_block_variant = ON_LEVEL_BLOCK;
+        if (workshop_palette_type == ON_LEVEL_ORB_YELLOW)
+            workshop_orb_variant = ON_LEVEL_ORB_YELLOW;
         workshop_tool = WS_TOOL_BUILD;
         dirty = 1;return;
     }
@@ -3268,13 +3338,19 @@ static void pressed(lv_event_t *ev) {
         workshop_block_variant = variants[code - U_WORKSHOP_BLOCK_VARIANT_BASE];
         dirty = 1;return;
     }
-    if (code >= U_WORKSHOP_TRIGGER_BASE && code < U_WORKSHOP_TRIGGER_BASE + 5) {
+    if (code >= U_WORKSHOP_TRIGGER_BASE && code < U_WORKSHOP_TRIGGER_BASE + 6) {
         workshop_trigger_kind = code - U_WORKSHOP_TRIGGER_BASE;
         if (workshop_dialog == WS_DIALOG_TRIGGER && workshop_selected >= 0 &&
             workshop_selected < workshop_object_count &&
             workshop_objects[workshop_selected].type == ON_LEVEL_TRIGGER)
             workshop_set_trigger_kind(&workshop_objects[workshop_selected],
                                       workshop_trigger_kind);
+        dirty = 1;return;
+    }
+    if (code >= U_WORKSHOP_ORB_VARIANT_BASE &&
+        code < U_WORKSHOP_ORB_VARIANT_BASE + 2) {
+        static const int variants[] = {ON_LEVEL_ORB_YELLOW, ON_LEVEL_ORB_ORANGE};
+        workshop_orb_variant = variants[code - U_WORKSHOP_ORB_VARIANT_BASE];
         dirty = 1;return;
     }
     if (code >= U_WORKSHOP_NUDGE_BASE && code < U_WORKSHOP_NUDGE_BASE + 4) {
@@ -3630,8 +3706,10 @@ int lvgl_ui_init(void) {
                            PV_ART_LEVEL_TRIGGER_FOREVER,
                            PV_ART_LEVEL_TRIGGER_INVISIBILITY,
                            PV_ART_LEVEL_TRIGGER_NO_COLLISION,
+                           PV_ART_LEVEL_TRIGGER_GRAVITY,
                            PV_ART_LEVEL_FLAG, PV_ART_LEVEL_SPIKE,
-                           PV_ART_LEVEL_SLOPE};
+                           PV_ART_LEVEL_SLOPE, PV_ART_LEVEL_ORB_ORANGE,
+                           PV_ART_LEVEL_ORB_YELLOW};
     for (size_t j = 0; j < sizeof art_ids / sizeof art_ids[0]; j++) {
         int id = art_ids[j], w = 0, h = 0;
         const uint32_t *original = game_art_rgba(id, &w, &h);

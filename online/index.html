@@ -147,6 +147,7 @@
                   <button type="button" data-ws-type="player"><img src="../assets/art/khlebushek.png" alt=""><span>Игрок</span></button>
                   <button type="button" data-ws-type="goal"><img src="../assets/art/Флажок - финиш.png" alt=""><span>Финиш</span></button>
                   <button type="button" data-ws-type="trigger"><img src="../assets/art/Триггер-движения.png" alt=""><span>Триггер</span></button>
+                  <button type="button" data-ws-type="orb"><img src="../assets/art/Жёлтый орб.png" alt=""><span>Орбы</span></button>
                 </div>
                 <div id="ws-palette-items" class="ws-palette-items" aria-live="polite"></div>
               </div>
@@ -157,7 +158,7 @@
                   <div class="ws-number-fields"><label>Ширина<input id="ws-object-width" type="number" min="0.1" max="64" step="0.1"></label><label>Высота<input id="ws-object-height" type="number" min="0.1" max="40" step="0.1"></label><label>Поворот<input id="ws-object-angle" type="number" min="0" max="359.9" step="0.1"></label></div>
                   <label class="ws-color-field">Цвет<input id="ws-object-color" type="color" value="#55c8ea"></label>
                   <div id="ws-trigger-fields" class="hidden">
-                  <label>Вид триггера<select id="ws-trigger-kind"><option value="move">Движение</option><option value="rotate">Разворот</option><option value="forever">Вечно</option><option value="invisibility">Невидимость</option><option value="no-collision">Нет столкновения</option></select></label>
+                  <label>Вид триггера<select id="ws-trigger-kind"><option value="move">Движение</option><option value="rotate">Разворот</option><option value="forever">Вечно</option><option value="invisibility">Невидимость</option><option value="no-collision">Нет столкновения</option><option value="gravity">Гравитация</option></select></label>
                   <label id="ws-trigger-event-field">Событие<select id="ws-trigger-event"><option value="touch">Касание</option><option value="coin">Подбор монеты</option><option value="manual">Кнопка действия</option><option value="start">Старт уровня</option></select></label>
                   <div id="ws-trigger-motion-fields">
                     <label>Целевая группа<input id="ws-trigger-group" type="number" min="0" max="9999" step="1"></label>
@@ -169,6 +170,11 @@
                       <label>Время вращения, с<input id="ws-trigger-duration" type="number" min="1" max="9999" step="1"></label>
                       <p class="muted">Группа делает один оборот в секунду.</p>
                     </div>
+                  </div>
+                  <div id="ws-trigger-gravity-field" class="ws-trigger-gravity hidden">
+                    <label for="ws-trigger-gravity">Сила гравитации · <output id="ws-trigger-gravity-value">0</output></label>
+                    <input id="ws-trigger-gravity" type="range" min="-100" max="100" step="1" value="0">
+                    <p class="muted">−100 — слабее · 0 — обычная · +100 — сильнее. Настройка действует на весь уровень.</p>
                   </div>
                   <div id="ws-trigger-forever-fields" class="hidden">
                     <label>Группа<input id="ws-trigger-forever-group" type="number" min="0" max="9999" step="1"></label>
