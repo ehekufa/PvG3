@@ -584,7 +584,7 @@ static void native_trigger_runtime_regression(void) {
         .x=3,.y=4,.w=.7f,.h=.7f,.visible=1,.number=4};
     assert(game_workshop_preview(&level));
     game_tick(.05f, NULL);
-    assert(game_debug_custom_player_vy() > 0.0f &&
+    assert(game_debug_custom_player_vy() == 0.0f &&
            game_debug_custom_gravity() == 1450.0f);
     game_tick(0, ui_pixels); /* update camera before tapping the visible orb */
     float camera_x = game_debug_custom_player_x() + (.65f * 80.0f) * .5f - GAME_W * .40f;
@@ -592,7 +592,7 @@ static void native_trigger_runtime_regression(void) {
     int tap_x = (int)(3.35f * 80.0f - camera_x + .5f);
     int tap_y = (int)(4.35f * 72.0f - camera_y + .5f);
     assert(lvgl_ui_touch_pointer(17, tap_x, tap_y, 1));
-    assert(game_debug_custom_player_vy() > 0.0f);
+    assert(game_debug_custom_player_vy() == 0.0f);
     assert(lvgl_ui_touch_pointer(17, tap_x, tap_y, 0));
     assert(lvgl_ui_touch_pointer(17, tap_x, tap_y, 1));
     assert(game_debug_custom_player_vy() == -650.0f);
@@ -606,7 +606,7 @@ static void native_trigger_runtime_regression(void) {
     level.objects[3].type = ON_LEVEL_ORB_ORANGE;
     assert(game_workshop_preview(&level));
     game_tick(.05f, NULL);
-    assert(game_debug_custom_player_vy() > 0.0f &&
+    assert(game_debug_custom_player_vy() == 0.0f &&
            game_debug_custom_gravity() == 1450.0f);
     game_tick(0, ui_pixels);
     camera_x = game_debug_custom_player_x() + (.65f * 80.0f) * .5f - GAME_W * .40f;
@@ -614,7 +614,7 @@ static void native_trigger_runtime_regression(void) {
     tap_x = (int)(3.35f * 80.0f - camera_x + .5f);
     tap_y = (int)(4.35f * 72.0f - camera_y + .5f);
     assert(lvgl_ui_touch_pointer(17, tap_x, tap_y, 1));
-    assert(game_debug_custom_player_vy() > 0.0f);
+    assert(game_debug_custom_player_vy() == 0.0f);
     assert(lvgl_ui_touch_pointer(17, tap_x, tap_y, 0));
     assert(lvgl_ui_touch_pointer(17, tap_x, tap_y, 1));
     assert(game_debug_custom_player_vy() == -1050.0f);

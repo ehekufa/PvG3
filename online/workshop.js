@@ -559,8 +559,9 @@ function playerOrbContact(px, py, pw, ph, object) {
   const closestY = clamp(centerY, py, py + ph);
   const dx = closestX - centerX, dy = closestY - centerY;
   const distance = Math.hypot(dx, dy);
-  if (distance >= radius) return null;
-  return distance > 1e-8 ? {x: dx / distance, y: dy / distance, depth: radius - distance} :
+  if (distance > radius + .1) return null;
+  return distance > 1e-8 ?
+    {x: dx / distance, y: dy / distance, depth: Math.max(0, radius - distance)} :
     {x: 0, y: -1, depth: radius};
 }
 function playerObjectContact(px, py, pw, ph, object, vx = 0, vy = 0) {
@@ -790,7 +791,7 @@ export function stepPreview(state, input = {}, dt = 1 / 60) {
   const playerCollisionEnabled = !state.noCollision.includes(player.id);
   const solids = playerCollisionEnabled ? state.objects.filter(o =>
     o.visible && !state.noCollision.includes(o.id) &&
-    ['block', 'ground', 'slope'].includes(o.type)) : [];
+    ['block', 'ground', 'slope', 'orb-yellow', 'orb-orange'].includes(o.type)) : [];
   state.vx = (input.axis || 0) * 250;
   if (input.jump && state.grounded) {state.vy = -570;state.grounded = false;}
   const gravity = Number.isFinite(state.gravity) ? state.gravity : 1450;

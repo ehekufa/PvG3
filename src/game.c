@@ -2460,11 +2460,11 @@ static int custom_player_orb_contact(float px, float py, float pw, float ph,
     float closest_y = fmaxf(py, fminf(center_y, py + ph));
     float dx = closest_x - center_x, dy = closest_y - center_y;
     float distance_squared = dx * dx + dy * dy;
-    if (distance_squared >= radius * radius) return 0;
+    float distance = sqrtf(distance_squared);
+    if (distance > radius + .1f) return 0;
     if (contact) {
-        float distance = sqrtf(distance_squared);
         *contact = distance > 1e-6f ?
-            (CustomContact){dx / distance, dy / distance, radius - distance} :
+            (CustomContact){dx / distance, dy / distance, fmaxf(0.0f, radius - distance)} :
             (CustomContact){0.0f, -1.0f, radius};
     }
     return 1;
@@ -2585,7 +2585,8 @@ void game_custom_orb_tap_release(int pointer_id) {
 static int custom_solid(const OnLevelObject *o) {
     return o->visible && !custom_object_collision_disabled(o) &&
            (o->type == ON_LEVEL_BLOCK || o->type == ON_LEVEL_GROUND ||
-            o->type == ON_LEVEL_SLOPE);
+            o->type == ON_LEVEL_SLOPE || o->type == ON_LEVEL_ORB_YELLOW ||
+            o->type == ON_LEVEL_ORB_ORANGE);
 }
 static OnLevelObject *custom_find_id(int id) {
     int index = custom_id_lookup(id);

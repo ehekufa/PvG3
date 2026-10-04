@@ -164,10 +164,11 @@ test('orbs only bounce on a direct double tap while touched; orange is stronger 
     const gravity = state.gravity;
     stepPreview(state, {}, .05);
     const preTapY = state.y;
-    assert(state.vy > 0, 'contact without tapping must not cause an automatic bounce');
+    assert.equal(state.vy, 0, 'landing on the orb is stable but does not launch the player');
+    assert.equal(state.grounded, true);
     assert(state.orbContacts.has(orb.id));
     assert.equal(tapPreviewOrb(state, 3.35, 4.35, 7), 'armed');
-    assert(state.vy > 0, 'the first tap only arms the orb');
+    assert.equal(state.vy, 0, 'the first tap only arms the orb');
     releasePreviewOrbTap(state, 7);
     assert.equal(tapPreviewOrb(state, 3.35, 4.35, 7), 'bounced');
     const launchSpeed = state.vy;
