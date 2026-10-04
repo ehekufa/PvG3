@@ -20,7 +20,8 @@ enum {
 };
 enum { ON_TRIGGER_TOUCH, ON_TRIGGER_COIN, ON_TRIGGER_MANUAL };
 enum { ON_TRIGGER_TOGGLE, ON_TRIGGER_MOVE, ON_TRIGGER_RECOLOR,
-       ON_TRIGGER_NUMBER, ON_TRIGGER_ROTATE };
+       ON_TRIGGER_NUMBER, ON_TRIGGER_ROTATE, ON_TRIGGER_ACTIVATE,
+       ON_TRIGGER_UNACTIVATE };
 enum { ON_TRIGGER_KIND_MOVE, ON_TRIGGER_KIND_ROTATE, ON_TRIGGER_KIND_FOREVER };
 
 typedef struct {
@@ -36,8 +37,10 @@ typedef struct {
     uint32_t color;
     int number, visible;
     int trigger_kind, trigger_event, trigger_action, target_id;
-    float trigger_value;
+    float trigger_value, trigger_value_y;
     uint32_t trigger_color;
+    int trigger_group_id, trigger_has_group;
+    int trigger_duration, trigger_has_duration; /* timed group rotation, seconds */
 } OnLevelObject;
 
 typedef struct {

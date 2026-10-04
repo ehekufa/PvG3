@@ -330,10 +330,76 @@ static void ui_drag(int x0, int y0, int x1, int y1,
     assert(lvgl_ui_move(x1, y1));ui_snapshot(hover_shot);
     assert(lvgl_ui_pointer(x1, y1, 0));ui_snapshot("drag_drop");
 }
+static void native_trigger_runtime_regression(void) {
+    OnPublishedLevel level = {0};
+    snprintf(level.id, sizeof level.id, "%s", "1");
+    snprintf(level.title, sizeof level.title, "%s", "Trigger runtime test");
+    level.width = 16;level.height = 10;level.object_count = 8;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+        .x=0,.y=8,.w=16,.h=2,.visible=1,.number=3};
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
+        .x=1,.y=7,.w=.65f,.h=.85f,.visible=1,.number=1};
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_BLOCK,
+        .x=6,.y=6,.w=1,.h=1,.visible=1,.number=42};
+    level.objects[4] = (OnLevelObject){.id=5,.type=ON_LEVEL_BLOCK,
+        .x=8,.y=6,.w=1,.h=1,.visible=1,.number=42};
+    for (int i = 5; i < 8; ++i) {
+        level.objects[i] = (OnLevelObject){.id=i + 1,.type=ON_LEVEL_TRIGGER,
+            .x=1,.y=7,.w=1,.h=1,.visible=1,
+            .trigger_event=ON_TRIGGER_MANUAL,.target_id=0,
+            .trigger_group_id=42,.trigger_has_group=1};
+    }
+    level.objects[5].trigger_kind = ON_TRIGGER_KIND_MOVE;
+    level.objects[5].trigger_action = ON_TRIGGER_MOVE;
+    level.objects[5].trigger_value = 12;
+    level.objects[5].trigger_value_y = -7;
+    level.objects[6].trigger_kind = ON_TRIGGER_KIND_ROTATE;
+    level.objects[6].trigger_action = ON_TRIGGER_ROTATE;
+    level.objects[6].trigger_duration = 1;
+    level.objects[6].trigger_has_duration = 1;
+    level.objects[7].trigger_kind = ON_TRIGGER_KIND_FOREVER;
+    level.objects[7].trigger_action = ON_TRIGGER_UNACTIVATE;
+
+    game_workshop_open();game_workshop_open_details();game_workshop_open_editor();
+    assert(game_workshop_preview(&level));
+    game_custom_control(0, 0, 1);game_tick(.05f, NULL);game_custom_control(0, 0, 0);
+    OnLevelObject first, second;
+    assert(game_debug_custom_object(4, &first) && game_debug_custom_object(5, &second));
+    assert(first.x == 18 && first.y == -1 && first.angle > 17.9f &&
+           first.angle < 18.1f && !first.visible);
+    assert(second.x == 20 && second.y == -1 && second.angle > 17.9f &&
+           second.angle < 18.1f && !second.visible);
+    game_tick(.05f, NULL);
+    assert(game_debug_custom_object(4, &first) && !first.visible &&
+           first.angle > 35.9f && first.angle < 36.1f);
+    for (int i = 0; i < 18; ++i) game_tick(.05f, NULL);
+    assert(game_debug_custom_object(4, &first) && !first.visible &&
+           (first.angle < .01f || first.angle > 359.99f));
+    game_tick(.10f, NULL);
+    assert(game_debug_custom_object(4, &first) &&
+           (first.angle < .01f || first.angle > 359.99f));
+
+    game_custom_level_exit();
+    level.objects[7].trigger_action = ON_TRIGGER_ACTIVATE;
+    assert(game_workshop_preview(&level));
+    game_custom_control(0, 0, 1);game_tick(.05f, NULL);game_custom_control(0, 0, 0);
+    assert(game_debug_custom_object(4, &first) && first.visible &&
+           first.x == 18 && first.y == -1 && first.angle > 17.9f &&
+           first.angle < 18.1f);
+    game_tick(.05f, NULL);
+    assert(game_debug_custom_object(4, &first) && first.visible &&
+           first.angle > 35.9f && first.angle < 36.1f);
+    game_custom_level_exit();
+}
+
 static int run_lvgl_test(void) {
     static uint8_t before[20000], after[20000];
     size_t bytes = game_save_size();assert(bytes < sizeof before);
     game_init();assert(game_save_export(before, bytes));
+    native_trigger_runtime_regression();
+    game_init();assert(game_save_export(after, bytes) && !memcmp(before, after, bytes));
     assert_platformer_art();
     assert(lvgl_ui_init());
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER));
@@ -354,14 +420,43 @@ static int run_lvgl_test(void) {
     ui_snapshot("workshop_home");
     ui_tap(310, 599);assert(game_phase() == GAME_WORKSHOP_DETAILS);
     ui_snapshot("workshop_details");
+    ui_tap(638, 242); /* set the level title with the native virtual keyboard */
+    ui_snapshot("workshop_keyboard_open");
+    ui_tap(392, 620);ui_tap(392, 620); /* toggle case in both directions */
+    ui_tap(640, 505);ui_tap(538, 275);ui_tap(336, 505);ui_tap(640, 505);
+    ui_tap(1132, 620); /* keyboard OK */
+    ui_tap(638, 395); /* set the level description */
+    ui_tap(437, 505);ui_tap(437, 390);ui_tap(639, 390);ui_tap(843, 275);
+    ui_tap(639, 390);ui_tap(336, 275);ui_tap(640, 505);
+    ui_tap(1132, 620); /* keyboard OK */
+    ui_snapshot("workshop_details_named");
     ui_tap(964, 600);assert(game_phase() == GAME_WORKSHOP_EDIT);
     ui_snapshot("workshop_editor");
     ui_tap(191, 205);ui_snapshot("workshop_block_added");
-    ui_tap(674, 596); /* trigger category */
+    ui_tap(674, 596); /* trigger category; movement is the default */
+    ui_tap(294, 247); /* place a movement trigger */
+    ui_tap(835, 361); /* configure X and Y separately */
+    ui_tap(640, 343); /* X: replace 1 with 9999 */
+    ui_tap(975, 505);ui_tap(640, 505);ui_tap(640, 505);
+    ui_tap(640, 505);ui_tap(640, 505);ui_tap(975, 390);
+    ui_tap(640, 440); /* Y: replace 0 with -9999 */
+    ui_tap(975, 505);ui_tap(194, 620);
+    ui_tap(640, 505);ui_tap(640, 505);ui_tap(640, 505);ui_tap(640, 505);
+    ui_tap(975, 390);ui_tap(640, 248); /* choose another target group */
+    ui_tap(975, 505);ui_tap(417, 275);ui_tap(194, 390);ui_tap(975, 390);
+    ui_tap(640, 628); /* save movement settings */
     ui_tap(990, 443); /* rotation variant */
-    ui_tap(338, 247); /* place in the world */
+    ui_tap(338, 247); /* place the rotation trigger */
+    ui_tap(835, 361);ui_tap(640, 371); /* edit rotation angle */
+    ui_tap(975, 505);ui_tap(975, 505);
+    ui_tap(194, 275);ui_tap(640, 275);ui_tap(417, 390);ui_tap(975, 390);
+    ui_tap(640, 628);
     ui_tap(1146, 443); /* forever variant */
-    ui_tap(380, 289);
+    ui_tap(380, 289); /* place the persistent group action */
+    ui_tap(835, 361);ui_tap(640, 248); /* group input */
+    ui_tap(975, 505);ui_tap(417, 275);ui_tap(194, 390);ui_tap(975, 390);
+    ui_tap(720, 371); /* unactivate forever */
+    ui_tap(640, 628); /* save trigger settings */
     ui_tap(1178, 495); /* scroll the infinite workshop map */
     ui_tap(80, 596); /* block category */
     ui_tap(422, 205); /* now maps to world X=10 */
@@ -385,7 +480,15 @@ static int run_lvgl_test(void) {
     assert(!published.level_publish_busy && published.level_publish_id[0] &&
            strstr(published.level_publish_notice, "ОПУБЛИКОВАН") &&
            uploaded_level_body[0] && uploaded_index_body[0]);
-    assert(strstr(uploaded_level_body, "\"kind\":\"rotate\"") &&
+    assert(strstr(uploaded_level_body, "\"title\":\"Новый уровеньтест\"") &&
+           strstr(uploaded_level_body, "\"description\":\"маршрут\"") &&
+           strstr(uploaded_level_body, "\"kind\":\"move\"") &&
+           strstr(uploaded_level_body, "\"kind\":\"rotate\"") &&
+           strstr(uploaded_level_body, "\"duration\":135") &&
+           strstr(uploaded_level_body, "\"valueX\":9999.0000") &&
+           strstr(uploaded_level_body, "\"valueY\":-9999.0000") &&
+           strstr(uploaded_level_body, "\"groupId\":24") &&
+           strstr(uploaded_level_body, "\"action\":\"unactivate\"") &&
            strstr(uploaded_level_body, "\"kind\":\"forever\"") &&
            strstr(uploaded_level_body, "\"x\":10.0000"));
     ui_snapshot("workshop_published");

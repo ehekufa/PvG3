@@ -10,7 +10,7 @@ export const TILE_H = 72;
 export const MAX_LEVEL_OBJECTS = 120;
 export const TRIGGER_KINDS = Object.freeze(['move', 'rotate', 'forever']);
 export const TRIGGER_LABELS = Object.freeze({
-  move: 'Движение', rotate: 'Развороты', forever: 'Вечно',
+  move: 'Движение', rotate: 'Разворот', forever: 'Вечно',
 });
 export const LEVEL_TYPES = Object.freeze([
   'block', 'ground', 'hazard', 'coin', 'enemy', 'player', 'goal', 'trigger',
@@ -36,6 +36,10 @@ const TYPE_NAMES = Object.freeze([
 ]);
 const EVENTS = new Set(['touch', 'coin', 'manual']);
 const ACTIONS = new Set(['toggle', 'move', 'recolor', 'number', 'rotate']);
+const FOREVER_ACTIONS = new Set(['activate', 'unactivate']);
+const GROUP_ID_MAX = 9999;
+const ROTATION_DURATION_MAX = 9999;
+const ROTATION_DEGREES_PER_SECOND = 360;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const worldClamp = (value, size = 0) => clamp(value, -WORLD_LIMIT, WORLD_LIMIT - size);
@@ -56,9 +60,9 @@ export function newDraft(id = localId()) {
   return {
     localId: id, title: 'Новый уровень', description: '', width: LEVEL_WIDTH,
     height: LEVEL_HEIGHT, objects: [
-      defaultObject(1, 'player', 1, 7, .65, .85, DEFAULT_COLORS.player),
-      defaultObject(2, 'goal', 14, 6, 1, 2, DEFAULT_COLORS.goal),
-      defaultObject(3, 'ground', 0, 8, 16, 2, DEFAULT_COLORS.ground),
+      defaultObject(1, 'player', 1, 7, .65, .85, DEFAULT_COLORS.player, 1),
+      defaultObject(2, 'goal', 14, 6, 1, 2, DEFAULT_COLORS.goal, 2),
+      defaultObject(3, 'ground', 0, 8, 16, 2, DEFAULT_COLORS.ground, 3),
     ],
   };
 }
@@ -69,14 +73,19 @@ export function addObject(level, type, x, y, triggerKind = 'move') {
   const object = defaultObject(
     Math.max(0, ...level.objects.map(o => Number(o.id) || 0)) + 1,
     type, worldClamp(x, size[0]), worldClamp(y, size[1]),
-    size[0], size[1], DEFAULT_COLORS[type], 0,
+    size[0], size[1], DEFAULT_COLORS[type],
+    Math.max(0, ...level.objects.map(o => Number(o.number) || 0)) + 1,
   );
   if (type === 'trigger') {
     const kind = TRIGGER_KINDS.includes(triggerKind) ? triggerKind : 'move';
     const target = level.objects.find(o => o.type === 'goal') || level.objects[0];
+    const targetGroup = Number.isInteger(target?.number) ? target.number : 0;
     object.trigger = {kind, event: 'touch',
-      action: kind === 'rotate' ? 'rotate' : 'move',
-      targetId: target?.id || 0, value: kind === 'rotate' ? 90 : 1, color: '#ffc54e'};
+      action: kind === 'forever' ? 'activate' : kind === 'rotate' ? 'rotate' : 'move',
+      targetId: target?.id || 0, groupId: targetGroup,
+      valueX: kind === 'move' ? 1 : 0, valueY: 0,
+      duration: kind === 'rotate' ? 3 : 0,
+      value: kind === 'move' ? 1 : 0, color: '#ffc54e'};
   }
   if (type === 'player' || type === 'goal') {
     const old = level.objects.find(o => o.type === type);
@@ -131,11 +140,30 @@ export function validateDraft(level) {
     hasGoal ||= object.type === 'goal';
     if (object.type === 'trigger') {
       const t = object.trigger;
-      if (!t || !TRIGGER_KINDS.includes(t.kind || 'move') ||
-          !EVENTS.has(t.event) || !ACTIONS.has(t.action) ||
-          !Number.isInteger(t.targetId) || t.targetId < 0 || t.targetId > 1_000_000 ||
-          !finite(t.value) || t.value < -100 || t.value > 100 || !rgb(t.color))
-        return fail('Настрой триггер: событие, действие, цель и величину.');
+      const kind = t?.kind || 'move';
+      const validGroup = Number.isInteger(t?.groupId) &&
+        t.groupId >= 0 && t.groupId <= GROUP_ID_MAX;
+      const validTarget = Number.isInteger(t?.targetId) &&
+        t.targetId >= 0 && t.targetId <= 1_000_000;
+      const targetConfigured = validGroup || validTarget;
+      const moveX = t?.valueX ?? t?.value;
+      const moveY = t?.valueY ?? 0;
+      const degrees = t?.degrees ?? t?.value;
+      const timedRotate = kind === 'rotate' && t?.duration !== undefined;
+      const validRotation = timedRotate ? validGroup && t.action === 'rotate' &&
+          Number.isInteger(t.duration) && t.duration >= 1 && t.duration <= ROTATION_DURATION_MAX :
+        finite(degrees) && degrees >= -360 && degrees <= 360;
+      const foreverConfigured = kind === 'forever' && validGroup;
+      const validAction = foreverConfigured ? FOREVER_ACTIONS.has(t.action) : ACTIONS.has(t?.action);
+      const validValues = kind === 'move' ? finite(moveX) && moveX >= -9999 && moveX <= 9999 &&
+          finite(moveY) && moveY >= -9999 && moveY <= 9999 :
+        kind === 'rotate' ? validRotation :
+        foreverConfigured || (validTarget && finite(t?.value) && t.value >= -100 && t.value <= 100);
+      if (!t || !TRIGGER_KINDS.includes(kind) || !EVENTS.has(t.event) ||
+          !validAction || (kind !== 'forever' && !targetConfigured) ||
+          (kind === 'forever' && !foreverConfigured && !validTarget) ||
+          (t.groupId !== undefined && !validGroup) || !validValues || !rgb(t.color))
+        return fail('Настрой триггер: событие, группу, действие и параметры.');
     }
   }
   if (!hasPlayer || !hasGoal) return fail('На уровне обязательны игрок и финиш.');
@@ -151,9 +179,26 @@ function recordObject(object) {
   };
   if (object.type === 'trigger') {
     const t = object.trigger || {};
-    result.trigger = {kind: TRIGGER_KINDS.includes(t.kind) ? t.kind : 'move',
-      event: t.event || 'touch', action: t.action || 'move',
-      targetId: t.targetId || 0, value: t.value || 0, color: t.color || '#ffc54e'};
+    const kind = TRIGGER_KINDS.includes(t.kind) ? t.kind : 'move';
+    const trigger = {kind, event: t.event || 'touch', action: t.action || 'move',
+      targetId: Number.isInteger(t.targetId) ? t.targetId : 0,
+      color: t.color || '#ffc54e'};
+    if (Number.isInteger(t.groupId)) trigger.groupId = t.groupId;
+    if (kind === 'move') {
+      trigger.valueX = t.valueX ?? t.value ?? 0;
+      trigger.valueY = t.valueY ?? 0;
+      trigger.value = trigger.valueX; // legacy readers treat this as the X offset
+    } else if (kind === 'rotate') {
+      if (Number.isInteger(t.duration)) trigger.duration = t.duration;
+      else {
+        trigger.degrees = t.degrees ?? t.value ?? 0;
+        trigger.value = trigger.degrees; // legacy readers treat this as the angle
+      }
+    } else if (!Number.isInteger(t.groupId)) {
+      // Preserve the pre-group cyclic trigger payload when importing old records.
+      trigger.value = t.value ?? 0;
+    }
+    result.trigger = trigger;
   }
   return result;
 }
@@ -172,17 +217,25 @@ export function publishedRecord(id, level) {
 
 export function draftFromPublished(record) {
   if (!isPublishedRecord(record)) throw new Error('Уровень имеет неподдерживаемый формат.');
-  return {
-    localId: localId(), title: record.title, description: record.description || '',
-    width: LEVEL_WIDTH, height: LEVEL_HEIGHT,
-    objects: record.project.objects.map(object => ({...object,
-      trigger: object.type === 'trigger' ? {...object.trigger,
-        kind: TRIGGER_KINDS.includes(object.trigger?.kind) ? object.trigger.kind : 'move'} : object.trigger,
+  const objects = record.project.objects.map(object => {
+    const trigger = object.type === 'trigger' ? {...object.trigger,
+      kind: TRIGGER_KINDS.includes(object.trigger?.kind) ? object.trigger.kind : 'move'} : object.trigger;
+    if (trigger?.kind === 'rotate' && trigger.duration === undefined) {
+      const target = record.project.objects.find(candidate => candidate.id === trigger.targetId);
+      if (!Number.isInteger(trigger.groupId))
+        trigger.groupId = Number.isInteger(target?.number) ? target.number : 0;
+      trigger.duration = 3;
+      trigger.action = 'rotate';
+      delete trigger.degrees;delete trigger.value;
+    }
+    return {...object, trigger,
       layer: Number.isInteger(object.layer) ? object.layer : 0,
       layer2: Number.isInteger(object.layer2) ? object.layer2 : 0,
       zOrder: Number.isInteger(object.zOrder) ? object.zOrder : 0,
-    })),
-  };
+    };
+  });
+  return {localId: localId(), title: record.title, description: record.description || '',
+    width: LEVEL_WIDTH, height: LEVEL_HEIGHT, objects};
 }
 
 export function isPublishedRecord(record, expectedId = record?.id) {
@@ -225,29 +278,72 @@ export function createPreviewState(level) {
   return {objects: copy(level.objects), x: player.x * TILE_W, y: player.y * TILE_H,
     vx: 0, vy: 0, grounded: false, time: 0, coins: 0, won: false,
     collected: [], triggerFired: [], triggerActive: [], triggerTimers: Object.create(null),
-    spawn: {x: player.x * TILE_W, y: player.y * TILE_H}};
+    groupRotations: [], spawn: {x: player.x * TILE_W, y: player.y * TILE_H}};
 }
 function overlap(ax, ay, aw, ah, bx, by, bw, bh) {
   return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
 }
 function executeTrigger(state, trigger) {
-  const kind = TRIGGER_KINDS.includes(trigger.trigger?.kind) ? trigger.trigger.kind : 'move';
-  if (kind === 'forever') {
-    const first = state.objects.find(object => object.visible !== false &&
-      object.type === 'trigger' && object.id !== trigger.id &&
-      object.trigger?.kind !== 'forever');
-    if (first) executeTrigger(state, first);
+  const t = trigger.trigger || {};
+  const kind = TRIGGER_KINDS.includes(t.kind) ? t.kind : 'move';
+  if (kind === 'rotate' && t.duration !== undefined) {
+    if (Number.isInteger(t.groupId) && Number.isInteger(t.duration) &&
+        t.duration >= 1 && t.duration <= ROTATION_DURATION_MAX) {
+      let rotation = state.groupRotations.find(item => item.groupId === t.groupId);
+      if (!rotation) {
+        rotation = {groupId: t.groupId, remaining: 0};
+        state.groupRotations.push(rotation);
+      }
+      rotation.remaining = t.duration;
+    }
     return;
   }
-  const target = state.objects.find(object => object.id === trigger.trigger?.targetId);
-  if (!target) return;
-  const action = kind === 'rotate' ? 'rotate' : trigger.trigger.action;
-  switch (action) {
-  case 'toggle': target.visible = !target.visible;break;
-  case 'move': target.x = worldClamp(target.x + trigger.trigger.value, target.w);break;
-  case 'rotate': target.angle = ((target.angle + trigger.trigger.value) % 360 + 360) % 360;break;
-  case 'recolor': target.color = trigger.trigger.color;break;
-  case 'number': target.number = clamp(Math.trunc(trigger.trigger.value), 0, 9999);break;
+  if (kind === 'forever') {
+    if (Number.isInteger(t.groupId)) {
+      const visible = t.action === 'activate';
+      for (const object of state.objects) {
+        if (object.id !== trigger.id && object.type !== 'trigger' &&
+            object.number === t.groupId) object.visible = visible;
+      }
+    } else {
+      // Compatibility for published records created before forever had group actions.
+      const first = state.objects.find(object => object.visible !== false &&
+        object.type === 'trigger' && object.id !== trigger.id &&
+        object.trigger?.kind !== 'forever');
+      if (first) executeTrigger(state, first);
+    }
+    return;
+  }
+  const targets = Number.isInteger(t.groupId) ? state.objects.filter(object =>
+    object.type !== 'trigger' && object.number === t.groupId) :
+    state.objects.filter(object => object.id === t.targetId);
+  const action = kind === 'rotate' ? 'rotate' : t.action;
+  for (const target of targets) {
+    switch (action) {
+    case 'toggle': target.visible = !target.visible;break;
+    case 'move':
+      target.x = worldClamp(target.x + (t.valueX ?? t.value ?? 0), target.w);
+      target.y = worldClamp(target.y + (t.valueY ?? 0), target.h);break;
+    case 'rotate': {
+      const degrees = kind === 'rotate' ? (t.degrees ?? t.value ?? 0) : (t.value ?? 0);
+      target.angle = ((target.angle + degrees) % 360 + 360) % 360;break;
+    }
+    case 'recolor': target.color = t.color;break;
+    case 'number': target.number = clamp(Math.trunc(t.value), 0, 9999);break;
+    }
+  }
+}
+function stepGroupRotations(state, dt) {
+  for (let i = 0; i < state.groupRotations.length;) {
+    const rotation = state.groupRotations[i];
+    const step = Math.min(dt, rotation.remaining);
+    if (step > 0) for (const object of state.objects) {
+      if (object.type === 'trigger' || object.number !== rotation.groupId) continue;
+      object.angle = ((object.angle + ROTATION_DEGREES_PER_SECOND * step) % 360 + 360) % 360;
+    }
+    rotation.remaining -= step;
+    if (rotation.remaining <= 1e-7) state.groupRotations.splice(i, 1);
+    else i++;
   }
 }
 function runTriggers(state, event) {
@@ -255,8 +351,9 @@ function runTriggers(state, event) {
     if (!trigger.visible || trigger.type !== 'trigger' || trigger.trigger?.event !== event) continue;
     const kind = TRIGGER_KINDS.includes(trigger.trigger.kind) ? trigger.trigger.kind : 'move';
     const completed = state.triggerFired.includes(trigger.id);
+    const legacyLoop = kind === 'forever' && !Number.isInteger(trigger.trigger?.groupId);
     const active = state.triggerActive.includes(trigger.id);
-    if (kind === 'forever' ? active : completed) continue;
+    if (legacyLoop ? active : completed) continue;
     const player = state.objects.find(o => o.type === 'player');
     const px = state.x, py = state.y, pw = (player?.w || .65) * TILE_W,
       ph = (player?.h || .85) * TILE_H;
@@ -264,7 +361,7 @@ function runTriggers(state, event) {
         trigger.y * TILE_H, trigger.w * TILE_W, trigger.h * TILE_H)) continue;
     if (event === 'manual' && Math.hypot(px + pw / 2 - (trigger.x + trigger.w / 2) * TILE_W,
         py + ph / 2 - (trigger.y + trigger.h / 2) * TILE_H) > 150) continue;
-    if (kind === 'forever') {
+    if (legacyLoop) {
       state.triggerActive.push(trigger.id);
       state.triggerTimers[trigger.id] = 0;
     } else {
@@ -278,7 +375,7 @@ function runForeverTriggers(state, dt) {
   // step, so a stalled frame can never trigger unbounded catch-up work.
   for (const trigger of state.objects) {
     if (trigger.type !== 'trigger' || trigger.trigger?.kind !== 'forever' ||
-        trigger.visible === false) continue;
+        Number.isInteger(trigger.trigger?.groupId) || trigger.visible === false) continue;
     if (!state.triggerActive.includes(trigger.id)) {
       state.triggerActive.push(trigger.id);state.triggerTimers[trigger.id] = 0;
       continue;
@@ -339,6 +436,7 @@ export function stepPreview(state, input = {}, dt = 1 / 60) {
   if (input.trigger) runTriggers(state, 'manual');
   if (state.x !== oldX) runTriggers(state, 'touch');
   runForeverTriggers(state, dt);
+  stepGroupRotations(state, dt);
   return state;
 }
 
@@ -463,7 +561,7 @@ export function drawPreviewCanvas(canvas, state, control = 'keyboard', art = {})
       ctx.strokeStyle = '#fff';ctx.lineWidth = 3;ctx.strokeRect(x + 2, y + 2, w - 4, h - 4);
     } else ctx.fillRect(x, y, w, h);
   }
-  if (player) {
+  if (player && player.visible !== false) {
     const x = state.x - cameraX, y = state.y - cameraY;
     const w = playerW, h = playerH;
     if (!drawWorkshopObject(ctx, art, player, x, y, w, h)) {

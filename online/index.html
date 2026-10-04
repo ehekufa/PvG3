@@ -119,11 +119,22 @@
                 <label class="ws-color-field">Цвет<input id="ws-object-color" type="color" value="#55c8ea"></label>
                 <div id="ws-trigger-fields" class="hidden">
                   <label id="ws-trigger-event-field">Событие<select id="ws-trigger-event"><option value="touch">Касание</option><option value="coin">Подбор монеты</option><option value="manual">Кнопка действия</option></select></label>
-                  <div id="ws-trigger-target-fields">
-                    <label>Цель<select id="ws-trigger-target"></select></label>
-                    <label>Шаг / угол<input id="ws-trigger-value" type="number" min="-100" max="100" step="1"></label>
+                  <div id="ws-trigger-motion-fields">
+                    <label>Целевая группа<input id="ws-trigger-group" type="number" min="0" max="9999" step="1"></label>
+                    <div id="ws-trigger-move-fields" class="ws-number-fields ws-trigger-values">
+                      <label>Смещение X<input id="ws-trigger-x" type="number" min="-9999" max="9999" step="1"></label>
+                      <label>Смещение Y<input id="ws-trigger-y" type="number" min="-9999" max="9999" step="1"></label>
+                    </div>
+                    <div id="ws-trigger-rotate-field" class="hidden">
+                      <label>Время вращения, с<input id="ws-trigger-duration" type="number" min="1" max="9999" step="1"></label>
+                      <p class="muted">Группа делает один оборот в секунду.</p>
+                    </div>
                   </div>
-                  <p class="muted hidden" id="ws-trigger-forever-note">Автоматически повторяет первый триггер раз в 0,5 секунды.</p>
+                  <div id="ws-trigger-forever-fields" class="hidden">
+                    <label>Группа<input id="ws-trigger-forever-group" type="number" min="0" max="9999" step="1"></label>
+                    <label>Действие<select id="ws-trigger-action"><option value="activate">Активировать</option><option value="unactivate">Деактивировать</option></select></label>
+                    <p class="muted">Состояние группы остаётся таким, пока другой триггер его не изменит.</p>
+                  </div>
                 </div>
                 <button class="small-button ws-delete-selected" id="ws-delete-selected" type="button">Удалить объект</button>
               </div>

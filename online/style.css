@@ -283,9 +283,14 @@ main { min-width: 0; }
 .ws-properties > strong { font-size: 17px; }
 .ws-number-fields { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .ws-properties input, .ws-properties select { min-height: 38px; padding: 5px; font-size: 14px; }
-.ws-properties #ws-trigger-fields, .ws-properties #ws-trigger-target-fields { display: grid; gap: 9px; }
-.ws-properties #ws-trigger-fields.hidden, .ws-properties #ws-trigger-target-fields.hidden { display: none; }
-.ws-properties #ws-trigger-forever-note { margin: 0; line-height: 1.4; }
+.ws-properties #ws-trigger-fields, .ws-properties #ws-trigger-motion-fields,
+.ws-properties #ws-trigger-rotate-field, .ws-properties #ws-trigger-forever-fields {
+  display: grid; gap: 9px;
+}
+.ws-properties .ws-trigger-values { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.ws-properties #ws-trigger-rotate-field p, .ws-properties #ws-trigger-forever-fields p {
+  margin: 0; line-height: 1.4;
+}
 .ws-properties .ws-color-field { display: flex; align-items: center; justify-content: space-between; }
 .ws-properties .ws-color-field input { width: 58px; height: 38px; padding: 2px; }
 .ws-delete-selected { margin-top: 2px; color: var(--button-ink); background: var(--button-white); }

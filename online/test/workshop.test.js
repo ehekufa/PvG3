@@ -98,7 +98,67 @@ test('workshop editor and preview use the supplied level artwork and tile wide p
   assert.equal(preview.images.filter(call => call.image.type === 'ground').length, 16);
 });
 
-test('rotation variants rotate objects and forever invokes the first trigger at a safe cadence', () => {
+test('typed trigger settings persist per object and apply group movement, rotation and forever actions', () => {
+  const level = newDraft('trigger-config');
+  const first = addObject(level, 'block', 6, 6);
+  const second = addObject(level, 'block', 8, 6);
+  first.number = 42;second.number = 42;
+  const move = addObject(level, 'trigger', 1, 7, 'move');
+  move.trigger = {kind: 'move', event: 'manual', action: 'move',
+    targetId: first.id, groupId: 42, valueX: 12, valueY: -7, value: 12, color: '#ffc54e'};
+  const rotate = addObject(level, 'trigger', 1, 7, 'rotate');
+  rotate.trigger = {kind: 'rotate', event: 'manual', action: 'rotate',
+    targetId: first.id, groupId: 42, duration: 2, color: '#ffc54e'};
+  const forever = addObject(level, 'trigger', 1, 7, 'forever');
+  forever.trigger = {kind: 'forever', event: 'manual', action: 'unactivate',
+    targetId: 0, groupId: 42, color: '#ffc54e'};
+
+  assert.equal(validateDraft(level).ok, true);
+  const record = publishedRecord('314', level);
+  assert.deepEqual(record.project.objects.find(o => o.id === move.id).trigger,
+    {kind: 'move', event: 'manual', action: 'move', targetId: first.id,
+      groupId: 42, color: '#ffc54e', valueX: 12, valueY: -7, value: 12});
+  assert.deepEqual(record.project.objects.find(o => o.id === rotate.id).trigger,
+    {kind: 'rotate', event: 'manual', action: 'rotate', targetId: first.id,
+      groupId: 42, color: '#ffc54e', duration: 2});
+  assert.equal(record.project.objects.find(o => o.id === forever.id).trigger.action, 'unactivate');
+  const restored = draftFromPublished(record);
+  assert.equal(restored.objects.find(o => o.id === forever.id).trigger.groupId, 42);
+  assert.equal(validateDraft(restored).ok, true);
+
+  const state = createPreviewState(restored);
+  stepPreview(state, {trigger: true}, 1 / 60);
+  const moved = state.objects.filter(o => o.id === first.id || o.id === second.id);
+  assert.deepEqual(moved.map(o => [o.x, o.y, o.angle, o.visible]),
+    [[18, -1, 6, false], [20, -1, 6, false]]);
+  for (let i = 0; i < 30; i++) stepPreview(state, {}, .05);
+  assert(Math.abs(moved[0].angle - 186) < .01);
+  for (let i = 0; i < 10; i++) stepPreview(state, {}, .05);
+  assert(Math.min(moved[0].angle, 360 - moved[0].angle) < .01);
+  for (let i = 0; i < 30; i++) stepPreview(state, {}, .05);
+  assert(Math.min(moved[0].angle, 360 - moved[0].angle) < .01);
+  assert.deepEqual(moved.map(o => o.visible), [false, false]);
+});
+
+test('movement offsets accept the full requested range and reject values beyond it', () => {
+  const level = newDraft();
+  const trigger = addObject(level, 'trigger', 4, 7, 'move');
+  trigger.trigger.valueX = 9999;trigger.trigger.valueY = -9999;
+  assert.equal(validateDraft(level).ok, true);
+  trigger.trigger.valueX = 10000;
+  assert.equal(validateDraft(level).ok, false);
+  trigger.trigger.valueX = 0;trigger.trigger.kind = 'rotate';
+  trigger.trigger.action = 'rotate';trigger.trigger.duration = 9999;
+  assert.equal(validateDraft(level).ok, true);
+  trigger.trigger.duration = 10000;
+  assert.equal(validateDraft(level).ok, false);
+  trigger.trigger.duration = 0;
+  assert.equal(validateDraft(level).ok, false);
+  delete trigger.trigger.duration;trigger.trigger.degrees = 361;
+  assert.equal(validateDraft(level).ok, false);
+});
+
+test('rotation variants rotate objects and legacy forever loops remain bounded', () => {
   const level = newDraft();
   const target = addObject(level, 'block', 6, 6);
   const first = addObject(level, 'trigger', 10, 7, 'move');
@@ -111,6 +171,11 @@ test('rotation variants rotate objects and forever invokes the first trigger at 
   forever.trigger = {kind: 'forever', event: 'touch', action: 'move',
     targetId: target.id, value: 0, color: '#ffc54e'};
   assert.equal(validateDraft(level).ok, true);
+  const migrated = draftFromPublished(publishedRecord('315', level));
+  const migratedRotate = migrated.objects.find(object => object.id === rotating.id).trigger;
+  assert.equal(migratedRotate.duration, 3);
+  assert.equal(migratedRotate.groupId, target.number);
+  assert.equal('degrees' in migratedRotate, false);
   const state = createPreviewState(level);
   stepPreview(state, {trigger: true}, 1 / 60);
   assert.equal(state.objects.find(object => object.id === target.id).angle, 90);

@@ -82,6 +82,14 @@ function loadWorkshopDraft() {
       for (const object of saved.objects) if (object.type === 'trigger') {
         object.trigger ||= {event: 'touch', action: 'move', targetId: 0, value: 1, color: '#ffc54e'};
         object.trigger.kind ||= 'move';
+        if (object.trigger.kind === 'rotate' && object.trigger.duration === undefined) {
+          const target = saved.objects.find(candidate => candidate.id === object.trigger.targetId);
+          if (!Number.isInteger(object.trigger.groupId))
+            object.trigger.groupId = Number.isInteger(target?.number) ? target.number : 0;
+          object.trigger.duration = 3;
+          object.trigger.action = 'rotate';
+          delete object.trigger.degrees;delete object.trigger.value;
+        }
       }
       return saved;
     }
@@ -183,17 +191,6 @@ function clearInvite() {
     history.replaceState(null, '', location.pathname);
 }
 function wsObject(id) {return wsDraft.objects.find(object => object.id === id) || null;}
-function renderTriggerTargets(trigger) {
-  const select = $('ws-trigger-target');
-  select.replaceChildren();
-  const none = document.createElement('option');none.value = '0';none.textContent = 'Нет цели';select.append(none);
-  for (const object of wsDraft.objects) {
-    if (object.id === trigger.id || object.type === 'trigger') continue;
-    const option = document.createElement('option');option.value = String(object.id);
-    option.textContent = `${TYPE_LABELS[object.type]} · ${object.id}`;select.append(option);
-  }
-  select.value = String(trigger.trigger?.targetId || 0);
-}
 function renderSelectedObject() {
   const object = wsObject(wsSelectedId);
   const panel = $('ws-properties');
@@ -207,17 +204,25 @@ function renderSelectedObject() {
   $('ws-object-color').value = object.color;
   const triggerFields = $('ws-trigger-fields');
   triggerFields.classList.toggle('hidden', object.type !== 'trigger');
-  if (object.type === 'trigger') {
-    const forever = object.trigger?.kind === 'forever';
-    $('ws-trigger-event-field').classList.toggle('hidden', forever);
-    $('ws-trigger-target-fields').classList.toggle('hidden', forever);
-    $('ws-trigger-forever-note').classList.toggle('hidden', !forever);
-    if (!forever) {
-      $('ws-trigger-event').value = object.trigger.event;
-      renderTriggerTargets(object);
-      $('ws-trigger-value').value = object.trigger.value;
-    }
-  }
+  if (object.type !== 'trigger') return;
+  const t = object.trigger || {};
+  const kind = t.kind || 'move';
+  const forever = kind === 'forever';
+  const rotate = kind === 'rotate';
+  const legacyTarget = wsDraft.objects.find(candidate => candidate.id === t.targetId);
+  const groupId = Number.isInteger(t.groupId) ? t.groupId :
+    Number.isInteger(legacyTarget?.number) ? legacyTarget.number : 0;
+  $('ws-trigger-event').value = t.event || 'touch';
+  $('ws-trigger-motion-fields').classList.toggle('hidden', forever);
+  $('ws-trigger-move-fields').classList.toggle('hidden', rotate);
+  $('ws-trigger-rotate-field').classList.toggle('hidden', !rotate);
+  $('ws-trigger-forever-fields').classList.toggle('hidden', !forever);
+  $('ws-trigger-group').value = groupId;
+  $('ws-trigger-forever-group').value = groupId;
+  $('ws-trigger-action').value = ['activate', 'unactivate'].includes(t.action) ? t.action : 'activate';
+  $('ws-trigger-x').value = t.valueX ?? t.value ?? 0;
+  $('ws-trigger-y').value = t.valueY ?? 0;
+  $('ws-trigger-duration').value = t.duration ?? 3;
 }
 function wsRedrawEditor() {
   renderSelectedObject();
@@ -318,11 +323,26 @@ function updateSelectedProperty(property, value) {
 function updateSelectedTrigger(property, value) {
   const object = wsObject(wsSelectedId);
   if (!object || object.type !== 'trigger') return;
-  if (property === 'targetId') object.trigger.targetId = Number(value) || 0;
-  else if (property === 'value') {
+  const t = object.trigger ||= {kind: 'move', event: 'touch', action: 'move'};
+  if (property === 'event') {
+    t.event = value;
+  } else if (property === 'groupId') {
     const n = Number(value);if (!Number.isFinite(n)) return;
-    object.trigger.value = Math.max(-100, Math.min(100, n));
-  } else object.trigger[property] = value;
+    t.groupId = Math.max(0, Math.min(9999, Math.trunc(n)));
+    if (t.kind === 'forever' && !['activate', 'unactivate'].includes(t.action))
+      t.action = 'activate';
+  } else if (['valueX', 'valueY'].includes(property)) {
+    const n = Number(value);if (!Number.isFinite(n)) return;
+    t[property] = Math.max(-9999, Math.min(9999, Math.trunc(n)));
+  } else if (property === 'duration') {
+    const n = Number(value);if (!Number.isFinite(n)) return;
+    t.duration = Math.max(1, Math.min(9999, Math.trunc(n)));
+    t.action = 'rotate';
+    delete t.degrees;delete t.value;
+  } else if (property === 'action') {
+    if (!['activate', 'unactivate'].includes(value)) return;
+    t.action = value;
+  }
   wsRedrawEditor();saveWorkshopDraft();
 }
 function beginNewDraft() {
@@ -765,8 +785,12 @@ $('ws-object-y').addEventListener('change', e => updateSelectedProperty('y', e.t
 $('ws-object-number').addEventListener('change', e => updateSelectedProperty('number', e.target.value));
 $('ws-object-color').addEventListener('input', e => updateSelectedProperty('color', e.target.value));
 $('ws-trigger-event').addEventListener('change', e => updateSelectedTrigger('event', e.target.value));
-$('ws-trigger-target').addEventListener('change', e => updateSelectedTrigger('targetId', e.target.value));
-$('ws-trigger-value').addEventListener('change', e => updateSelectedTrigger('value', e.target.value));
+$('ws-trigger-group').addEventListener('change', e => updateSelectedTrigger('groupId', e.target.value));
+$('ws-trigger-forever-group').addEventListener('change', e => updateSelectedTrigger('groupId', e.target.value));
+$('ws-trigger-x').addEventListener('change', e => updateSelectedTrigger('valueX', e.target.value));
+$('ws-trigger-y').addEventListener('change', e => updateSelectedTrigger('valueY', e.target.value));
+$('ws-trigger-duration').addEventListener('change', e => updateSelectedTrigger('duration', e.target.value));
+$('ws-trigger-action').addEventListener('change', e => updateSelectedTrigger('action', e.target.value));
 $('ws-control-select').addEventListener('change', e => applyWorkshopControl(e.target.value));
 for (const button of document.querySelectorAll('[data-ws-hold]')) {
   const direction = button.dataset.wsHold;
