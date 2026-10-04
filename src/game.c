@@ -122,6 +122,8 @@ _Static_assert((int)PV_ART_BREAD == (int)SPR_KHLEBUSHEK &&
                (int)PV_ART_LEVEL_BLOCK == (int)SPR_LEVEL_BLOCK &&
                (int)PV_ART_LEVEL_PLATFORM == (int)SPR_LEVEL_PLATFORM &&
                (int)PV_ART_LEVEL_TRIGGER == (int)SPR_LEVEL_TRIGGER &&
+               (int)PV_ART_LEVEL_TRIGGER_ROTATE == (int)SPR_LEVEL_TRIGGER_ROTATE &&
+               (int)PV_ART_LEVEL_TRIGGER_FOREVER == (int)SPR_LEVEL_TRIGGER_FOREVER &&
                (int)PV_ART_LEVEL_FLAG == (int)SPR_LEVEL_FLAG &&
                (int)PV_ART_LEVEL_SPIKE == (int)SPR_LEVEL_SPIKE &&
                (int)PV_ART_COUNT == (int)SPR_COUNT,
@@ -190,6 +192,37 @@ static void sprite_crop(int id, int x, int y, int w, int h,
 static void sprite_draw(int id, int x, int y, int w, int h, int flip) {
     sprite_crop(id, x, y, w, h, 0, 0, SPRITE_DATA[id].w,
                 SPRITE_DATA[id].h, flip);
+}
+static void sprite_draw_rotated(int id, int x, int y, int w, int h, float degrees) {
+    if (fabsf(degrees) < .01f) {sprite_draw(id, x, y, w, h, 0);return;}
+    if (id < 0 || id >= SPR_COUNT || !sprite_pixels[id] || w <= 0 || h <= 0) return;
+    const SpritePacked *sp = &SPRITE_DATA[id];
+    float radians = degrees * 0.01745329251994329577f;
+    float c = cosf(radians), s = sinf(radians);
+    float half_w = w * .5f, half_h = h * .5f;
+    float cx = x + half_w, cy = y + half_h;
+    int bound_w = (int)ceilf(fabsf(w * c) + fabsf(h * s));
+    int bound_h = (int)ceilf(fabsf(h * c) + fabsf(w * s));
+    int left = (int)floorf(cx - bound_w * .5f);
+    int top = (int)floorf(cy - bound_h * .5f);
+    int x0 = left < 0 ? 0 : left, y0 = top < 0 ? 0 : top;
+    int x1 = left + bound_w > GAME_W ? GAME_W : left + bound_w;
+    int y1 = top + bound_h > GAME_H ? GAME_H : top + bound_h;
+    for (int py = y0; py < y1; ++py) for (int px = x0; px < x1; ++px) {
+        float dx = px + .5f - cx, dy = py + .5f - cy;
+        float local_x = c * dx + s * dy;
+        float local_y = -s * dx + c * dy;
+        if (local_x < -half_w || local_x >= half_w ||
+            local_y < -half_h || local_y >= half_h) continue;
+        int sx = (int)((local_x + half_w) * sp->w / w);
+        int sy = (int)((local_y + half_h) * sp->h / h);
+        if ((unsigned)sx >= (unsigned)sp->w || (unsigned)sy >= (unsigned)sp->h) continue;
+        uint32_t color = sprite_pixels[id][sy * sp->w + sx];
+        int alpha = color >> 24;
+        uint32_t *dst = FB + py * GAME_W + px;
+        if (alpha == 255) *dst = color;
+        else if (alpha) *dst = blend(*dst, color, alpha);
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -389,6 +422,9 @@ static float custom_player_vx, custom_player_vy;
 static int custom_player_grounded, custom_control_axis, custom_jump_request;
 static int custom_jump_held, custom_trigger_request, custom_trigger_held;
 static uint8_t custom_trigger_fired[ON_LEVEL_OBJECT_CAP];
+static uint8_t custom_trigger_active[ON_LEVEL_OBJECT_CAP];
+static float custom_trigger_timers[ON_LEVEL_OBJECT_CAP];
+static float custom_camera_x, custom_camera_y;
 static int online_has_match;
 static int online_selected, online_map, online_search, online_page;
 static char online_code[ON_ROOM_ID_SIZE];
@@ -2181,7 +2217,13 @@ static void draw_online_match(void) {
 
 #define CUSTOM_TILE_W 80.0f
 #define CUSTOM_TILE_H 72.0f
+#define CUSTOM_WORLD_LIMIT ((float)ON_LEVEL_WORLD_LIMIT)
 
+static float custom_world_clamp(float value, float size) {
+    if (value < -CUSTOM_WORLD_LIMIT) return -CUSTOM_WORLD_LIMIT;
+    if (value > CUSTOM_WORLD_LIMIT - size) return CUSTOM_WORLD_LIMIT - size;
+    return value;
+}
 static uint32_t custom_color(uint32_t rgb) {
     return COL((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255);
 }
@@ -2222,6 +2264,9 @@ static int custom_platformer_start(const OnPublishedLevel *source) {
     }
     if (!has_player || !has_goal) return 0;
     memset(custom_trigger_fired, 0, sizeof custom_trigger_fired);
+    memset(custom_trigger_active, 0, sizeof custom_trigger_active);
+    memset(custom_trigger_timers, 0, sizeof custom_trigger_timers);
+    custom_camera_x = custom_camera_y = 0;
     custom_player_w = CUSTOM_TILE_W * 0.65f;
     custom_player_h = CUSTOM_TILE_H * 0.85f;
     custom_player_reset();
@@ -2241,11 +2286,45 @@ int game_workshop_preview(const OnPublishedLevel *level) {
     phase = PH_CUSTOM_PLAY;
     return 1;
 }
+static void custom_execute_trigger(OnLevelObject *trigger) {
+    if (!trigger || trigger->type != ON_LEVEL_TRIGGER) return;
+    if (trigger->trigger_kind == ON_TRIGGER_KIND_FOREVER) {
+        for (int i = 0; i < custom_object_count; ++i) {
+            OnLevelObject *first = &custom_objects[i];
+            if (first != trigger && first->visible &&
+                first->type == ON_LEVEL_TRIGGER &&
+                first->trigger_kind != ON_TRIGGER_KIND_FOREVER) {
+                custom_execute_trigger(first);
+                break;
+            }
+        }
+        return;
+    }
+    OnLevelObject *target = custom_find_id(trigger->target_id);
+    if (!target) return;
+    int action = trigger->trigger_kind == ON_TRIGGER_KIND_ROTATE ?
+                 ON_TRIGGER_ROTATE : trigger->trigger_action;
+    switch (action) {
+    case ON_TRIGGER_TOGGLE: target->visible = !target->visible;break;
+    case ON_TRIGGER_MOVE:
+        target->x = custom_world_clamp(target->x + trigger->trigger_value,
+                                        target->w);break;
+    case ON_TRIGGER_ROTATE:
+        target->angle = fmodf(target->angle + trigger->trigger_value, 360.0f);
+        if (target->angle < 0) target->angle += 360.0f;
+        break;
+    case ON_TRIGGER_RECOLOR: target->color = trigger->trigger_color;break;
+    case ON_TRIGGER_NUMBER:
+        target->number = (int)fmaxf(0, fminf(9999, trigger->trigger_value));break;
+    }
+}
 static void custom_fire_triggers(int event) {
     for (int i = 0; i < custom_object_count; i++) {
         OnLevelObject *trigger = &custom_objects[i];
         if (!trigger->visible || trigger->type != ON_LEVEL_TRIGGER ||
-            trigger->trigger_event != event || custom_trigger_fired[i]) continue;
+            trigger->trigger_event != event) continue;
+        int forever = trigger->trigger_kind == ON_TRIGGER_KIND_FOREVER;
+        if (forever ? custom_trigger_active[i] : custom_trigger_fired[i]) continue;
         float tx = trigger->x * CUSTOM_TILE_W, ty = trigger->y * CUSTOM_TILE_H;
         float tw = trigger->w * CUSTOM_TILE_W, th = trigger->h * CUSTOM_TILE_H;
         if (event == ON_TRIGGER_TOUCH &&
@@ -2256,17 +2335,28 @@ static void custom_fire_triggers(int event) {
             float dy = custom_player_y + custom_player_h * .5f - (ty + th * .5f);
             if (dx * dx + dy * dy > 150.0f * 150.0f) continue;
         }
-        OnLevelObject *target = custom_find_id(trigger->target_id);
-        custom_trigger_fired[i] = 1;
-        if (!target) continue;
-        switch (trigger->trigger_action) {
-        case ON_TRIGGER_TOGGLE: target->visible = !target->visible;break;
-        case ON_TRIGGER_MOVE:
-            target->x = fmaxf(0, fminf(16 - target->w,
-                                      target->x + trigger->trigger_value));break;
-        case ON_TRIGGER_RECOLOR: target->color = trigger->trigger_color;break;
-        case ON_TRIGGER_NUMBER:
-            target->number = (int)fmaxf(0, fminf(9999, trigger->trigger_value));break;
+        if (forever) {
+            custom_trigger_active[i] = 1;
+            custom_trigger_timers[i] = 0;
+        } else {
+            custom_trigger_fired[i] = 1;
+            custom_execute_trigger(trigger);
+        }
+    }
+}
+static void custom_run_forever_triggers(float dt) {
+    for (int i = 0; i < custom_object_count; ++i) {
+        OnLevelObject *trigger = &custom_objects[i];
+        if (trigger->type != ON_LEVEL_TRIGGER ||
+            trigger->trigger_kind != ON_TRIGGER_KIND_FOREVER || !trigger->visible) continue;
+        if (!custom_trigger_active[i]) {
+            custom_trigger_active[i] = 1;custom_trigger_timers[i] = 0;
+            continue;
+        }
+        custom_trigger_timers[i] += dt;
+        if (custom_trigger_timers[i] >= .5f) {
+            custom_trigger_timers[i] -= .5f;
+            custom_execute_trigger(trigger);
         }
     }
 }
@@ -2282,9 +2372,10 @@ static void custom_platformer_update(float dt) {
     custom_jump_request = 0;
     custom_player_vy = fminf(780.0f, custom_player_vy + 1450.0f * dt);
     custom_player_x += custom_player_vx * dt;
-    if (custom_player_x < 0) custom_player_x = 0;
-    if (custom_player_x + custom_player_w > GAME_W)
-        custom_player_x = GAME_W - custom_player_w;
+    if (custom_player_x < -CUSTOM_WORLD_LIMIT * CUSTOM_TILE_W)
+        custom_player_x = -CUSTOM_WORLD_LIMIT * CUSTOM_TILE_W;
+    if (custom_player_x > CUSTOM_WORLD_LIMIT * CUSTOM_TILE_W - custom_player_w)
+        custom_player_x = CUSTOM_WORLD_LIMIT * CUSTOM_TILE_W - custom_player_w;
     for (int i = 0; i < custom_object_count; i++) {
         OnLevelObject *o = &custom_objects[i];
         if (!custom_solid(o)) continue;
@@ -2311,7 +2402,9 @@ static void custom_platformer_update(float dt) {
             custom_player_y = y + h;custom_player_vy = 0;
         }
     }
-    if (custom_player_y > GAME_H + 80) custom_player_reset();
+    if (custom_player_y > CUSTOM_WORLD_LIMIT * CUSTOM_TILE_H ||
+        custom_player_y + custom_player_h < -CUSTOM_WORLD_LIMIT * CUSTOM_TILE_H)
+        custom_player_reset();
     for (int i = 0; i < custom_object_count; i++) {
         OnLevelObject *o = &custom_objects[i];
         if (!o->visible || o->type == ON_LEVEL_PLAYER) continue;
@@ -2331,62 +2424,89 @@ static void custom_platformer_update(float dt) {
     custom_fire_triggers(ON_TRIGGER_TOUCH);
     if (custom_trigger_request) custom_fire_triggers(ON_TRIGGER_MANUAL);
     custom_trigger_request = 0;
+    custom_run_forever_triggers(dt);
 }
 static void custom_draw_object(const OnLevelObject *o) {
-    int x = (int)lrintf(o->x * CUSTOM_TILE_W), y = (int)lrintf(o->y * CUSTOM_TILE_H);
+    int x = (int)lrintf(o->x * CUSTOM_TILE_W - custom_camera_x);
+    int y = (int)lrintf(o->y * CUSTOM_TILE_H - custom_camera_y);
     int w = (int)lrintf(o->w * CUSTOM_TILE_W), h = (int)lrintf(o->h * CUSTOM_TILE_H);
     if (w < 3 || h < 3) return;
     uint32_t fill = custom_color(o->color);
+    int rotated = fabsf(o->angle) >= .01f;
+#define DRAW_LEVEL_ART(id) do { \
+        if (rotated) sprite_draw_rotated((id), x, y, w, h, o->angle); \
+        else sprite_draw((id), x, y, w, h, 0); \
+    } while (0)
     switch (o->type) {
     case ON_LEVEL_BLOCK:
-        sprite_draw(PV_ART_LEVEL_BLOCK, x, y, w, h, 0);
-        break;
+        DRAW_LEVEL_ART(PV_ART_LEVEL_BLOCK);break;
     case ON_LEVEL_GROUND: {
-        /* Platform artwork is a 2×1 tile; repeat it across wide floors. */
-        const int tile_w = (int)(CUSTOM_TILE_W * 2.0f);
-        const int tile_h = (int)CUSTOM_TILE_H;
-        for (int dy = 0; dy < h; dy += tile_h)
-            for (int dx = 0; dx < w; dx += tile_w) {
-                int draw_w = w - dx < tile_w ? w - dx : tile_w;
-                int draw_h = h - dy < tile_h ? h - dy : tile_h;
-                sprite_draw(PV_ART_LEVEL_PLATFORM, x + dx, y + dy,
-                            draw_w, draw_h, 0);
-            }
+        /* Repeat supplied platform art across the width; rotation draws as one object. */
+        if (rotated) DRAW_LEVEL_ART(PV_ART_LEVEL_PLATFORM);
+        else {
+            const int tile_w = (int)(CUSTOM_TILE_W * 2.0f);
+            const int tile_h = (int)CUSTOM_TILE_H;
+            for (int dy = 0; dy < h; dy += tile_h)
+                for (int dx = 0; dx < w; dx += tile_w) {
+                    int draw_w = w - dx < tile_w ? w - dx : tile_w;
+                    int draw_h = h - dy < tile_h ? h - dy : tile_h;
+                    sprite_draw(PV_ART_LEVEL_PLATFORM, x + dx, y + dy,
+                                draw_w, draw_h, 0);
+                }
+        }
         break;
     }
     case ON_LEVEL_HAZARD:
-        sprite_draw(PV_ART_LEVEL_SPIKE, x, y, w, h, 0);
-        break;
+        DRAW_LEVEL_ART(PV_ART_LEVEL_SPIKE);break;
     case ON_LEVEL_COIN:
-        sprite_draw(PV_ART_COIN, x, y, w, h, 0);break;
+        DRAW_LEVEL_ART(PV_ART_COIN);break;
     case ON_LEVEL_ENEMY:
-        sprite_draw(PV_ART_DUCK, x, y, w, h, 1);break;
+        if (rotated) sprite_draw_rotated(PV_ART_DUCK, x, y, w, h, o->angle);
+        else sprite_draw(PV_ART_DUCK, x, y, w, h, 1);
+        break;
     case ON_LEVEL_PLAYER: /* The moving player is rendered separately. */
         break;
     case ON_LEVEL_GOAL:
-        sprite_draw(PV_ART_LEVEL_FLAG, x, y, w, h, 0);
-        break;
-    case ON_LEVEL_TRIGGER:
+        DRAW_LEVEL_ART(PV_ART_LEVEL_FLAG);break;
+    case ON_LEVEL_TRIGGER: {
         rect_blend(x, y, x + w - 1, y + h - 1, fill, 50);
-        sprite_draw(PV_ART_LEVEL_TRIGGER, x, y, w, h, 0);
+        int art = o->trigger_kind == ON_TRIGGER_KIND_ROTATE ?
+                  PV_ART_LEVEL_TRIGGER_ROTATE :
+                  o->trigger_kind == ON_TRIGGER_KIND_FOREVER ?
+                  PV_ART_LEVEL_TRIGGER_FOREVER : PV_ART_LEVEL_TRIGGER;
+        if (rotated) sprite_draw_rotated(art, x, y, w, h, o->angle);
+        else sprite_draw(art, x, y, w, h, 0);
         break;
     }
+    }
+#undef DRAW_LEVEL_ART
     if (o->number) draw_int(x + 3, y + 3, 2, COL(255, 255, 255), o->number);
 }
 static void custom_platformer_draw(void) {
+    custom_camera_x = custom_player_x + custom_player_w * .5f - GAME_W * .40f;
+    custom_camera_y = custom_player_y + custom_player_h * .5f - 411.0f;
     rect(0, 0, GAME_W - 1, GAME_H - 1, COL(139, 204, 230));
-    ellipse(190, 100, 78, 24, COL(239, 247, 227));
-    ellipse(225, 100, 53, 30, COL(239, 247, 227));
-    ellipse(1010, 132, 95, 22, COL(239, 247, 227));
-    ellipse(1060, 129, 57, 31, COL(239, 247, 227));
-    rect(0, 590, GAME_W - 1, GAME_H - 1, COL(143, 190, 93));
-    for (int x = 0; x < GAME_W; x += 80)
-        rect(x, 590, x + 54, 593, COL(190, 221, 124));
+    float cloud_scroll_f = fmodf(custom_camera_x * .18f, GAME_W + 300.0f);
+    if (cloud_scroll_f < 0) cloud_scroll_f += GAME_W + 300.0f;
+    int cloud_scroll = (int)cloud_scroll_f;
+    int cloud_y = 100 - (int)(custom_camera_y * .05f);
+    for (int base = -cloud_scroll - 160; base < GAME_W + 300; base += GAME_W + 300) {
+        ellipse(base + 190, cloud_y, 78, 24, COL(239, 247, 227));
+        ellipse(base + 225, cloud_y, 53, 30, COL(239, 247, 227));
+    }
+    int grass_y = 590 - (int)lrintf(custom_camera_y);
+    if (grass_y < GAME_H) {
+        if (grass_y < 103) grass_y = 103;
+        rect(0, grass_y, GAME_W - 1, GAME_H - 1, COL(143, 190, 93));
+        for (int x = 0; x < GAME_W; x += 80)
+            rect(x, grass_y, x + 54, grass_y + 3, COL(190, 221, 124));
+    }
     for (int i = 0; i < custom_object_count; i++)
         if (custom_objects[i].visible && custom_objects[i].type != ON_LEVEL_PLAYER)
             custom_draw_object(&custom_objects[i]);
     if (custom_level_active) {
-        int px = (int)lrintf(custom_player_x), py = (int)lrintf(custom_player_y);
+        int px = (int)lrintf(custom_player_x - custom_camera_x);
+        int py = (int)lrintf(custom_player_y - custom_camera_y);
         sprite_draw(PV_ART_BREAD, px, py, (int)custom_player_w,
                     (int)custom_player_h, 0);
     }

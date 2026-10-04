@@ -24,6 +24,8 @@ EXPECTED = {
     "LEVEL_BLOCK": "assets/art/Блок.png",
     "LEVEL_PLATFORM": "assets/art/Платформа.png",
     "LEVEL_TRIGGER": "assets/art/Триггер-движения.png",
+    "LEVEL_TRIGGER_ROTATE": "assets/art/Триггер-вращения.png",
+    "LEVEL_TRIGGER_FOREVER": "assets/art/Триггер-вечно.png",
     "LEVEL_FLAG": "assets/art/Флажок - финиш.png",
     "LEVEL_SPIKE": "assets/art/Шип.png",
 }
@@ -40,4 +42,4 @@ for name in ("DUCK_CONE", "DUCK_BUCKET", "COIN"):
     _, _, pixels = png_pixels(ROOT / EXPECTED[name])
     assert pixels[0] == 0, (name, "expected transparent top-left corner")
 
-print("OK: twenty-one named sprites, including platformer blocks, flag, spike and trigger art")
+print("OK: twenty-three named sprites, including platformer blocks, flag, spike and all three trigger variants")

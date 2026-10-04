@@ -275,10 +275,11 @@ static void screenshot(const char *name) {
 static uint32_t ui_pixels[GAME_W * GAME_H];
 static void assert_platformer_art(void) {
     const int ids[] = {PV_ART_LEVEL_BLOCK, PV_ART_LEVEL_PLATFORM,
-                       PV_ART_LEVEL_TRIGGER, PV_ART_LEVEL_FLAG,
+                       PV_ART_LEVEL_TRIGGER, PV_ART_LEVEL_TRIGGER_ROTATE,
+                       PV_ART_LEVEL_TRIGGER_FOREVER, PV_ART_LEVEL_FLAG,
                        PV_ART_LEVEL_SPIKE};
-    const int widths[] = {100, 100, 100, 50, 100};
-    const int heights[] = {100, 50, 100, 100, 100};
+    const int widths[] = {100, 100, 100, 100, 100, 50, 100};
+    const int heights[] = {100, 50, 100, 100, 100, 100, 100};
     for (size_t i = 0; i < sizeof ids / sizeof ids[0]; ++i) {
         int width = 0, height = 0, visible = 0;
         const uint32_t *pixels = game_art_rgba(ids[i], &width, &height);
@@ -353,6 +354,17 @@ static int run_lvgl_test(void) {
     ui_tap(964, 600);assert(game_phase() == GAME_WORKSHOP_EDIT);
     ui_snapshot("workshop_editor");
     ui_tap(191, 205);ui_snapshot("workshop_block_added");
+    ui_tap(674, 596); /* trigger category */
+    ui_tap(990, 443); /* rotation variant */
+    ui_tap(338, 247); /* place in the world */
+    ui_tap(1146, 443); /* forever variant */
+    ui_tap(380, 289);
+    ui_tap(1178, 495); /* scroll the infinite workshop map */
+    ui_tap(80, 596); /* block category */
+    ui_tap(422, 205); /* now maps to world X=10 */
+    ui_snapshot("workshop_trigger_variants_and_pan");
+    ui_tap(929, 209); /* select the earlier block for the edit dialogs */
+    ui_tap(149, 195);
     ui_tap(836, 377);ui_snapshot("workshop_move_dialog");
     ui_tap(537, 152);ui_tap(1100, 152);
     ui_snapshot("workshop_move_adjusted");
@@ -370,6 +382,9 @@ static int run_lvgl_test(void) {
     assert(!published.level_publish_busy && published.level_publish_id[0] &&
            strstr(published.level_publish_notice, "ОПУБЛИКОВАН") &&
            uploaded_level_body[0] && uploaded_index_body[0]);
+    assert(strstr(uploaded_level_body, "\"kind\":\"rotate\"") &&
+           strstr(uploaded_level_body, "\"kind\":\"forever\"") &&
+           strstr(uploaded_level_body, "\"x\":10.0000"));
     ui_snapshot("workshop_published");
     ui_tap(1158, 50);assert(game_phase() == GAME_CUSTOM_PLAY);
     ui_snapshot("workshop_preview");

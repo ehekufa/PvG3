@@ -62,7 +62,7 @@
           <div class="ws-home-grid">
             <article class="ws-home-card ws-draft-card">
               <span class="overline">ТВОЙ ПРОЕКТ</span><h2 id="ws-draft-title">Новый уровень</h2>
-              <p id="ws-draft-summary" class="muted">Сетка 16 × 10 · игрок, платформа и финиш уже на месте.</p>
+              <p id="ws-draft-summary" class="muted">Бесконечная карта · окно просмотра 16 × 10 · игрок и финиш уже на месте.</p>
               <div class="ws-card-actions">
                 <button class="primary-button" id="ws-continue" type="button">Продолжить редактор</button>
                 <button class="small-button" id="ws-new-draft" type="button">＋ Новый уровень</button>
@@ -92,29 +92,38 @@
           </div>
           <div class="ws-editor-layout">
             <div class="ws-board-column">
-              <div class="ws-board-heading"><strong>Сцена · 16 × 10</strong><span id="ws-object-count">0 / 120 объектов</span></div>
-              <div class="canvas-wrap ws-canvas-wrap"><canvas id="ws-editor-canvas" width="1280" height="720" aria-label="Редактор сцены 16 на 10"></canvas></div>
-              <p class="hint">Выбери режим, затем нажми на клетку. В режиме «Выбрать» объект можно перетаскивать.</p>
+              <div class="ws-board-heading"><strong>Сцена · окно карты 16 × 10</strong><span id="ws-object-count">0 / 120 объектов</span></div>
+              <div class="canvas-wrap ws-canvas-wrap"><canvas id="ws-editor-canvas" width="1280" height="720" aria-label="Окно бесконечной прокручиваемой карты платформера"></canvas></div>
+              <p class="hint">Сначала выбери категорию и объект. Перетаскивай объект в режиме «Выбрать», панорамируй карту режимом «Карта».</p>
               <p class="ws-error hidden" id="ws-editor-message" role="status" aria-live="polite"></p>
             </div>
             <aside class="ws-tools" aria-label="Инструменты редактора">
               <div class="ws-tool-group"><span class="overline">РЕЖИМ</span>
-                <div class="ws-mode-buttons"><button type="button" data-ws-tool="build" class="active">Строить</button><button type="button" data-ws-tool="select">Выбрать</button><button type="button" data-ws-tool="delete">Удалить</button></div></div>
-              <div class="ws-tool-group"><span class="overline">ОБЪЕКТЫ</span><div id="ws-palette" class="ws-palette">
-                <button type="button" data-ws-type="block">Блок</button><button type="button" data-ws-type="ground">Платформа</button>
-                <button type="button" data-ws-type="hazard">Шипы</button><button type="button" data-ws-type="coin">Монета</button>
-                <button type="button" data-ws-type="enemy">Гусь</button><button type="button" data-ws-type="player">Игрок</button>
-                <button type="button" data-ws-type="goal">Финиш</button><button type="button" data-ws-type="trigger">Триггер</button>
-              </div></div>
+                <div class="ws-mode-buttons"><button type="button" data-ws-tool="build" class="active">Строить</button><button type="button" data-ws-tool="select">Выбрать</button><button type="button" data-ws-tool="delete">Удалить</button><button type="button" data-ws-tool="pan">Карта</button></div></div>
+              <div class="ws-tool-group"><span class="overline">КАТЕГОРИИ ОБЪЕКТОВ</span>
+                <div id="ws-palette" class="ws-palette ws-category-list">
+                  <button type="button" data-ws-type="block"><img src="../assets/art/Блок.png" alt=""><span>Блок</span></button>
+                  <button type="button" data-ws-type="ground"><img src="../assets/art/Платформа.png" alt=""><span>Платформа</span></button>
+                  <button type="button" data-ws-type="hazard"><img src="../assets/art/Шип.png" alt=""><span>Шипы</span></button>
+                  <button type="button" data-ws-type="coin"><img src="../assets/art/coin-token.png" alt=""><span>Монета</span></button>
+                  <button type="button" data-ws-type="enemy"><img src="../assets/art/zombie-duck.png" alt=""><span>Гусь</span></button>
+                  <button type="button" data-ws-type="player"><img src="../assets/art/khlebushek.png" alt=""><span>Игрок</span></button>
+                  <button type="button" data-ws-type="goal"><img src="../assets/art/Флажок - финиш.png" alt=""><span>Финиш</span></button>
+                  <button type="button" data-ws-type="trigger"><img src="../assets/art/Триггер-движения.png" alt=""><span>Триггер</span></button>
+                </div>
+                <div id="ws-palette-items" class="ws-palette-items" aria-live="polite"></div>
+              </div>
               <div class="ws-tool-group ws-properties hidden" id="ws-properties">
                 <span class="overline">ВЫБРАННЫЙ ОБЪЕКТ</span><strong id="ws-selected-label"></strong>
-                <div class="ws-number-fields"><label>X<input id="ws-object-x" type="number" min="0" max="16" step="0.1"></label><label>Y<input id="ws-object-y" type="number" min="0" max="10" step="0.1"></label><label>Число<input id="ws-object-number" type="number" min="0" max="9999" step="1"></label></div>
+                <div class="ws-number-fields"><label>X<input id="ws-object-x" type="number" min="-100000" max="100000" step="0.1"></label><label>Y<input id="ws-object-y" type="number" min="-100000" max="100000" step="0.1"></label><label>Число<input id="ws-object-number" type="number" min="0" max="9999" step="1"></label></div>
                 <label class="ws-color-field">Цвет<input id="ws-object-color" type="color" value="#55c8ea"></label>
                 <div id="ws-trigger-fields" class="hidden">
-                  <label>Событие<select id="ws-trigger-event"><option value="touch">Касание</option><option value="coin">Подбор монеты</option><option value="manual">Кнопка действия</option></select></label>
-                  <label>Действие<select id="ws-trigger-action"><option value="toggle">Показать / скрыть</option><option value="move">Сдвинуть по X</option><option value="recolor">Сменить цвет</option><option value="number">Установить число</option></select></label>
-                  <label>Цель<select id="ws-trigger-target"></select></label>
-                  <label>Величина<input id="ws-trigger-value" type="number" min="-100" max="100" step="1"></label>
+                  <label id="ws-trigger-event-field">Событие<select id="ws-trigger-event"><option value="touch">Касание</option><option value="coin">Подбор монеты</option><option value="manual">Кнопка действия</option></select></label>
+                  <div id="ws-trigger-target-fields">
+                    <label>Цель<select id="ws-trigger-target"></select></label>
+                    <label>Шаг / угол<input id="ws-trigger-value" type="number" min="-100" max="100" step="1"></label>
+                  </div>
+                  <p class="muted hidden" id="ws-trigger-forever-note">Автоматически повторяет первый триггер раз в 0,5 секунды.</p>
                 </div>
                 <button class="small-button ws-delete-selected" id="ws-delete-selected" type="button">Удалить объект</button>
               </div>

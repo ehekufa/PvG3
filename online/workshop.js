@@ -1,10 +1,17 @@
 /* Shared web workshop model, PVG3-MAKER codec and small platformer preview.
  * This format is also read by src/online_protocol.c in the native C client. */
+// The canvas shows a 16×10 viewport onto a sparse, effectively infinite world.
+// Coordinates are bounded only to keep JSON, float math and camera precision safe.
 export const LEVEL_WIDTH = 16;
 export const LEVEL_HEIGHT = 10;
+export const WORLD_LIMIT = 100_000;
 export const TILE_W = 80;
 export const TILE_H = 72;
 export const MAX_LEVEL_OBJECTS = 120;
+export const TRIGGER_KINDS = Object.freeze(['move', 'rotate', 'forever']);
+export const TRIGGER_LABELS = Object.freeze({
+  move: 'Движение', rotate: 'Развороты', forever: 'Вечно',
+});
 export const LEVEL_TYPES = Object.freeze([
   'block', 'ground', 'hazard', 'coin', 'enemy', 'player', 'goal', 'trigger',
 ]);
@@ -28,9 +35,10 @@ const TYPE_NAMES = Object.freeze([
   'block', 'ground', 'hazard', 'coin', 'enemy', 'player', 'goal', 'trigger',
 ]);
 const EVENTS = new Set(['touch', 'coin', 'manual']);
-const ACTIONS = new Set(['toggle', 'move', 'recolor', 'number']);
+const ACTIONS = new Set(['toggle', 'move', 'recolor', 'number', 'rotate']);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const finite = value => typeof value === 'number' && Number.isFinite(value);
+const worldClamp = (value, size = 0) => clamp(value, -WORLD_LIMIT, WORLD_LIMIT - size);
 const copy = value => JSON.parse(JSON.stringify(value));
 
 function localId() {
@@ -55,18 +63,20 @@ export function newDraft(id = localId()) {
   };
 }
 
-export function addObject(level, type, x, y) {
+export function addObject(level, type, x, y, triggerKind = 'move') {
   if (!LEVEL_TYPES.includes(type) || level.objects.length >= MAX_LEVEL_OBJECTS) return null;
   const size = TYPE_SIZES[type];
   const object = defaultObject(
     Math.max(0, ...level.objects.map(o => Number(o.id) || 0)) + 1,
-    type, clamp(x, 0, LEVEL_WIDTH - size[0]), clamp(y, 0, LEVEL_HEIGHT - size[1]),
+    type, worldClamp(x, size[0]), worldClamp(y, size[1]),
     size[0], size[1], DEFAULT_COLORS[type], 0,
   );
   if (type === 'trigger') {
+    const kind = TRIGGER_KINDS.includes(triggerKind) ? triggerKind : 'move';
     const target = level.objects.find(o => o.type === 'goal') || level.objects[0];
-    object.trigger = {event: 'touch', action: 'move',
-      targetId: target?.id || 0, value: 1, color: '#ffc54e'};
+    object.trigger = {kind, event: 'touch',
+      action: kind === 'rotate' ? 'rotate' : 'move',
+      targetId: target?.id || 0, value: kind === 'rotate' ? 90 : 1, color: '#ffc54e'};
   }
   if (type === 'player' || type === 'goal') {
     const old = level.objects.find(o => o.type === type);
@@ -98,7 +108,7 @@ export function validateDraft(level) {
   if (level.width !== LEVEL_WIDTH || level.height !== LEVEL_HEIGHT ||
       !Array.isArray(level.objects) || level.objects.length < 1 ||
       level.objects.length > MAX_LEVEL_OBJECTS)
-    return fail('Уровень должен быть сеткой 16×10 с 1–120 объектами.');
+    return fail('Нужен уровень с окном просмотра 16×10 и 1–120 объектами.');
   const ids = new Set();
   let hasPlayer = false, hasGoal = false;
   for (const object of level.objects) {
@@ -108,9 +118,10 @@ export function validateDraft(level) {
     ids.add(object.id);
     if (typeof object.name !== 'string' || object.name.length > 48 ||
         ![object.x, object.y, object.w, object.h, object.angle].every(finite) ||
-        object.x < 0 || object.y < 0 || object.w <= 0 || object.h <= 0 ||
-        object.x + object.w > LEVEL_WIDTH + .001 ||
-        object.y + object.h > LEVEL_HEIGHT + .001 ||
+        object.x < -WORLD_LIMIT || object.y < -WORLD_LIMIT ||
+        object.w <= 0 || object.h <= 0 ||
+        object.x + object.w > WORLD_LIMIT ||
+        object.y + object.h > WORLD_LIMIT ||
         object.w > LEVEL_WIDTH || object.h > LEVEL_HEIGHT ||
         object.angle < 0 || object.angle >= 360 || !rgb(object.color) ||
         !Number.isInteger(object.number) || object.number < 0 || object.number > 9999 ||
@@ -120,7 +131,8 @@ export function validateDraft(level) {
     hasGoal ||= object.type === 'goal';
     if (object.type === 'trigger') {
       const t = object.trigger;
-      if (!t || !EVENTS.has(t.event) || !ACTIONS.has(t.action) ||
+      if (!t || !TRIGGER_KINDS.includes(t.kind || 'move') ||
+          !EVENTS.has(t.event) || !ACTIONS.has(t.action) ||
           !Number.isInteger(t.targetId) || t.targetId < 0 || t.targetId > 1_000_000 ||
           !finite(t.value) || t.value < -100 || t.value > 100 || !rgb(t.color))
         return fail('Настрой триггер: событие, действие, цель и величину.');
@@ -139,7 +151,8 @@ function recordObject(object) {
   };
   if (object.type === 'trigger') {
     const t = object.trigger || {};
-    result.trigger = {event: t.event || 'touch', action: t.action || 'move',
+    result.trigger = {kind: TRIGGER_KINDS.includes(t.kind) ? t.kind : 'move',
+      event: t.event || 'touch', action: t.action || 'move',
       targetId: t.targetId || 0, value: t.value || 0, color: t.color || '#ffc54e'};
   }
   return result;
@@ -163,6 +176,8 @@ export function draftFromPublished(record) {
     localId: localId(), title: record.title, description: record.description || '',
     width: LEVEL_WIDTH, height: LEVEL_HEIGHT,
     objects: record.project.objects.map(object => ({...object,
+      trigger: object.type === 'trigger' ? {...object.trigger,
+        kind: TRIGGER_KINDS.includes(object.trigger?.kind) ? object.trigger.kind : 'move'} : object.trigger,
       layer: Number.isInteger(object.layer) ? object.layer : 0,
       layer2: Number.isInteger(object.layer2) ? object.layer2 : 0,
       zOrder: Number.isInteger(object.zOrder) ? object.zOrder : 0,
@@ -209,16 +224,39 @@ export function createPreviewState(level) {
   if (!player) throw new Error('Уровень без игрока.');
   return {objects: copy(level.objects), x: player.x * TILE_W, y: player.y * TILE_H,
     vx: 0, vy: 0, grounded: false, time: 0, coins: 0, won: false,
-    collected: [], triggerFired: [],
+    collected: [], triggerFired: [], triggerActive: [], triggerTimers: Object.create(null),
     spawn: {x: player.x * TILE_W, y: player.y * TILE_H}};
 }
 function overlap(ax, ay, aw, ah, bx, by, bw, bh) {
   return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
 }
+function executeTrigger(state, trigger) {
+  const kind = TRIGGER_KINDS.includes(trigger.trigger?.kind) ? trigger.trigger.kind : 'move';
+  if (kind === 'forever') {
+    const first = state.objects.find(object => object.visible !== false &&
+      object.type === 'trigger' && object.id !== trigger.id &&
+      object.trigger?.kind !== 'forever');
+    if (first) executeTrigger(state, first);
+    return;
+  }
+  const target = state.objects.find(object => object.id === trigger.trigger?.targetId);
+  if (!target) return;
+  const action = kind === 'rotate' ? 'rotate' : trigger.trigger.action;
+  switch (action) {
+  case 'toggle': target.visible = !target.visible;break;
+  case 'move': target.x = worldClamp(target.x + trigger.trigger.value, target.w);break;
+  case 'rotate': target.angle = ((target.angle + trigger.trigger.value) % 360 + 360) % 360;break;
+  case 'recolor': target.color = trigger.trigger.color;break;
+  case 'number': target.number = clamp(Math.trunc(trigger.trigger.value), 0, 9999);break;
+  }
+}
 function runTriggers(state, event) {
   for (const trigger of state.objects) {
-    if (!trigger.visible || trigger.type !== 'trigger' || trigger.trigger?.event !== event ||
-        state.triggerFired.includes(trigger.id)) continue;
+    if (!trigger.visible || trigger.type !== 'trigger' || trigger.trigger?.event !== event) continue;
+    const kind = TRIGGER_KINDS.includes(trigger.trigger.kind) ? trigger.trigger.kind : 'move';
+    const completed = state.triggerFired.includes(trigger.id);
+    const active = state.triggerActive.includes(trigger.id);
+    if (kind === 'forever' ? active : completed) continue;
     const player = state.objects.find(o => o.type === 'player');
     const px = state.x, py = state.y, pw = (player?.w || .65) * TILE_W,
       ph = (player?.h || .85) * TILE_H;
@@ -226,15 +264,30 @@ function runTriggers(state, event) {
         trigger.y * TILE_H, trigger.w * TILE_W, trigger.h * TILE_H)) continue;
     if (event === 'manual' && Math.hypot(px + pw / 2 - (trigger.x + trigger.w / 2) * TILE_W,
         py + ph / 2 - (trigger.y + trigger.h / 2) * TILE_H) > 150) continue;
-    const target = state.objects.find(o => o.id === trigger.trigger.targetId);
-    state.triggerFired.push(trigger.id);
-    if (!target) continue;
-    switch (trigger.trigger.action) {
-    case 'toggle': target.visible = !target.visible;break;
-    case 'move': target.x = clamp(target.x + trigger.trigger.value, 0, LEVEL_WIDTH - target.w);break;
-    case 'recolor': target.color = trigger.trigger.color;break;
-    case 'number': target.number = clamp(Math.trunc(trigger.trigger.value), 0, 9999);break;
+    if (kind === 'forever') {
+      state.triggerActive.push(trigger.id);
+      state.triggerTimers[trigger.id] = 0;
+    } else {
+      state.triggerFired.push(trigger.id);
+      executeTrigger(state, trigger);
     }
+  }
+}
+function runForeverTriggers(state, dt) {
+  // Automatic loops begin when visible and repeat at most once per simulation
+  // step, so a stalled frame can never trigger unbounded catch-up work.
+  for (const trigger of state.objects) {
+    if (trigger.type !== 'trigger' || trigger.trigger?.kind !== 'forever' ||
+        trigger.visible === false) continue;
+    if (!state.triggerActive.includes(trigger.id)) {
+      state.triggerActive.push(trigger.id);state.triggerTimers[trigger.id] = 0;
+      continue;
+    }
+    const elapsed = (state.triggerTimers[trigger.id] || 0) + dt;
+    if (elapsed >= .5) {
+      state.triggerTimers[trigger.id] = elapsed - .5;
+      executeTrigger(state, trigger);
+    } else state.triggerTimers[trigger.id] = elapsed;
   }
 }
 export function stepPreview(state, input = {}, dt = 1 / 60) {
@@ -247,7 +300,8 @@ export function stepPreview(state, input = {}, dt = 1 / 60) {
   const solids = state.objects.filter(o => o.visible && ['block', 'ground'].includes(o.type));
   const oldX = state.x;
   state.vx = (input.axis || 0) * 250;
-  state.x = clamp(state.x + state.vx * dt, 0, LEVEL_WIDTH * TILE_W - pw);
+  state.x = clamp(state.x + state.vx * dt,
+    -WORLD_LIMIT * TILE_W, WORLD_LIMIT * TILE_W - pw);
   for (const o of solids) {
     const bx = o.x * TILE_W, by = o.y * TILE_H, bw = o.w * TILE_W, bh = o.h * TILE_H;
     if (!overlap(state.x, state.y, pw, ph, bx, by, bw, bh)) continue;
@@ -268,7 +322,7 @@ export function stepPreview(state, input = {}, dt = 1 / 60) {
       state.y = by + bh;state.vy = 0;
     }
   }
-  if (state.y > LEVEL_HEIGHT * TILE_H + 80) {
+  if (state.y > WORLD_LIMIT * TILE_H) {
     state.x = state.spawn.x;state.y = state.spawn.y;state.vx = state.vy = 0;
   }
   for (const o of state.objects) {
@@ -284,18 +338,21 @@ export function stepPreview(state, input = {}, dt = 1 / 60) {
   }
   if (input.trigger) runTriggers(state, 'manual');
   if (state.x !== oldX) runTriggers(state, 'touch');
+  runForeverTriggers(state, dt);
   return state;
 }
 
-function drawWorkshopArt(ctx, art, type, x, y, w, h) {
-  const image = art?.[type];
+function triggerArtKey(kind) {
+  return kind === 'rotate' ? 'triggerRotate' : kind === 'forever' ? 'triggerForever' : 'triggerMove';
+}
+function drawWorkshopArt(ctx, art, type, x, y, w, h, triggerKind = 'move') {
+  const image = type === 'trigger' ? (art?.[triggerArtKey(triggerKind)] || art?.trigger) : art?.[type];
   if (!image?.naturalWidth) return false;
   if (type !== 'ground') {
     ctx.drawImage(image, x, y, w, h);
     return true;
   }
-  // The platform drawing is a 2×1 tile. Repeat it instead of stretching one
-  // tiny picture across a long floor; partial edge tiles are clipped by size.
+  // Repeat the supplied 2×1 platform tile, including at the edges of the view.
   const tileW = 2 * TILE_W, tileH = TILE_H;
   for (let dy = 0; dy < h; dy += tileH)
     for (let dx = 0; dx < w; dx += tileW)
@@ -303,29 +360,44 @@ function drawWorkshopArt(ctx, art, type, x, y, w, h) {
         Math.min(tileW, w - dx), Math.min(tileH, h - dy));
   return true;
 }
+function drawWorkshopObject(ctx, art, object, x, y, w, h) {
+  const angle = ((object.angle || 0) % 360) * Math.PI / 180;
+  if (!angle) return drawWorkshopArt(ctx, art, object.type, x, y, w, h,
+                                      object.trigger?.kind);
+  ctx.save();ctx.translate(x + w / 2, y + h / 2);ctx.rotate(angle);
+  const drawn = drawWorkshopArt(ctx, art, object.type, -w / 2, -h / 2, w, h,
+                                object.trigger?.kind);
+  ctx.restore();
+  return drawn;
+}
 
-export function drawEditorCanvas(canvas, level, selectedId = 0, tool = 'build', art = {}) {
+export function drawEditorCanvas(canvas, level, selectedId = 0, tool = 'build', art = {}, camera = {x: 0, y: 0}) {
   const ctx = canvas.getContext('2d');
+  const cameraX = clamp(Number(camera?.x) || 0, -WORLD_LIMIT, WORLD_LIMIT - LEVEL_WIDTH);
+  const cameraY = clamp(Number(camera?.y) || 0, -WORLD_LIMIT, WORLD_LIMIT - LEVEL_HEIGHT);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = '#14283c';ctx.fillRect(0, 0, canvas.width, canvas.height);
-  for (let c = 0; c <= LEVEL_WIDTH; c++) {
+  const firstCol = Math.floor(cameraX), firstRow = Math.floor(cameraY);
+  for (let c = firstCol; (c - cameraX) * TILE_W <= canvas.width; c++) {
+    const x = Math.round((c - cameraX) * TILE_W);
     ctx.strokeStyle = '#2a4056';ctx.lineWidth = 1;
-    ctx.beginPath();ctx.moveTo(c * TILE_W, 0);ctx.lineTo(c * TILE_W, canvas.height);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(x, 0);ctx.lineTo(x, canvas.height);ctx.stroke();
   }
-  for (let r = 0; r <= LEVEL_HEIGHT; r++) {
-    ctx.beginPath();ctx.moveTo(0, r * TILE_H);ctx.lineTo(canvas.width, r * TILE_H);ctx.stroke();
+  for (let r = firstRow; (r - cameraY) * TILE_H <= canvas.height; r++) {
+    const y = Math.round((r - cameraY) * TILE_H);
+    ctx.beginPath();ctx.moveTo(0, y);ctx.lineTo(canvas.width, y);ctx.stroke();
   }
   const drawObjects = [...level.objects].sort((a, b) => (a.layer || 0) - (b.layer || 0) ||
       (a.zOrder || 0) - (b.zOrder || 0));
   for (const o of drawObjects) {
     if (o.visible === false) continue;
-    const x = o.x * TILE_W + 3, y = o.y * TILE_H + 3;
+    const x = (o.x - cameraX) * TILE_W + 3, y = (o.y - cameraY) * TILE_H + 3;
     const w = o.w * TILE_W - 6, h = o.h * TILE_H - 6;
     ctx.fillStyle = o.color || DEFAULT_COLORS[o.type];
-    if (o.type === 'trigger' && art.trigger?.naturalWidth) {
-      ctx.globalAlpha = .2;ctx.fillRect(x, y, w, h);ctx.globalAlpha = 1;
-    }
-    const hasArt = drawWorkshopArt(ctx, art, o.type, x, y, w, h);
+    const triggerArt = o.type === 'trigger' &&
+      (art?.[triggerArtKey(o.trigger?.kind)]?.naturalWidth || art.trigger?.naturalWidth);
+    if (triggerArt) {ctx.globalAlpha = .2;ctx.fillRect(x, y, w, h);ctx.globalAlpha = 1;}
+    const hasArt = drawWorkshopObject(ctx, art, o, x, y, w, h);
     if (!hasArt && o.type === 'coin') {
       ctx.beginPath();ctx.arc(x + w / 2, y + h / 2, Math.min(w, h) / 2, 0, Math.PI * 2);ctx.fill();
     } else if (!hasArt && o.type === 'hazard') {
@@ -342,28 +414,43 @@ export function drawEditorCanvas(canvas, level, selectedId = 0, tool = 'build', 
     if (o.id === selectedId) {ctx.strokeStyle = '#27d2d6';ctx.lineWidth = 4;ctx.strokeRect(x - 1, y - 1, w + 2, h + 2);}
     ctx.fillStyle = '#10131d';ctx.font = '14px PTSans, sans-serif';ctx.fillText(String(o.number || ''), x + 4, y + 17);
   }
-  ctx.fillStyle = 'rgba(0,0,0,.55)';ctx.fillRect(8, 8, 266, 30);
+  ctx.fillStyle = 'rgba(0,0,0,.55)';ctx.fillRect(8, 8, 400, 30);
   ctx.fillStyle = '#fff2d8';ctx.font = '16px PTSans, sans-serif';
-  ctx.fillText(tool === 'delete' ? 'Выбери объект для удаления' : 'Сетка 16 × 10 · касание по клетке', 18, 29);
+  const hint = tool === 'delete' ? 'Выбери объект для удаления' :
+    tool === 'pan' ? 'Перетаскивай, чтобы перемещать бесконечную карту' :
+    `Бесконечная карта · вид ${Math.floor(cameraX)}, ${Math.floor(cameraY)}`;
+  ctx.fillText(hint, 18, 29);
 }
 
 export function drawPreviewCanvas(canvas, state, control = 'keyboard', art = {}) {
   const ctx = canvas.getContext('2d');
+  const player = state.objects.find(o => o.type === 'player');
+  const playerW = (player?.w || .65) * TILE_W, playerH = (player?.h || .85) * TILE_H;
+  const cameraX = player ? state.x + playerW / 2 - canvas.width * .4 : 0;
+  const cameraY = player ? state.y + playerH / 2 - (canvas.height + 64) * .52 : 0;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = '#8bc7df';ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = '#eff3d8';
-  ctx.beginPath();ctx.ellipse(205, 90, 96, 24, 0, 0, Math.PI * 2);ctx.fill();
-  ctx.beginPath();ctx.ellipse(252, 89, 63, 31, 0, 0, Math.PI * 2);ctx.fill();
-  ctx.fillStyle = '#8cb95c';ctx.fillRect(0, 8 * TILE_H, canvas.width, 2 * TILE_H);
-  ctx.fillStyle = '#222';ctx.fillRect(0, 8 * TILE_H, canvas.width, 3);
+  const cloudX = -((cameraX * .18) % (canvas.width + 300));
+  for (const x of [cloudX - 160, cloudX + canvas.width - 100]) {
+    ctx.beginPath();ctx.ellipse(x + 205, 90 - cameraY * .05, 96, 24, 0, 0, Math.PI * 2);ctx.fill();
+    ctx.beginPath();ctx.ellipse(x + 252, 89 - cameraY * .05, 63, 31, 0, 0, Math.PI * 2);ctx.fill();
+  }
+  const grassY = 590 - cameraY;
+  if (grassY < canvas.height) {
+    ctx.fillStyle = '#8cb95c';ctx.fillRect(0, Math.max(64, grassY), canvas.width,
+      Math.max(0, canvas.height - Math.max(64, grassY)));
+    if (grassY >= 64) {ctx.fillStyle = '#222';ctx.fillRect(0, grassY, canvas.width, 3);}
+  }
   for (const o of state.objects) {
     if (!o.visible || o.type === 'player') continue;
-    const x = o.x * TILE_W, y = o.y * TILE_H, w = o.w * TILE_W, h = o.h * TILE_H;
+    const x = o.x * TILE_W - cameraX, y = o.y * TILE_H - cameraY;
+    const w = o.w * TILE_W, h = o.h * TILE_H;
     ctx.fillStyle = o.color || DEFAULT_COLORS[o.type];
-    if (o.type === 'trigger' && art.trigger?.naturalWidth) {
-      ctx.globalAlpha = .18;ctx.fillRect(x, y, w, h);ctx.globalAlpha = 1;
-    }
-    const hasArt = drawWorkshopArt(ctx, art, o.type, x, y, w, h);
+    const triggerArt = o.type === 'trigger' &&
+      (art?.[triggerArtKey(o.trigger?.kind)]?.naturalWidth || art.trigger?.naturalWidth);
+    if (triggerArt) {ctx.globalAlpha = .18;ctx.fillRect(x, y, w, h);ctx.globalAlpha = 1;}
+    const hasArt = drawWorkshopObject(ctx, art, o, x, y, w, h);
     if (hasArt) continue;
     if (o.type === 'hazard') {
       ctx.beginPath();ctx.moveTo(x + w / 2, y);ctx.lineTo(x + w, y + h);ctx.lineTo(x, y + h);ctx.closePath();ctx.fill();
@@ -376,10 +463,10 @@ export function drawPreviewCanvas(canvas, state, control = 'keyboard', art = {})
       ctx.strokeStyle = '#fff';ctx.lineWidth = 3;ctx.strokeRect(x + 2, y + 2, w - 4, h - 4);
     } else ctx.fillRect(x, y, w, h);
   }
-  const player = state.objects.find(o => o.type === 'player');
   if (player) {
-    const x = state.x, y = state.y, w = player.w * TILE_W, h = player.h * TILE_H;
-    if (!drawWorkshopArt(ctx, art, 'player', x, y, w, h)) {
+    const x = state.x - cameraX, y = state.y - cameraY;
+    const w = playerW, h = playerH;
+    if (!drawWorkshopObject(ctx, art, player, x, y, w, h)) {
       ctx.fillStyle = player.color || DEFAULT_COLORS.player;
       ctx.fillRect(x, y, w, h);
       ctx.fillStyle = '#fff';ctx.fillRect(x + w * .2, y + h * .22, 8, 9);ctx.fillRect(x + w * .62, y + h * .22, 8, 9);

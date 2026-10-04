@@ -288,6 +288,13 @@ static int level_action(const JD *d, int token) {
     if (eq(d, token, "move")) return ON_TRIGGER_MOVE;
     if (eq(d, token, "recolor")) return ON_TRIGGER_RECOLOR;
     if (eq(d, token, "number")) return ON_TRIGGER_NUMBER;
+    if (eq(d, token, "rotate")) return ON_TRIGGER_ROTATE;
+    return -1;
+}
+static int level_trigger_kind(const JD *d, int token) {
+    if (eq(d, token, "move")) return ON_TRIGGER_KIND_MOVE;
+    if (eq(d, token, "rotate")) return ON_TRIGGER_KIND_ROTATE;
+    if (eq(d, token, "forever")) return ON_TRIGGER_KIND_FOREVER;
     return -1;
 }
 int on_protocol_valid_level_id(const char *id) {
@@ -341,8 +348,10 @@ static int parse_level_object(const JD *d, int node, OnLevelObject *out) {
         !color_value(d, field(d, node, "color"), &item.color) ||
         !int_field(d, node, "number", &item.number) || item.number < 0 || item.number > 9999 ||
         !bool_field(d, node, "visible", &item.visible) ||
-        item.x < 0 || item.y < 0 || item.w <= 0 || item.h <= 0 ||
-        item.x + item.w > 16.001f || item.y + item.h > 10.001f ||
+        item.x < -ON_LEVEL_WORLD_LIMIT || item.y < -ON_LEVEL_WORLD_LIMIT ||
+        item.w <= 0 || item.h <= 0 ||
+        item.x + item.w > ON_LEVEL_WORLD_LIMIT ||
+        item.y + item.h > ON_LEVEL_WORLD_LIMIT ||
         item.w > 16 || item.h > 10 || item.angle < 0 || item.angle >= 360) return 0;
     item.type = type;
     int name = field(d, node, "name");
@@ -350,9 +359,14 @@ static int parse_level_object(const JD *d, int node, OnLevelObject *out) {
     if (type == ON_LEVEL_TRIGGER) {
         int trigger = field(d, node, "trigger");
         if (trigger < 0 || d->t[trigger].type != 'o') return 0;
+        int kind_token = field(d, trigger, "kind");
+        item.trigger_kind = kind_token < 0 ? ON_TRIGGER_KIND_MOVE :
+                            level_trigger_kind(d, kind_token);
         item.trigger_event = level_event(d, field(d, trigger, "event"));
         item.trigger_action = level_action(d, field(d, trigger, "action"));
-        if (item.trigger_event < 0 || item.trigger_action < 0 ||
+        if (item.trigger_kind < ON_TRIGGER_KIND_MOVE ||
+            item.trigger_kind > ON_TRIGGER_KIND_FOREVER ||
+            item.trigger_event < 0 || item.trigger_action < 0 ||
             !int_field(d, trigger, "targetId", &item.target_id) ||
             !float_field(d, trigger, "value", &item.trigger_value) ||
             !color_value(d, field(d, trigger, "color"), &item.trigger_color) ||
@@ -794,9 +808,11 @@ static int published_level_valid(const OnPublishedLevel *level) {
         if (o->id < 1 || o->id > 1000000 || o->type < ON_LEVEL_BLOCK ||
             o->type > ON_LEVEL_TRIGGER || !memchr(o->name, 0, sizeof o->name) ||
             !utf8_units(o->name, sizeof o->name, 48) || !isfinite(o->x) || !isfinite(o->y) || !isfinite(o->w) ||
-            !isfinite(o->h) || !isfinite(o->angle) || o->x < 0 || o->y < 0 ||
-            o->w <= 0 || o->h <= 0 || o->x + o->w > 16.001f ||
-            o->y + o->h > 10.001f || o->w > 16 || o->h > 10 ||
+            !isfinite(o->h) || !isfinite(o->angle) ||
+            o->x < -ON_LEVEL_WORLD_LIMIT || o->y < -ON_LEVEL_WORLD_LIMIT ||
+            o->w <= 0 || o->h <= 0 ||
+            o->x + o->w > ON_LEVEL_WORLD_LIMIT ||
+            o->y + o->h > ON_LEVEL_WORLD_LIMIT || o->w > 16 || o->h > 10 ||
             o->angle < 0 || o->angle >= 360 || o->color > 0xffffffu ||
             o->number < 0 || o->number > 9999 || (o->visible != 0 && o->visible != 1)) return 0;
         for (int j = 0; j < i; ++j)
@@ -804,8 +820,10 @@ static int published_level_valid(const OnPublishedLevel *level) {
         has_player |= o->type == ON_LEVEL_PLAYER;
         has_goal |= o->type == ON_LEVEL_GOAL;
         if (o->type == ON_LEVEL_TRIGGER &&
-            (o->trigger_event < ON_TRIGGER_TOUCH || o->trigger_event > ON_TRIGGER_MANUAL ||
-             o->trigger_action < ON_TRIGGER_TOGGLE || o->trigger_action > ON_TRIGGER_NUMBER ||
+            (o->trigger_kind < ON_TRIGGER_KIND_MOVE ||
+             o->trigger_kind > ON_TRIGGER_KIND_FOREVER ||
+             o->trigger_event < ON_TRIGGER_TOUCH || o->trigger_event > ON_TRIGGER_MANUAL ||
+             o->trigger_action < ON_TRIGGER_TOGGLE || o->trigger_action > ON_TRIGGER_ROTATE ||
              o->target_id < 0 || o->target_id > 1000000 ||
              !isfinite(o->trigger_value) || o->trigger_value < -100 ||
              o->trigger_value > 100 || o->trigger_color > 0xffffffu)) return 0;
@@ -820,7 +838,8 @@ size_t on_protocol_published_level_json(const OnPublishedLevel *level,
         "block", "ground", "hazard", "coin", "enemy", "player", "goal", "trigger"
     };
     static const char *const events[] = {"touch", "coin", "manual"};
-    static const char *const actions[] = {"toggle", "move", "recolor", "number"};
+    static const char *const actions[] = {"toggle", "move", "recolor", "number", "rotate"};
+    static const char *const trigger_kinds[] = {"move", "rotate", "forever"};
     static const char *const names[] = {
         "Блок", "Платформа", "Шипы", "Монета", "Гусь", "Игрок", "Финиш", "Триггер"
     };
@@ -844,9 +863,10 @@ size_t on_protocol_published_level_json(const OnPublishedLevel *level,
             (double)o->angle, (unsigned)o->color, o->number,
             o->visible ? "true" : "false");
         if (o->type == ON_LEVEL_TRIGGER) {
-            put(&w, ",\"trigger\":{\"event\":\"%s\",\"action\":\"%s\","
+            put(&w, ",\"trigger\":{\"kind\":\"%s\",\"event\":\"%s\",\"action\":\"%s\","
                 "\"targetId\":%d,\"value\":%.4f,\"color\":\"#%06x\"}",
-                events[o->trigger_event], actions[o->trigger_action], o->target_id,
+                trigger_kinds[o->trigger_kind], events[o->trigger_event],
+                actions[o->trigger_action], o->target_id,
                 (double)o->trigger_value, (unsigned)o->trigger_color);
         }
         put(&w, "}");

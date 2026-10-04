@@ -4,7 +4,8 @@ import {DATABASE, validId, randomPlayerId, listRooms, getRoom, createRoom,
         joinRoom, chooseRole, writeState, writeCommand, heartbeat, leaveRoom,
         listPublishedLevels, getPublishedLevel, publishLevel} from './firebase.js';
 import {preloadArtwork, drawGame} from './draw.js';
-import {LEVEL_WIDTH, LEVEL_HEIGHT, MAX_LEVEL_OBJECTS, TYPE_LABELS, newDraft,
+import {LEVEL_WIDTH, LEVEL_HEIGHT, MAX_LEVEL_OBJECTS, WORLD_LIMIT, TYPE_LABELS,
+        TRIGGER_LABELS, newDraft,
         addObject, findObjectAt, validateDraft, draftFromPublished,
         createPreviewState, stepPreview, drawEditorCanvas, drawPreviewCanvas,
         resolveControlMode, createTouchButtonState} from './workshop.js';
@@ -23,7 +24,9 @@ const WS_CONTROL_KEY = 'pvg3-workshop-control-v1';
 const wsPages = {home: $('ws-home-page'), editor: $('ws-editor-page'),
   preview: $('ws-preview-page'), catalog: $('ws-catalog-page')};
 let wsPage = 'home', wsDraft = loadWorkshopDraft(), wsTool = 'build', wsType = 'block';
-let wsSelectedId = 0, wsDrag = null, wsCatalogGeneration = 0, wsCatalog = [];
+let wsTriggerKind = 'move', wsPaletteSelected = true;
+let wsSelectedId = 0, wsDrag = null, wsPanDrag = null, wsCatalogGeneration = 0, wsCatalog = [];
+let wsCamera = {x: 0, y: 0};
 let wsPreviewState = null, wsPreviewLevel = null, wsPreviewReturn = 'editor';
 let wsControlPreference = localSetting(WS_CONTROL_KEY, 'auto'), wsControlMode = 'keyboard';
 let wsJumpQueued = false, wsTriggerQueued = false;
@@ -33,15 +36,19 @@ let wsWinAnnounced = false;
 const WS_ART_FILES = {
   block: 'Блок.png', ground: 'Платформа.png', hazard: 'Шип.png',
   coin: 'coin-token.png', enemy: 'zombie-duck.png', player: 'khlebushek.png',
-  goal: 'Флажок - финиш.png', trigger: 'Триггер-движения.png',
+  goal: 'Флажок - финиш.png',
+  triggerMove: 'Триггер-движения.png', triggerRotate: 'Триггер-вращения.png',
+  triggerForever: 'Триггер-вечно.png',
 };
 const wsArt = Object.fromEntries(Object.entries(WS_ART_FILES).map(([type, file]) => {
   const image = new Image();
   image.decoding = 'async';
   image.addEventListener('load', () => {
     if (screen !== 'workshop') return;
-    if (wsPage === 'editor')
-      drawEditorCanvas($('ws-editor-canvas'), wsDraft, wsSelectedId, wsTool, wsArt);
+    if (wsPage === 'editor') {
+      renderPaletteOptions();
+      drawEditorCanvas($('ws-editor-canvas'), wsDraft, wsSelectedId, wsTool, wsArt, wsCamera);
+    }
     else if (wsPage === 'preview') drawCurrentPreview();
   }, {once: true});
   image.src = new URL(`../assets/art/${file}`, import.meta.url).href;
@@ -71,7 +78,13 @@ function loadWorkshopDraft() {
       saved.objects.every(o => o && Object.hasOwn(TYPE_LABELS, o.type) && Number.isInteger(o.id) &&
         Number.isFinite(o.x) && Number.isFinite(o.y) && Number.isFinite(o.w) && Number.isFinite(o.h) &&
         typeof o.color === 'string' && /^#[0-9a-f]{6}$/i.test(o.color));
-    if (validShape) return saved;
+    if (validShape) {
+      for (const object of saved.objects) if (object.type === 'trigger') {
+        object.trigger ||= {event: 'touch', action: 'move', targetId: 0, value: 1, color: '#ffc54e'};
+        object.trigger.kind ||= 'move';
+      }
+      return saved;
+    }
   } catch {}
   return newDraft();
 }
@@ -88,7 +101,7 @@ function setWorkshopPage(page) {
 function renderWorkshopHome() {
   $('ws-draft-title').textContent = wsDraft.title.trim() || 'Новый уровень';
   const check = validateDraft(wsDraft);
-  $('ws-draft-summary').textContent = `${wsDraft.objects.length} объектов · сетка ${LEVEL_WIDTH} × ${LEVEL_HEIGHT} · ` +
+  $('ws-draft-summary').textContent = `${wsDraft.objects.length} объектов · бесконечная карта · ` +
     (check.ok ? 'можно проверять и публиковать.' : check.message);
   $('ws-draft-status').textContent = wsDraft.publishedId ?
     `Последняя публикация: ID ${wsDraft.publishedId}. Повторная публикация создаст новую запись.` :
@@ -109,16 +122,46 @@ function showWorkshopMessage(message = '') {
   node.textContent = message;
   node.classList.toggle('hidden', !message);
 }
+function renderPaletteOptions() {
+  const container = $('ws-palette-items');
+  if (!container) return;
+  for (const button of document.querySelectorAll('[data-ws-type]'))
+    button.classList.toggle('active', button.dataset.wsType === wsType);
+  container.replaceChildren();
+  const options = wsType === 'trigger' ? [
+    {kind: 'move', label: TRIGGER_LABELS.move, art: 'triggerMove'},
+    {kind: 'rotate', label: TRIGGER_LABELS.rotate, art: 'triggerRotate'},
+    {kind: 'forever', label: TRIGGER_LABELS.forever, art: 'triggerForever'},
+  ] : [{kind: 'single', label: TYPE_LABELS[wsType], art: wsType}];
+  for (const option of options) {
+    const button = document.createElement('button');
+    button.type = 'button';button.className = 'ws-palette-item';
+    const active = wsPaletteSelected &&
+      (wsType !== 'trigger' || wsTriggerKind === option.kind);
+    if (active) button.classList.add('active');
+    const icon = document.createElement('img');
+    icon.alt = '';icon.setAttribute('aria-hidden', 'true');
+    icon.src = wsArt[option.art]?.src || '';
+    const label = document.createElement('span');label.textContent = option.label;
+    button.append(icon, label);
+    button.addEventListener('click', () => {
+      if (wsType === 'trigger') wsTriggerKind = option.kind;
+      wsPaletteSelected = true;
+      wsTool = 'build';
+      renderWorkshopEditor();
+    });
+    container.append(button);
+  }
+}
 function renderWorkshopEditor() {
   $('ws-title-input').value = wsDraft.title;
   $('ws-description-input').value = wsDraft.description;
   $('ws-object-count').textContent = `${wsDraft.objects.length} / ${MAX_LEVEL_OBJECTS} объектов`;
   for (const button of document.querySelectorAll('[data-ws-tool]'))
     button.classList.toggle('active', button.dataset.wsTool === wsTool);
-  for (const button of document.querySelectorAll('[data-ws-type]'))
-    button.classList.toggle('active', button.dataset.wsType === wsType);
+  renderPaletteOptions();
   renderSelectedObject();
-  drawEditorCanvas($('ws-editor-canvas'), wsDraft, wsSelectedId, wsTool, wsArt);
+  drawEditorCanvas($('ws-editor-canvas'), wsDraft, wsSelectedId, wsTool, wsArt, wsCamera);
 }
 function notice(text, duration = 4400) {
   $('toast').textContent = text;
@@ -156,7 +199,8 @@ function renderSelectedObject() {
   const panel = $('ws-properties');
   panel.classList.toggle('hidden', !object);
   if (!object) return;
-  $('ws-selected-label').textContent = `${TYPE_LABELS[object.type]} · ID ${object.id}`;
+  const triggerLabel = object.type === 'trigger' ? ` · ${TRIGGER_LABELS[object.trigger?.kind || 'move']}` : '';
+  $('ws-selected-label').textContent = `${TYPE_LABELS[object.type]}${triggerLabel} · ID ${object.id}`;
   $('ws-object-x').value = Number(object.x.toFixed(2));
   $('ws-object-y').value = Number(object.y.toFixed(2));
   $('ws-object-number').value = object.number || 0;
@@ -164,19 +208,24 @@ function renderSelectedObject() {
   const triggerFields = $('ws-trigger-fields');
   triggerFields.classList.toggle('hidden', object.type !== 'trigger');
   if (object.type === 'trigger') {
-    renderTriggerTargets(object);
-    $('ws-trigger-event').value = object.trigger.event;
-    $('ws-trigger-action').value = object.trigger.action;
-    $('ws-trigger-value').value = object.trigger.value;
+    const forever = object.trigger?.kind === 'forever';
+    $('ws-trigger-event-field').classList.toggle('hidden', forever);
+    $('ws-trigger-target-fields').classList.toggle('hidden', forever);
+    $('ws-trigger-forever-note').classList.toggle('hidden', !forever);
+    if (!forever) {
+      $('ws-trigger-event').value = object.trigger.event;
+      renderTriggerTargets(object);
+      $('ws-trigger-value').value = object.trigger.value;
+    }
   }
 }
 function wsRedrawEditor() {
   renderSelectedObject();
-  drawEditorCanvas($('ws-editor-canvas'), wsDraft, wsSelectedId, wsTool, wsArt);
+  drawEditorCanvas($('ws-editor-canvas'), wsDraft, wsSelectedId, wsTool, wsArt, wsCamera);
   $('ws-object-count').textContent = `${wsDraft.objects.length} / ${MAX_LEVEL_OBJECTS} объектов`;
 }
 function setWorkshopTool(tool) {
-  if (!['build', 'select', 'delete'].includes(tool)) return;
+  if (!['build', 'select', 'delete', 'pan'].includes(tool)) return;
   wsTool = tool;
   for (const button of document.querySelectorAll('[data-ws-tool]'))
     button.classList.toggle('active', button.dataset.wsTool === tool);
@@ -184,17 +233,27 @@ function setWorkshopTool(tool) {
 }
 function wsPoint(event) {
   const rect = $('ws-editor-canvas').getBoundingClientRect();
-  return {x: (event.clientX - rect.left) * LEVEL_WIDTH / rect.width,
-    y: (event.clientY - rect.top) * LEVEL_HEIGHT / rect.height};
+  return {x: wsCamera.x + (event.clientX - rect.left) * LEVEL_WIDTH / rect.width,
+    y: wsCamera.y + (event.clientY - rect.top) * LEVEL_HEIGHT / rect.height};
 }
 function wsPointerDown(event) {
   if (screen !== 'workshop' || wsPage !== 'editor') return;
   event.preventDefault();
+  const canvas = $('ws-editor-canvas');
+  if (wsTool === 'pan') {
+    wsPanDrag = {pointerId: event.pointerId, startX: event.clientX, startY: event.clientY,
+      x: wsCamera.x, y: wsCamera.y};
+    canvas.setPointerCapture?.(event.pointerId);
+    return;
+  }
   const point = wsPoint(event);
   const object = findObjectAt(wsDraft, point.x, point.y);
   showWorkshopMessage('');
   if (wsTool === 'build') {
-    const placed = addObject(wsDraft, wsType, Math.floor(point.x), Math.floor(point.y));
+    if (!wsPaletteSelected) {
+      showWorkshopMessage('Сначала выбери объект в выбранной категории.');return;
+    }
+    const placed = addObject(wsDraft, wsType, Math.floor(point.x), Math.floor(point.y), wsTriggerKind);
     if (!placed) {
       showWorkshopMessage('Достигнут лимит 120 объектов. Удали лишние объекты перед добавлением новых.');return;
     }
@@ -211,23 +270,33 @@ function wsPointerDown(event) {
   if (object) {
     wsDrag = {pointerId: event.pointerId, id: object.id, startX: event.clientX,
       startY: event.clientY, x: object.x, y: object.y, moved: false};
-    $('ws-editor-canvas').setPointerCapture?.(event.pointerId);
+    canvas.setPointerCapture?.(event.pointerId);
   }
   wsRedrawEditor();
 }
 function wsPointerMove(event) {
+  const rect = $('ws-editor-canvas').getBoundingClientRect();
+  if (wsPanDrag && event.pointerId === wsPanDrag.pointerId) {
+    const dx = (event.clientX - wsPanDrag.startX) * LEVEL_WIDTH / rect.width;
+    const dy = (event.clientY - wsPanDrag.startY) * LEVEL_HEIGHT / rect.height;
+    wsCamera.x = Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT - LEVEL_WIDTH, wsPanDrag.x - dx));
+    wsCamera.y = Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT - LEVEL_HEIGHT, wsPanDrag.y - dy));
+    wsRedrawEditor();return;
+  }
   if (!wsDrag || event.pointerId !== wsDrag.pointerId) return;
   const object = wsObject(wsDrag.id);
   if (!object) return;
-  const rect = $('ws-editor-canvas').getBoundingClientRect();
   const dx = (event.clientX - wsDrag.startX) * LEVEL_WIDTH / rect.width;
   const dy = (event.clientY - wsDrag.startY) * LEVEL_HEIGHT / rect.height;
   if (Math.abs(dx) + Math.abs(dy) > .025) wsDrag.moved = true;
-  object.x = Math.max(0, Math.min(LEVEL_WIDTH - object.w, wsDrag.x + dx));
-  object.y = Math.max(0, Math.min(LEVEL_HEIGHT - object.h, wsDrag.y + dy));
+  object.x = Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT - object.w, wsDrag.x + dx));
+  object.y = Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT - object.h, wsDrag.y + dy));
   wsRedrawEditor();
 }
 function wsPointerUp(event) {
+  if (wsPanDrag && (!event || event.pointerId === wsPanDrag.pointerId)) {
+    wsPanDrag = null;return;
+  }
   if (!wsDrag || (event && event.pointerId !== wsDrag.pointerId)) return;
   const moved = wsDrag.moved;wsDrag = null;
   if (moved) {saveWorkshopDraft();wsRedrawEditor();}
@@ -238,7 +307,8 @@ function updateSelectedProperty(property, value) {
   if (property === 'x' || property === 'y') {
     const n = Number(value);
     if (!Number.isFinite(n)) return;
-    object[property] = Math.max(0, Math.min((property === 'x' ? LEVEL_WIDTH : LEVEL_HEIGHT) - object[property === 'x' ? 'w' : 'h'], n));
+    object[property] = Math.max(-WORLD_LIMIT,
+      Math.min(WORLD_LIMIT - object[property === 'x' ? 'w' : 'h'], n));
   } else if (property === 'number') {
     const n = Math.trunc(Number(value));if (!Number.isFinite(n)) return;
     object.number = Math.max(0, Math.min(9999, n));
@@ -258,6 +328,7 @@ function updateSelectedTrigger(property, value) {
 function beginNewDraft() {
   if (!confirm('Создать новый уровень вместо текущего черновика? Опубликованные уровни не затрагиваются.')) return;
   wsDraft = newDraft();wsSelectedId = 0;wsTool = 'build';wsType = 'block';
+  wsTriggerKind = 'move';wsPaletteSelected = true;wsCamera = {x: 0, y: 0};
   saveWorkshopDraft('Создан новый черновик.');setWorkshopPage('editor');
 }
 function setCatalogMessage(message = '') {
@@ -674,9 +745,10 @@ $('ws-description-input').addEventListener('input', event => {
 for (const button of document.querySelectorAll('[data-ws-tool]'))
   button.addEventListener('click', () => setWorkshopTool(button.dataset.wsTool));
 for (const button of document.querySelectorAll('[data-ws-type]')) button.addEventListener('click', () => {
-  wsType = button.dataset.wsType;setWorkshopTool('build');
-  for (const other of document.querySelectorAll('[data-ws-type]'))
-    other.classList.toggle('active', other === button);
+  wsType = button.dataset.wsType;
+  if (wsType === 'trigger') wsTriggerKind = 'move';
+  wsPaletteSelected = false;wsTool = 'build';
+  renderWorkshopEditor();
 });
 $('ws-editor-canvas').addEventListener('pointerdown', wsPointerDown);
 $('ws-editor-canvas').addEventListener('pointermove', wsPointerMove);
@@ -693,7 +765,6 @@ $('ws-object-y').addEventListener('change', e => updateSelectedProperty('y', e.t
 $('ws-object-number').addEventListener('change', e => updateSelectedProperty('number', e.target.value));
 $('ws-object-color').addEventListener('input', e => updateSelectedProperty('color', e.target.value));
 $('ws-trigger-event').addEventListener('change', e => updateSelectedTrigger('event', e.target.value));
-$('ws-trigger-action').addEventListener('change', e => updateSelectedTrigger('action', e.target.value));
 $('ws-trigger-target').addEventListener('change', e => updateSelectedTrigger('targetId', e.target.value));
 $('ws-trigger-value').addEventListener('change', e => updateSelectedTrigger('value', e.target.value));
 $('ws-control-select').addEventListener('change', e => applyWorkshopControl(e.target.value));

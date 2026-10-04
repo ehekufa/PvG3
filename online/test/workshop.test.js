@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {LEVEL_TYPES, MAX_LEVEL_OBJECTS, newDraft, addObject, validateDraft,
+import {LEVEL_TYPES, TRIGGER_KINDS, WORLD_LIMIT, MAX_LEVEL_OBJECTS,
+        newDraft, addObject, validateDraft,
         publishedRecord, isPublishedRecord, draftFromPublished, resolveControlMode,
         createTouchButtonState, createPreviewState, stepPreview,
         drawEditorCanvas, drawPreviewCanvas} from '../workshop.js';
@@ -34,12 +35,26 @@ test('validation rejects missing required objects, out-of-bounds geometry and ma
   const level = newDraft();
   const noGoal = structuredClone(level);noGoal.objects = noGoal.objects.filter(o => o.type !== 'goal');
   assert.match(validateDraft(noGoal).message, /игрок и финиш/);
-  const outside = structuredClone(level);outside.objects[0].x = 16;
+  const outside = structuredClone(level);outside.objects[0].x = WORLD_LIMIT;
   assert.equal(validateDraft(outside).ok, false);
   const trigger = addObject(level, 'trigger', 5, 6);
   trigger.trigger.action = 'launch-website';
   assert.match(validateDraft(level).message, /триггер/);
   assert.equal(addObject({...level, objects:Array.from({length:MAX_LEVEL_OBJECTS},(_,i)=>({...level.objects[0],id:i+10}))}, 'coin', 1, 1), null);
+});
+
+test('world placement is scrollable across large positive and negative coordinates', () => {
+  const level = newDraft();
+  const west = addObject(level, 'block', -WORLD_LIMIT, 24);
+  const east = addObject(level, 'block', WORLD_LIMIT, -WORLD_LIMIT);
+  assert.equal(west.x, -WORLD_LIMIT);
+  assert.equal(east.x, WORLD_LIMIT - east.w);
+  assert.equal(east.y, -WORLD_LIMIT);
+  assert.equal(validateDraft(level).ok, true);
+  for (const kind of TRIGGER_KINDS)
+    assert.equal(addObject(level, 'trigger', kind === 'rotate' ? 8 : 7, 5, kind).trigger.kind, kind);
+  assert.deepEqual(TRIGGER_KINDS, ['move', 'rotate', 'forever']);
+  assert.equal(validateDraft(level).ok, true);
 });
 
 test('published records round-trip through the browser/native wire schema', () => {
@@ -81,6 +96,27 @@ test('workshop editor and preview use the supplied level artwork and tile wide p
   assert(preview.images.some(call => call.image.type === 'player'));
   assert(preview.images.some(call => call.image.type === 'goal'));
   assert.equal(preview.images.filter(call => call.image.type === 'ground').length, 16);
+});
+
+test('rotation variants rotate objects and forever invokes the first trigger at a safe cadence', () => {
+  const level = newDraft();
+  const target = addObject(level, 'block', 6, 6);
+  const first = addObject(level, 'trigger', 10, 7, 'move');
+  first.trigger = {kind: 'move', event: 'manual', action: 'move',
+    targetId: target.id, value: 1, color: '#ffc54e'};
+  const rotating = addObject(level, 'trigger', 1, 7, 'rotate');
+  rotating.trigger = {kind: 'rotate', event: 'manual', action: 'move',
+    targetId: target.id, value: 90, color: '#ffc54e'};
+  const forever = addObject(level, 'trigger', 12, 0, 'forever');
+  forever.trigger = {kind: 'forever', event: 'touch', action: 'move',
+    targetId: target.id, value: 0, color: '#ffc54e'};
+  assert.equal(validateDraft(level).ok, true);
+  const state = createPreviewState(level);
+  stepPreview(state, {trigger: true}, 1 / 60);
+  assert.equal(state.objects.find(object => object.id === target.id).angle, 90);
+  const before = state.objects.find(object => object.id === target.id).x;
+  for (let i = 0; i < 12; i++) stepPreview(state, {}, .05);
+  assert.equal(state.objects.find(object => object.id === target.id).x, before + 1);
 });
 
 test('multitouch keeps forward/back pointers independent for movement plus jump', () => {

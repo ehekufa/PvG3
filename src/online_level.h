@@ -12,13 +12,16 @@
 #define ON_LEVEL_OBJECT_NAME_SIZE 145 /* 48 UTF-16 code units, worst-case UTF-8 */
 #define ON_LEVEL_LIST_CAP 24
 #define ON_LEVEL_OBJECT_CAP 120
+#define ON_LEVEL_WORLD_LIMIT 100000
 
 enum {
     ON_LEVEL_BLOCK, ON_LEVEL_GROUND, ON_LEVEL_HAZARD, ON_LEVEL_COIN,
     ON_LEVEL_ENEMY, ON_LEVEL_PLAYER, ON_LEVEL_GOAL, ON_LEVEL_TRIGGER
 };
 enum { ON_TRIGGER_TOUCH, ON_TRIGGER_COIN, ON_TRIGGER_MANUAL };
-enum { ON_TRIGGER_TOGGLE, ON_TRIGGER_MOVE, ON_TRIGGER_RECOLOR, ON_TRIGGER_NUMBER };
+enum { ON_TRIGGER_TOGGLE, ON_TRIGGER_MOVE, ON_TRIGGER_RECOLOR,
+       ON_TRIGGER_NUMBER, ON_TRIGGER_ROTATE };
+enum { ON_TRIGGER_KIND_MOVE, ON_TRIGGER_KIND_ROTATE, ON_TRIGGER_KIND_FOREVER };
 
 typedef struct {
     char id[ON_LEVEL_ID_SIZE];
@@ -32,7 +35,7 @@ typedef struct {
     float x, y, w, h, angle;
     uint32_t color;
     int number, visible;
-    int trigger_event, trigger_action, target_id;
+    int trigger_kind, trigger_event, trigger_action, target_id;
     float trigger_value;
     uint32_t trigger_color;
 } OnLevelObject;

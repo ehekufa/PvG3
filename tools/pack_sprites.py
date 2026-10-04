@@ -34,6 +34,8 @@ IMAGES = [
     ("LEVEL_BLOCK", "assets/art/Блок.png"),
     ("LEVEL_PLATFORM", "assets/art/Платформа.png"),
     ("LEVEL_TRIGGER", "assets/art/Триггер-движения.png"),
+    ("LEVEL_TRIGGER_ROTATE", "assets/art/Триггер-вращения.png"),
+    ("LEVEL_TRIGGER_FOREVER", "assets/art/Триггер-вечно.png"),
     ("LEVEL_FLAG", "assets/art/Флажок - финиш.png"),
     ("LEVEL_SPIKE", "assets/art/Шип.png"),
 ]
