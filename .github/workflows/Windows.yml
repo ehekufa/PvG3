@@ -14,7 +14,7 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install MinGW-w64 toolchain
         uses: msys2/setup-msys2@v2
@@ -70,7 +70,7 @@ jobs:
           objdump -f build/windows/PvG3.exe | grep 'pei-x86-64'
 
       - name: Upload Windows EXE
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: PvG3-Windows-x64
           path: build/windows/PvG3.exe
