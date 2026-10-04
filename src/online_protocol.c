@@ -354,7 +354,7 @@ static int parse_level_object(const JD *d, int node, OnLevelObject *out) {
         item.w <= 0 || item.h <= 0 ||
         item.x + item.w > ON_LEVEL_WORLD_LIMIT ||
         item.y + item.h > ON_LEVEL_WORLD_LIMIT ||
-        item.w > 16 || item.h > 10 || item.angle < 0 || item.angle >= 360) return 0;
+        item.w > 64 || item.h > 40 || item.angle < 0 || item.angle >= 360) return 0;
     item.type = type;
     int name = field(d, node, "name");
     if (!text_string(d, name, item.name, sizeof item.name)) return 0;
@@ -896,7 +896,7 @@ static int published_level_valid(const OnPublishedLevel *level) {
             o->x < -ON_LEVEL_WORLD_LIMIT || o->y < -ON_LEVEL_WORLD_LIMIT ||
             o->w <= 0 || o->h <= 0 ||
             o->x + o->w > ON_LEVEL_WORLD_LIMIT ||
-            o->y + o->h > ON_LEVEL_WORLD_LIMIT || o->w > 16 || o->h > 10 ||
+            o->y + o->h > ON_LEVEL_WORLD_LIMIT || o->w > 64 || o->h > 40 ||
             o->angle < 0 || o->angle >= 360 || o->color > 0xffffffu ||
             o->number < 0 || o->number > 9999 || (o->visible != 0 && o->visible != 1)) return 0;
         for (int j = 0; j < i; ++j)

@@ -162,6 +162,11 @@ static void published_level_writer(void) {
            decoded.objects[5].trigger_has_group);
     assert(on_protocol_level_summary_json(&level, index, sizeof index, 1234));
     assert(strstr(index, "\"updatedAt\":1234") && strstr(index, "23817"));
+    OnPublishedLevel scaled = level;
+    scaled.objects[0].y = 0;scaled.objects[0].w = 64;scaled.objects[0].h = 40;
+    assert(on_protocol_published_level_json(&scaled, body, sizeof body));
+    assert(on_protocol_published_level(body, "23817", &decoded));
+    assert(decoded.objects[0].w == 64 && decoded.objects[0].h == 40);
     level.objects[2].id = level.objects[1].id;
     assert(!on_protocol_published_level_json(&level, body, sizeof body));
     level.objects[2].id = 3;

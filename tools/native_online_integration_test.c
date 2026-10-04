@@ -423,6 +423,8 @@ static int run_lvgl_test(void) {
     ui_tap(638, 242); /* set the level title with the native virtual keyboard */
     ui_snapshot("workshop_keyboard_open");
     ui_tap(392, 620);ui_tap(392, 620); /* toggle case in both directions */
+    ui_tap(268, 620);ui_snapshot("workshop_keyboard_special");
+    ui_tap(167, 392); /* return to letters with the custom ASCII label */
     ui_tap(640, 505);ui_tap(538, 275);ui_tap(336, 505);ui_tap(640, 505);
     ui_tap(1132, 620); /* keyboard OK */
     ui_tap(638, 395); /* set the level description */
@@ -433,10 +435,68 @@ static int run_lvgl_test(void) {
     ui_tap(964, 600);assert(game_phase() == GAME_WORKSHOP_EDIT);
     ui_snapshot("workshop_editor");
     ui_tap(191, 205);ui_snapshot("workshop_block_added");
+
+    /* Multi-select, move as a group, copy/paste, and delete the temporary
+     * copies without disturbing the earlier block used by trigger tests. */
+    ui_tap(80, 596);ui_tap(275, 247);ui_tap(317, 247);
+    ui_tap(929, 209); /* single-select mode */
+    ui_tap(275, 247); /* first temporary block */
+    ui_tap(1044, 209); /* multi-select mode */
+    ui_tap(317, 247); /* add the adjacent block to the selection */
+    ui_snapshot("workshop_multi_selected");
+#ifdef PVG3_LVGL_TEST
+    OnPublishedLevel editor_probe;
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.object_count == 6 &&
+           editor_probe.objects[4].x == 5 && editor_probe.objects[5].x == 6);
+#endif
+    ui_tap(214, 688); /* move both objects right by one world cell */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.object_count == 6 &&
+           editor_probe.objects[4].x == 6 && editor_probe.objects[5].x == 7);
+#endif
+    ui_tap(808, 690); /* copy selection */
+    ui_tap(932, 690); /* paste offset copies */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.object_count == 8 &&
+           editor_probe.objects[6].x == 7 && editor_probe.objects[6].y == 3 &&
+           editor_probe.objects[7].x == 8 && editor_probe.objects[7].y == 3 &&
+           editor_probe.objects[6].number == editor_probe.objects[4].number);
+#endif
+    ui_tap(1056, 690); /* delete only the pasted selection */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.object_count == 6);
+#endif
+    ui_tap(319, 247);ui_tap(361, 247); /* reselect the original pair */
+    ui_tap(1056, 690); /* remove the temporary pair */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.object_count == 4);
+#endif
+
+    ui_tap(929, 209); /* return to single-select mode */
+    ui_tap(191, 205); /* select the retained block */
+    ui_tap(1180, 690); /* independent size/rotation dialog */
+    ui_snapshot("workshop_transform_dialog");
+    ui_tap(809, 187); /* width +0.1 */
+    ui_tap(809, 375); /* direct rotation +15 degrees, no trigger */
+    ui_tap(640, 610); /* save direct transform */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.object_count == 4 &&
+           editor_probe.objects[3].w > 1.09f && editor_probe.objects[3].w < 1.11f &&
+           editor_probe.objects[3].angle == 15.0f);
+#endif
+    ui_snapshot("workshop_direct_transform");
+
     ui_tap(674, 596); /* trigger category; movement is the default */
     ui_tap(294, 247); /* place a movement trigger */
     ui_tap(835, 361); /* configure X and Y separately */
     ui_tap(640, 343); /* X: replace 1 with 9999 */
+    ui_snapshot("workshop_numeric_keyboard");
     ui_tap(975, 505);ui_tap(640, 505);ui_tap(640, 505);
     ui_tap(640, 505);ui_tap(640, 505);ui_tap(975, 390);
     ui_tap(640, 440); /* Y: replace 0 with -9999 */
@@ -490,7 +550,9 @@ static int run_lvgl_test(void) {
            strstr(uploaded_level_body, "\"groupId\":24") &&
            strstr(uploaded_level_body, "\"action\":\"unactivate\"") &&
            strstr(uploaded_level_body, "\"kind\":\"forever\"") &&
-           strstr(uploaded_level_body, "\"x\":10.0000"));
+           strstr(uploaded_level_body, "\"x\":10.0000") &&
+           strstr(uploaded_level_body, "\"w\":1.1000") &&
+           strstr(uploaded_level_body, "\"angle\":15.000"));
     ui_snapshot("workshop_published");
     ui_tap(1158, 50);assert(game_phase() == GAME_CUSTOM_PLAY);
     ui_snapshot("workshop_preview");

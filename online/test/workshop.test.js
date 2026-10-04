@@ -1,20 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {LEVEL_TYPES, TRIGGER_KINDS, WORLD_LIMIT, MAX_LEVEL_OBJECTS,
-        newDraft, addObject, validateDraft,
+        MAX_OBJECT_WIDTH, MAX_OBJECT_HEIGHT, newDraft, addObject, findObjectAt,
+        moveObjects, resizeObjects, rotateObjects, copyObjects, pasteObjects, validateDraft,
         publishedRecord, isPublishedRecord, draftFromPublished, resolveControlMode,
         createTouchButtonState, createPreviewState, stepPreview,
         drawEditorCanvas, drawPreviewCanvas} from '../workshop.js';
 
 function recordingCanvas() {
   const images = [];
+  const outlines = [];
   const context = {
     clearRect() {}, fillRect() {}, beginPath() {}, moveTo() {}, lineTo() {},
     closePath() {}, fill() {}, stroke() {}, arc() {}, ellipse() {},
-    strokeRect() {}, fillText() {},
+    save() {}, restore() {}, translate() {}, rotate() {},
+    strokeRect(...bounds) {outlines.push(bounds);}, fillText() {},
     drawImage(image, ...bounds) {images.push({image, bounds});},
   };
-  return {canvas: {width: 1280, height: 720, getContext: () => context}, images};
+  return {canvas: {width: 1280, height: 720, getContext: () => context}, images, outlines};
 }
 
 test('new drafts are valid and object placement keeps player and finish unique', () => {
@@ -206,6 +209,69 @@ test('multitouch keeps forward/back pointers independent for movement plus jump'
   controls.clear();
   assert.equal(controls.axis, 0);
   assert.equal(controls.press(1, 'invalid'), false);
+});
+
+
+test('multi-object transforms clamp geometry, preserve independent angles and hit rotated bounds', () => {
+  const level = newDraft();
+  const first = addObject(level, 'block', 4, 3);
+  const second = addObject(level, 'coin', WORLD_LIMIT - 1, WORLD_LIMIT - 1);
+  first.angle = 350;second.angle = 10;
+  assert.equal(moveObjects(level, new Set([first.id, second.id]), 2, -1), 2);
+  assert.deepEqual([first.x, first.y], [6, 2]);
+  assert.deepEqual([second.x, second.y], [WORLD_LIMIT - second.w, WORLD_LIMIT - 1 - 1]);
+  assert.equal(resizeObjects(level, [first.id, second.id], 'width', .25), 2);
+  assert.equal(first.w, 1.25);assert.equal(second.w, .8);
+  assert.equal(resizeObjects(level, [first.id], 'height', -100), 1);
+  assert.equal(first.h, .1);
+  assert.equal(resizeObjects(level, [first.id], 'width', 100), 1);
+  assert.equal(first.w, MAX_OBJECT_WIDTH);
+  assert.equal(resizeObjects(level, [first.id], 'height', 100), 1);
+  assert.equal(first.h, MAX_OBJECT_HEIGHT);
+  assert.equal(rotateObjects(level, [first.id, second.id], 20), 2);
+  assert.equal(first.angle, 10);assert.equal(second.angle, 30);
+  assert.equal(findObjectAt(level, first.x + first.w / 2, first.y + first.h / 2)?.id, first.id);
+  assert.equal(validateDraft(level).ok, true);
+});
+
+test('copy and paste duplicate a selection independently, preserve group data, and skip singleton objects', () => {
+  const level = newDraft();
+  const block = addObject(level, 'block', 5, 4);
+  const trigger = addObject(level, 'trigger', 7, 4, 'rotate');
+  block.number = 42;
+  trigger.trigger.groupId = 42;
+  trigger.angle = 37.5;
+  const clipboard = copyObjects(level, [block.id, trigger.id, 1, 2]);
+  assert.equal(clipboard.length, 2);
+  assert.deepEqual(clipboard.map(object => object.type), ['block', 'trigger']);
+  const pasted = pasteObjects(level, clipboard);
+  assert.equal(pasted.length, 2);
+  assert.deepEqual(pasted.map(object => [object.x, object.y]), [[6, 5], [8, 5]]);
+  assert.notEqual(pasted[0].id, block.id);
+  assert.equal(pasted[0].number, 42);
+  assert.equal(pasted[1].trigger.groupId, 42);
+  assert.equal(pasted[1].angle, 37.5);
+  pasted[0].x = 200;
+  assert.equal(block.x, 5);
+  assert.equal(validateDraft(level).ok, true);
+
+  const full = {...level, objects: Array.from({length:MAX_LEVEL_OBJECTS - 1}, (_, i) =>
+    ({...level.objects[0], id: i + 1000}))};
+  assert.deepEqual(pasteObjects(full, clipboard), []);
+  assert.equal(full.objects.length, MAX_LEVEL_OBJECTS - 1);
+});
+
+test('editor outlines every item in a multi-selection and rotation persists in the wire record', () => {
+  const level = newDraft();
+  const a = addObject(level, 'block', 4, 4);
+  const b = addObject(level, 'hazard', 6, 4);
+  a.angle = 22.5;b.angle = 90;
+  const canvas = recordingCanvas();
+  drawEditorCanvas(canvas.canvas, level, new Set([a.id, b.id]), 'select');
+  assert.equal(canvas.outlines.length, 2);
+  const roundTrip = draftFromPublished(publishedRecord('998', level));
+  assert.equal(roundTrip.objects.find(object => object.id === a.id).angle, 22.5);
+  assert.equal(roundTrip.objects.find(object => object.id === b.id).angle, 90);
 });
 
 test('preview physics lands, jumps, collects coins, activates triggers and reaches the goal', () => {

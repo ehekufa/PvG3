@@ -14,8 +14,8 @@
       <div class="brand"><span class="brand-mark"><img src="../assets/art/khlebushek.png" alt="Хлебушек"></span>
         <span><strong>PvG3</strong><small>онлайн-арена Кирилла</small></span></div>
       <div class="top-actions"><span class="connection" id="connection"><span class="dot"></span>Подключение…</span>
-        <button class="small-button" id="music" type="button" aria-label="Включить музыку">♫ Музыка</button>
-        <button class="small-button" id="book" type="button">📖 Книга</button></div>
+        <button class="small-button music-button" id="music" type="button" aria-label="Включить музыку">Музыка</button>
+        <button class="small-button" id="book" type="button"><span class="icon-book" aria-hidden="true"></span>Книга</button></div>
     </header>
 
     <main>
@@ -28,31 +28,31 @@
         </div>
         <div class="columns">
           <section class="panel create-panel" aria-labelledby="create-title">
-            <div class="panel-title"><span class="round-icon">＋</span><div><span class="overline">ПРИГЛАСИ ДРУГА</span><h2 id="create-title">Новая комната</h2></div></div>
+            <div class="panel-title"><span class="round-icon round-icon-plus" aria-hidden="true"></span><div><span class="overline">ПРИГЛАСИ ДРУГА</span><h2 id="create-title">Новая комната</h2></div></div>
             <p class="muted">Хозяин комнаты запускает бой на своём устройстве. Второй игрок увидит его поле и сможет отправлять команды.</p>
             <div class="map-picker" role="group" aria-label="Выбор карты"><button type="button" class="map-card active" data-map="1"><img src="../assets/art/lawn-map.png" alt="Газон"><span>Газон</span></button>
               <button type="button" class="map-card" data-map="5"><img src="../assets/art/water-map.png" alt="Водная карта"><span>Вода + кувшинки</span></button></div>
-            <button class="primary-button" id="create" type="button"><span class="plus">＋</span> Создать комнату</button>
+            <button class="primary-button" id="create" type="button"><span class="plus icon-plus" aria-hidden="true"></span> Создать комнату</button>
           </section>
           <section class="panel list-panel" aria-labelledby="list-title">
-            <div class="panel-title"><span class="round-icon outline">▦</span><div><span class="overline">ВЫБЕРИ КОМНАТУ</span><h2 id="list-title">Свободные комнаты</h2></div>
-              <button class="refresh" id="refresh" type="button" title="Обновить список">↻</button></div>
+            <div class="panel-title"><span class="round-icon outline round-icon-grid" aria-hidden="true"></span><div><span class="overline">ВЫБЕРИ КОМНАТУ</span><h2 id="list-title">Свободные комнаты</h2></div>
+              <button class="refresh" id="refresh" type="button" title="Обновить список" aria-label="Обновить список"><span class="refresh-icon" aria-hidden="true"></span></button></div>
             <div class="room-list" id="room-list"><p class="muted">Ищем открытые комнаты…</p></div>
             <p class="hint">Друг может поделиться ссылкой с кодом комнаты. Закрытые и занятые комнаты в список не попадают.</p>
           </section>
         </div>
         <section class="workshop-banner" aria-label="Мастерская платформера">
-          <div class="workshop-banner-icon" aria-hidden="true">▱</div>
+          <div class="workshop-banner-icon" aria-hidden="true"></div>
           <div><span class="overline">СОЗДАЙ СВОЮ ИГРУ</span><h2>Мастерская платформера</h2>
             <p>Собери уровень из блоков, монет и препятствий, проверь его и опубликуй в каталоге «Уровни игроков».</p></div>
-          <button class="primary-button" id="open-workshop" type="button">Открыть мастерскую →</button>
+          <button class="primary-button" id="open-workshop" type="button">Открыть мастерскую</button>
         </section>
         <div class="footer-note">Без входа и чата · Только комнаты и игровые ходы · Кампания в APK остаётся отдельно</div>
       </section>
 
       <section class="screen hidden" id="workshop-screen" aria-labelledby="workshop-title">
         <div class="workshop-heading">
-          <button class="back-link" id="workshop-online-back" type="button">← В онлайн</button>
+          <button class="back-link" id="workshop-online-back" type="button">Назад · В онлайн</button>
           <div><span class="eyebrow">ПЛАТФОРМЕННЫЙ РЕДАКТОР</span>
             <h1 id="workshop-title">Мастерская</h1>
             <p class="muted">Создавай, испытывай и публикуй собственные уровни. Черновик сохраняется на этом устройстве.</p></div>
@@ -65,14 +65,14 @@
               <p id="ws-draft-summary" class="muted">Бесконечная карта · окно просмотра 16 × 10 · игрок и финиш уже на месте.</p>
               <div class="ws-card-actions">
                 <button class="primary-button" id="ws-continue" type="button">Продолжить редактор</button>
-                <button class="small-button" id="ws-new-draft" type="button">＋ Новый уровень</button>
+                <button class="small-button" id="ws-new-draft" type="button"><span class="plus icon-plus" aria-hidden="true"></span>Новый уровень</button>
               </div>
               <small id="ws-draft-status" class="ws-status" aria-live="polite"></small>
             </article>
             <article class="ws-home-card ws-catalog-card">
               <span class="overline">ИГРАЙ И ПУБЛИКУЙ</span><h2>Уровни игроков</h2>
               <p class="muted">Открой каталог опубликованных уровней и испытай их в браузере. Новая публикация появится и в C/native-клиенте.</p>
-              <button class="primary-button" id="ws-open-catalog" type="button">Открыть каталог →</button>
+              <button class="primary-button" id="ws-open-catalog" type="button">Открыть каталог</button>
             </article>
           </div>
           <p class="ws-safety-note">Публикация общедоступна и не требует аккаунта. Firebase может отклонить запись, если правила базы не разрешают публикацию.</p>
@@ -80,9 +80,9 @@
 
         <section class="ws-page hidden" id="ws-editor-page" aria-label="Редактор уровня">
           <div class="ws-page-toolbar">
-            <button class="small-button" id="ws-editor-back" type="button">← Мастерская</button>
+            <button class="small-button" id="ws-editor-back" type="button">Назад · Мастерская</button>
             <div class="ws-main-actions">
-              <button class="small-button" id="ws-preview" type="button">▶ Проверить</button>
+              <button class="small-button" id="ws-preview" type="button"><span class="icon-play" aria-hidden="true"></span>Проверить</button>
               <button class="primary-button" id="ws-publish" type="button">Опубликовать</button>
             </div>
           </div>
@@ -94,12 +94,31 @@
             <div class="ws-board-column">
               <div class="ws-board-heading"><strong>Сцена · окно карты 16 × 10</strong><span id="ws-object-count">0 / 120 объектов</span></div>
               <div class="canvas-wrap ws-canvas-wrap"><canvas id="ws-editor-canvas" width="1280" height="720" aria-label="Окно бесконечной прокручиваемой карты платформера"></canvas></div>
-              <p class="hint">Сначала выбери категорию и объект. Перетаскивай объект в режиме «Выбрать», панорамируй карту режимом «Карта».</p>
+              <p class="hint">Перетаскивай выбранное в режиме «Выбрать». Для группы включи «Мульти» или используй Shift + нажатие. Стрелки двигают выделение.</p>
               <p class="ws-error hidden" id="ws-editor-message" role="status" aria-live="polite"></p>
             </div>
             <aside class="ws-tools" aria-label="Инструменты редактора">
               <div class="ws-tool-group"><span class="overline">РЕЖИМ</span>
-                <div class="ws-mode-buttons"><button type="button" data-ws-tool="build" class="active">Строить</button><button type="button" data-ws-tool="select">Выбрать</button><button type="button" data-ws-tool="delete">Удалить</button><button type="button" data-ws-tool="pan">Карта</button></div></div>
+                <div class="ws-mode-buttons"><button type="button" data-ws-tool="build" class="active">Строить</button><button type="button" data-ws-tool="select">Выбрать</button><button type="button" data-ws-tool="multi">Мульти</button><button type="button" data-ws-tool="delete">Удалить</button><button type="button" data-ws-tool="pan">Карта</button></div></div>
+              <div class="ws-tool-group ws-transform-tools">
+                <span class="overline">ВЫДЕЛЕНИЕ И ПРЕОБРАЗОВАНИЕ</span>
+                <strong id="ws-selection-count" aria-live="polite">0 выбрано</strong>
+                <div class="ws-transform-actions"><button id="ws-copy-selected" type="button" disabled>Копировать</button><button id="ws-paste-selected" type="button" disabled>Вставить</button></div>
+                <div class="ws-transform-move">
+                  <label>Шаг перемещения<input id="ws-move-step" type="number" min="0.1" max="100" step="0.1" value="1"></label>
+                  <div class="ws-nudge-grid" role="group" aria-label="Переместить выбранные объекты">
+                    <span></span><button type="button" data-ws-nudge="up" aria-label="Вверх"><span class="ws-editor-arrow arrow-up" aria-hidden="true"></span></button><span></span>
+                    <button type="button" data-ws-nudge="left" aria-label="Влево"><span class="ws-editor-arrow arrow-left" aria-hidden="true"></span></button><span class="ws-nudge-center" aria-hidden="true"></span><button type="button" data-ws-nudge="right" aria-label="Вправо"><span class="ws-editor-arrow arrow-right" aria-hidden="true"></span></button>
+                    <span></span><button type="button" data-ws-nudge="down" aria-label="Вниз"><span class="ws-editor-arrow arrow-down" aria-hidden="true"></span></button><span></span>
+                  </div>
+                </div>
+                <label>Шаг размера<input id="ws-scale-step" type="number" min="0.1" max="16" step="0.1" value="0.1"></label>
+                <div class="ws-scale-grid" role="group" aria-label="Изменить ширину и высоту выбранных объектов">
+                  <button type="button" data-ws-scale="width:-1">W -</button><button type="button" data-ws-scale="width:1">W +</button><button type="button" data-ws-scale="height:-1">H -</button><button type="button" data-ws-scale="height:1">H +</button>
+                </div>
+                <label>Шаг поворота<input id="ws-rotate-step" type="number" min="0.1" max="359.9" step="0.1" value="15"></label>
+                <div class="ws-rotate-actions"><button type="button" data-ws-rotate="-1">Повернуть -</button><button type="button" data-ws-rotate="1">Повернуть +</button></div>
+              </div>
               <div class="ws-tool-group"><span class="overline">КАТЕГОРИИ ОБЪЕКТОВ</span>
                 <div id="ws-palette" class="ws-palette ws-category-list">
                   <button type="button" data-ws-type="block"><img src="../assets/art/Блок.png" alt=""><span>Блок</span></button>
@@ -114,10 +133,12 @@
                 <div id="ws-palette-items" class="ws-palette-items" aria-live="polite"></div>
               </div>
               <div class="ws-tool-group ws-properties hidden" id="ws-properties">
-                <span class="overline">ВЫБРАННЫЙ ОБЪЕКТ</span><strong id="ws-selected-label"></strong>
-                <div class="ws-number-fields"><label>X<input id="ws-object-x" type="number" min="-100000" max="100000" step="0.1"></label><label>Y<input id="ws-object-y" type="number" min="-100000" max="100000" step="0.1"></label><label>Число<input id="ws-object-number" type="number" min="0" max="9999" step="1"></label></div>
-                <label class="ws-color-field">Цвет<input id="ws-object-color" type="color" value="#55c8ea"></label>
-                <div id="ws-trigger-fields" class="hidden">
+                <span class="overline">ВЫБРАННОЕ</span><strong id="ws-selected-label"></strong>
+                <div id="ws-single-properties">
+                  <div class="ws-number-fields"><label>X<input id="ws-object-x" type="number" min="-100000" max="100000" step="0.1"></label><label>Y<input id="ws-object-y" type="number" min="-100000" max="100000" step="0.1"></label><label>Число<input id="ws-object-number" type="number" min="0" max="9999" step="1"></label></div>
+                  <div class="ws-number-fields"><label>Ширина<input id="ws-object-width" type="number" min="0.1" max="64" step="0.1"></label><label>Высота<input id="ws-object-height" type="number" min="0.1" max="40" step="0.1"></label><label>Поворот<input id="ws-object-angle" type="number" min="0" max="359.9" step="0.1"></label></div>
+                  <label class="ws-color-field">Цвет<input id="ws-object-color" type="color" value="#55c8ea"></label>
+                  <div id="ws-trigger-fields" class="hidden">
                   <label id="ws-trigger-event-field">Событие<select id="ws-trigger-event"><option value="touch">Касание</option><option value="coin">Подбор монеты</option><option value="manual">Кнопка действия</option></select></label>
                   <div id="ws-trigger-motion-fields">
                     <label>Целевая группа<input id="ws-trigger-group" type="number" min="0" max="9999" step="1"></label>
@@ -135,8 +156,9 @@
                     <label>Действие<select id="ws-trigger-action"><option value="activate">Активировать</option><option value="unactivate">Деактивировать</option></select></label>
                     <p class="muted">Состояние группы остаётся таким, пока другой триггер его не изменит.</p>
                   </div>
+                  </div>
                 </div>
-                <button class="small-button ws-delete-selected" id="ws-delete-selected" type="button">Удалить объект</button>
+                <button class="small-button ws-delete-selected" id="ws-delete-selected" type="button">Удалить выбранное</button>
               </div>
               <p class="ws-status" id="ws-autosave-status" aria-live="polite">Черновик сохраняется автоматически.</p>
             </aside>
@@ -144,9 +166,9 @@
         </section>
 
         <section class="ws-page hidden" id="ws-preview-page" aria-label="Предпросмотр уровня">
-          <div class="ws-page-toolbar"><button class="small-button" id="ws-preview-back" type="button">← В редактор</button>
+          <div class="ws-page-toolbar"><button class="small-button" id="ws-preview-back" type="button">Назад · В редактор</button>
             <div class="ws-preview-heading"><span class="overline">ПРЕДПРОСМОТР</span><h2 id="ws-preview-title">Уровень</h2></div>
-            <button class="small-button" id="ws-preview-reset" type="button">↻ С начала</button></div>
+            <button class="small-button" id="ws-preview-reset" type="button"><span class="refresh-icon" aria-hidden="true"></span>С начала</button></div>
           <div class="canvas-wrap ws-canvas-wrap"><canvas id="ws-preview-canvas" width="1280" height="720" aria-label="Предпросмотр платформерного уровня"></canvas></div>
           <div class="ws-control-panel">
             <label class="ws-control-select">Управление
@@ -164,8 +186,8 @@
         </section>
 
         <section class="ws-page hidden" id="ws-catalog-page" aria-label="Каталог уровней игроков">
-          <div class="ws-page-toolbar"><button class="small-button" id="ws-catalog-back" type="button">← Мастерская</button>
-            <h2>Уровни игроков</h2><button class="small-button" id="ws-catalog-refresh" type="button">↻ Обновить</button></div>
+          <div class="ws-page-toolbar"><button class="small-button" id="ws-catalog-back" type="button">Назад · Мастерская</button>
+            <h2>Уровни игроков</h2><button class="small-button" id="ws-catalog-refresh" type="button"><span class="refresh-icon" aria-hidden="true"></span>Обновить</button></div>
           <p class="muted">Уровни доступны на вебе, Android и Windows. Выбери уровень, чтобы сыграть в браузере.</p>
           <div id="ws-catalog-list" class="ws-catalog-list"><p class="muted">Загружаем каталог…</p></div>
           <p id="ws-catalog-message" class="ws-error hidden" role="status" aria-live="polite"></p>
@@ -173,9 +195,9 @@
       </section>
 
       <section class="screen hidden" id="lobby-screen" aria-labelledby="lobby-title">
-        <button type="button" class="back-link" id="leave-lobby">← Выйти из комнаты</button>
+        <button type="button" class="back-link" id="leave-lobby">Выйти из комнаты</button>
         <div class="lobby-top"><div><span class="eyebrow">ВЫ В КОМНАТЕ</span><h1 id="lobby-title">Выбери сторону</h1><p class="muted" id="lobby-subtitle">Ждём соперника…</p></div>
-          <div class="code-panel"><span class="overline">КОД КОМНАТЫ</span><strong id="room-code">------</strong><button type="button" id="share">Скопировать ссылку ↗</button></div></div>
+          <div class="code-panel"><span class="overline">КОД КОМНАТЫ</span><strong id="room-code">------</strong><button type="button" id="share">Скопировать ссылку</button></div></div>
         <div class="sides"><button type="button" class="side-card plant-side" data-side="plants"><div class="side-art"><img src="../assets/art/peashooter.png" alt="Горохострел"><img src="../assets/art/coin-sunflower.png" alt="Подсолнух"></div><span class="overline">ЗАЩИТА</span><h2>Растения</h2><p>Сажай растения Кирилла, подбирай монеты и не дай уткам пройти к дому.</p><b id="plants-taken">Свободно</b></button>
           <button type="button" class="side-card duck-side" data-side="zombies"><div class="side-art"><img src="../assets/art/zombie-duck.png" alt="Утка-зомби"><img src="../assets/art/duck-cone.png" alt="Утка с конусом"><img src="../assets/art/duck-bucket.png" alt="Утка с ведром"></div><span class="overline">НАСТУПЛЕНИЕ</span><h2>Зомби-утки</h2><p>Покупай уток, выбирай ряд и прорвись через растения. Конус и ведро дают больше здоровья.</p><b id="zombies-taken">Свободно</b></button></div>
         <div class="lobby-bottom" id="lobby-status">Оба игрока выбирают разные стороны. Бой начнётся автоматически.</div>

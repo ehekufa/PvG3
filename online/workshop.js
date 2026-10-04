@@ -8,6 +8,9 @@ export const WORLD_LIMIT = 100_000;
 export const TILE_W = 80;
 export const TILE_H = 72;
 export const MAX_LEVEL_OBJECTS = 120;
+export const MIN_OBJECT_SIZE = .1;
+export const MAX_OBJECT_WIDTH = LEVEL_WIDTH * 4;
+export const MAX_OBJECT_HEIGHT = LEVEL_HEIGHT * 4;
 export const TRIGGER_KINDS = Object.freeze(['move', 'rotate', 'forever']);
 export const TRIGGER_LABELS = Object.freeze({
   move: 'Движение', rotate: 'Разворот', forever: 'Вечно',
@@ -100,11 +103,79 @@ export function addObject(level, type, x, y, triggerKind = 'move') {
 
 export function findObjectAt(level, x, y) {
   return level.objects
-    .filter(o => o.visible !== false && x >= o.x && y >= o.y &&
-      x < o.x + o.w && y < o.y + o.h)
+    .filter(o => {
+      if (o.visible === false) return false;
+      const angle = (o.angle || 0) * Math.PI / 180;
+      const dx = x - (o.x + o.w / 2), dy = y - (o.y + o.h / 2);
+      const localX = Math.cos(angle) * dx + Math.sin(angle) * dy;
+      const localY = -Math.sin(angle) * dx + Math.cos(angle) * dy;
+      return Math.abs(localX) <= o.w / 2 && Math.abs(localY) <= o.h / 2;
+    })
     .sort((a, b) => (b.layer || 0) - (a.layer || 0) ||
                     (b.zOrder || 0) - (a.zOrder || 0))
     .at(0) || null;
+}
+
+function selectedObjects(level, ids) {
+  const wanted = new Set(ids || []);
+  return level?.objects?.filter(object => wanted.has(object.id)) || [];
+}
+
+export function moveObjects(level, ids, dx, dy) {
+  if (!finite(dx) || !finite(dy)) return 0;
+  const objects = selectedObjects(level, ids);
+  for (const object of objects) {
+    object.x = worldClamp(object.x + dx, object.w);
+    object.y = worldClamp(object.y + dy, object.h);
+  }
+  return objects.length;
+}
+
+export function resizeObjects(level, ids, axis, amount) {
+  if (!finite(amount) || !['width', 'height'].includes(axis)) return 0;
+  const objects = selectedObjects(level, ids);
+  for (const object of objects) {
+    const property = axis === 'width' ? 'w' : 'h';
+    const maximum = axis === 'width' ? MAX_OBJECT_WIDTH : MAX_OBJECT_HEIGHT;
+    object[property] = clamp(object[property] + amount, MIN_OBJECT_SIZE, maximum);
+    const position = axis === 'width' ? 'x' : 'y';
+    object[position] = worldClamp(object[position], object[property]);
+  }
+  return objects.length;
+}
+
+export function rotateObjects(level, ids, degrees) {
+  if (!finite(degrees)) return 0;
+  const objects = selectedObjects(level, ids);
+  for (const object of objects)
+    object.angle = ((Number(object.angle) + degrees) % 360 + 360) % 360;
+  return objects.length;
+}
+
+export function copyObjects(level, ids) {
+  return selectedObjects(level, ids)
+    .filter(object => object.type !== 'player' && object.type !== 'goal')
+    .map(copy);
+}
+
+export function pasteObjects(level, clipboard, dx = 1, dy = 1) {
+  if (!Array.isArray(clipboard) || !clipboard.length ||
+      !finite(dx) || !finite(dy) || !level?.objects ||
+      level.objects.length + clipboard.length > MAX_LEVEL_OBJECTS) return [];
+  const used = new Set(level.objects.map(object => object.id));
+  const copies = [];
+  let nextId = Math.max(0, ...used) + 1;
+  for (const source of clipboard) {
+    while (used.has(nextId) && nextId <= 1_000_000) nextId++;
+    if (nextId > 1_000_000) return [];
+    const object = copy(source);
+    object.id = nextId;used.add(nextId++);
+    object.x = worldClamp(object.x + dx, object.w);
+    object.y = worldClamp(object.y + dy, object.h);
+    copies.push(object);
+  }
+  level.objects.push(...copies);
+  return copies;
 }
 
 export function validateDraft(level) {
@@ -131,7 +202,7 @@ export function validateDraft(level) {
         object.w <= 0 || object.h <= 0 ||
         object.x + object.w > WORLD_LIMIT ||
         object.y + object.h > WORLD_LIMIT ||
-        object.w > LEVEL_WIDTH || object.h > LEVEL_HEIGHT ||
+        object.w > MAX_OBJECT_WIDTH || object.h > MAX_OBJECT_HEIGHT ||
         object.angle < 0 || object.angle >= 360 || !rgb(object.color) ||
         !Number.isInteger(object.number) || object.number < 0 || object.number > 9999 ||
         typeof object.visible !== 'boolean')
@@ -487,6 +558,8 @@ export function drawEditorCanvas(canvas, level, selectedId = 0, tool = 'build', 
   }
   const drawObjects = [...level.objects].sort((a, b) => (a.layer || 0) - (b.layer || 0) ||
       (a.zOrder || 0) - (b.zOrder || 0));
+  const selected = selectedId instanceof Set ? selectedId :
+    new Set(Array.isArray(selectedId) ? selectedId : selectedId ? [selectedId] : []);
   for (const o of drawObjects) {
     if (o.visible === false) continue;
     const x = (o.x - cameraX) * TILE_W + 3, y = (o.y - cameraY) * TILE_H + 3;
@@ -509,7 +582,12 @@ export function drawEditorCanvas(canvas, level, selectedId = 0, tool = 'build', 
         ctx.fillRect(x + w * .58, y + h * .25, w * .18, h * .12);
       }
     }
-    if (o.id === selectedId) {ctx.strokeStyle = '#27d2d6';ctx.lineWidth = 4;ctx.strokeRect(x - 1, y - 1, w + 2, h + 2);}
+    if (selected.has(o.id)) {
+      const angle = ((o.angle || 0) % 360) * Math.PI / 180;
+      ctx.save();ctx.translate(x + w / 2, y + h / 2);ctx.rotate(angle);
+      ctx.strokeStyle = '#27d2d6';ctx.lineWidth = 4;
+      ctx.strokeRect(-w / 2 - 1, -h / 2 - 1, w + 2, h + 2);ctx.restore();
+    }
     ctx.fillStyle = '#10131d';ctx.font = '14px PTSans, sans-serif';ctx.fillText(String(o.number || ''), x + 4, y + 17);
   }
   ctx.fillStyle = 'rgba(0,0,0,.55)';ctx.fillRect(8, 8, 400, 30);
@@ -573,7 +651,7 @@ export function drawPreviewCanvas(canvas, state, control = 'keyboard', art = {})
   }
   ctx.fillStyle = '#14283c';ctx.fillRect(0, 0, canvas.width, 64);
   ctx.fillStyle = '#fff';ctx.font = '22px PTSans, sans-serif';
-  ctx.fillText(`Монеты: ${state.coins} · ${control === 'keyboard' ? 'A/D или ←/→, пробел' : 'экранные кнопки'}`, 24, 41);
+  ctx.fillText(`Монеты: ${state.coins} · ${control === 'keyboard' ? 'A/D, пробел' : 'экранные кнопки'}`, 24, 41);
   if (state.won) {
     ctx.fillStyle = 'rgba(0,0,0,.62)';ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = '#fff';ctx.font = 'bold 48px PTSans, sans-serif';ctx.textAlign = 'center';
