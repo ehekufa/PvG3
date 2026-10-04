@@ -23,8 +23,27 @@ static struct {
     int64_t host_ping, guest_ping;
     char state[ON_STATE_JSON_CAP], command[256];
 } db;
+static char uploaded_level_id[ON_LEVEL_ID_SIZE];
+static char uploaded_level_body[ON_STATE_JSON_CAP];
+static char uploaded_index_body[1024];
 static const char *FAKE_GUEST = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 static const char *FAKE_HOST = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+static const char *TEST_LEVEL_INDEX =
+    "{\"104\":{\"id\":\"104\",\"title\":\"Невероятное приключение через тайный мост к финишу\","
+    "\"description\":\"Найди скрытый мост и монеты, затем доберись до финиша по платформам.\",\"updatedAt\":1}}";
+static const char *TEST_LEVEL =
+    "{\"format\":\"PVG3-PUBLISHED-LEVEL\",\"version\":1,\"id\":\"104\","
+    "\"title\":\"Невероятное приключение через тайный мост к финишу\","
+    "\"description\":\"Найди скрытый мост и монеты, затем доберись до финиша по платформам.\","
+    "\"project\":{\"format\":\"PVG3-MAKER\","
+    "\"version\":1,\"title\":\"Невероятное приключение через тайный мост к финишу\",\"description\":\"Найди скрытый мост и монеты, затем доберись до финиша по платформам.\",\"levelId\":\"104\","
+    "\"templateId\":\"classic\",\"width\":16,\"height\":10,\"objects\":["
+    "{\"id\":1,\"type\":\"ground\",\"name\":\"Ground\",\"x\":0,\"y\":9,"
+    "\"w\":16,\"h\":1,\"angle\":0,\"color\":\"#64844c\",\"number\":0,\"visible\":true},"
+    "{\"id\":2,\"type\":\"player\",\"name\":\"Start\",\"x\":1,\"y\":8.12,"
+    "\"w\":0.65,\"h\":0.85,\"angle\":0,\"color\":\"#7db9dd\",\"number\":0,\"visible\":true},"
+    "{\"id\":3,\"type\":\"goal\",\"name\":\"Goal\",\"x\":14.7,\"y\":7.8,"
+    "\"w\":0.8,\"h\":1.2,\"angle\":0,\"color\":\"#e8cf77\",\"number\":0,\"visible\":true}]},\"updatedAt\":1}";
 
 static int64_t epoch_ms(void) {
     struct timespec ts;clock_gettime(CLOCK_REALTIME, &ts);
@@ -65,8 +84,65 @@ static int answer(char *response, size_t cap, const char *text, int status) {
     memcpy(response, text, length + 1);
     return status;
 }
+static int level_child_id(const char *path, const char *root,
+                          char id[ON_LEVEL_ID_SIZE]) {
+    char prefix[32];snprintf(prefix, sizeof prefix, "%s/", root);
+    size_t n = strlen(prefix), length = strlen(path);
+    if (strncmp(path, prefix, n) || length <= n + 5 ||
+        strcmp(path + length - 5, ".json")) return 0;
+    size_t id_length = length - n - 5;
+    if (!id_length || id_length >= ON_LEVEL_ID_SIZE) return 0;
+    memcpy(id, path + n, id_length);id[id_length] = 0;
+    return on_protocol_valid_level_id(id);
+}
 int on_http_request(const char *path, const char *method, const char *body,
                     const char *if_match, char *response, size_t cap) {
+    if (!strcmp(path, "levels-index.json") && !strcmp(method, "GET")) {
+        if (!uploaded_index_body[0]) return answer(response, cap, TEST_LEVEL_INDEX, 200);
+        char combined[4096];size_t n = strlen(TEST_LEVEL_INDEX);
+        int used = snprintf(combined, sizeof combined, "%.*s,\"%s\":%s}",
+                            (int)n - 1, TEST_LEVEL_INDEX, uploaded_level_id,
+                            uploaded_index_body);
+        if (used < 0 || (size_t)used >= sizeof combined) return -2;
+        return answer(response, cap, combined, 200);
+    }
+    char level_id[ON_LEVEL_ID_SIZE];
+    if (level_child_id(path, "levels", level_id)) {
+        if (!strcmp(method, "GET")) {
+            if (!strcmp(level_id, "104")) return answer(response, cap, TEST_LEVEL, 200);
+            if (uploaded_level_body[0] && !strcmp(level_id, uploaded_level_id))
+                return answer(response, cap, uploaded_level_body, 200);
+            return answer(response, cap, "null", 200);
+        }
+        if (!strcmp(method, "PUT")) {
+            if (if_match && !strcmp(if_match, "null_etag") &&
+                (!strcmp(level_id, "104") || !strcmp(level_id, uploaded_level_id)))
+                return answer(response, cap, "null", 412);
+            OnPublishedLevel level;
+            if (!body || !on_protocol_published_level(body, level_id, &level))
+                return answer(response, cap, "null", 400);
+            if (strlen(body) >= sizeof uploaded_level_body) return -2;
+            strcpy(uploaded_level_id, level_id);strcpy(uploaded_level_body, body);
+            return answer(response, cap, body, 200);
+        }
+    }
+    if (level_child_id(path, "levels-index", level_id)) {
+        if (!strcmp(method, "PUT")) {
+            if (if_match && !strcmp(if_match, "null_etag") &&
+                uploaded_index_body[0] && !strcmp(level_id, uploaded_level_id))
+                return answer(response, cap, "null", 412);
+            if (!uploaded_level_body[0] || strcmp(level_id, uploaded_level_id) || !body)
+                return answer(response, cap, "null", 400);
+            char wrapper[1300];
+            int n = snprintf(wrapper, sizeof wrapper, "{\"%s\":%s}", level_id, body);
+            OnPublishedLevelSummary summary[1];
+            if (n < 0 || (size_t)n >= sizeof wrapper ||
+                on_protocol_level_index(wrapper, summary, 1) != 1)
+                return answer(response, cap, "null", 400);
+            snprintf(uploaded_index_body, sizeof uploaded_index_body, "%s", body);
+            return answer(response, cap, body, 200);
+        }
+    }
     if (!strcmp(path, "rooms.json") && !strcmp(method, "GET")) {
         if (!db.present) return answer(response, cap, "null", 200);
         char all[ON_STATE_JSON_CAP + 1050];
@@ -158,6 +234,23 @@ static void expect_state(OnMatch *out) {
     assert(db.state[0]);
     assert(on_protocol_match(db.state, out));
 }
+static OnPublishedLevel sample_level(void) {
+    OnPublishedLevel level = {0};
+    snprintf(level.id, sizeof level.id, "%s", "1");
+    snprintf(level.title, sizeof level.title, "%s", "Нативная публикация");
+    snprintf(level.description, sizeof level.description, "%s", "Проверка каталога.");
+    level.width = 16;level.height = 10;level.object_count = 3;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+        .x=0,.y=8,.w=16,.h=2,.color=0x65a845u,.visible=1};
+    snprintf(level.objects[0].name, sizeof level.objects[0].name, "%s", "Платформа");
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
+        .x=1,.y=7,.w=.65f,.h=.85f,.color=0x5ab7e8u,.visible=1};
+    snprintf(level.objects[1].name, sizeof level.objects[1].name, "%s", "Игрок");
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.color=0x69d16cu,.visible=1};
+    snprintf(level.objects[2].name, sizeof level.objects[2].name, "%s", "Финиш");
+    return level;
+}
 static void isolate_saves(uint8_t *before, uint8_t *after, size_t size) {
     assert(game_save_export(after, size) && !memcmp(before, after, size));
 }
@@ -180,6 +273,21 @@ static void screenshot(const char *name) {
 /* Exercises actual LVGL pointer events and the existing in-memory Firebase.
  * Also writes screenshots if PVG3_LVGL_SHOTS=1; never touches the live DB. */
 static uint32_t ui_pixels[GAME_W * GAME_H];
+static void assert_platformer_art(void) {
+    const int ids[] = {PV_ART_LEVEL_BLOCK, PV_ART_LEVEL_PLATFORM,
+                       PV_ART_LEVEL_TRIGGER, PV_ART_LEVEL_TRIGGER_ROTATE,
+                       PV_ART_LEVEL_TRIGGER_FOREVER, PV_ART_LEVEL_FLAG,
+                       PV_ART_LEVEL_SPIKE};
+    const int widths[] = {100, 100, 100, 100, 100, 50, 100};
+    const int heights[] = {100, 50, 100, 100, 100, 100, 100};
+    for (size_t i = 0; i < sizeof ids / sizeof ids[0]; ++i) {
+        int width = 0, height = 0, visible = 0;
+        const uint32_t *pixels = game_art_rgba(ids[i], &width, &height);
+        assert(pixels && width == widths[i] && height == heights[i]);
+        for (int p = 0; p < width * height; ++p) visible |= pixels[p] >> 24;
+        assert(visible);
+    }
+}
 static void ui_snapshot(const char *name) {
     game_tick(0, lvgl_ui_fullscreen(game_phase()) ? NULL : ui_pixels);
     lvgl_ui_frame(.050f, ui_pixels);
@@ -195,8 +303,12 @@ static void ui_snapshot(const char *name) {
     assert(!fclose(f));
 }
 static void ui_tap(int x, int y) {
-    assert(lvgl_ui_pointer(x, y, 1));ui_snapshot("tap_down");
-    assert(lvgl_ui_pointer(x, y, 0));ui_snapshot("tap_up");
+    int down = lvgl_ui_pointer(x, y, 1);
+    if (!down) fprintf(stderr, "LVGL tap DOWN missed at %d,%d in phase %d\n", x, y, game_phase());
+    assert(down);ui_snapshot("tap_down");
+    int up = lvgl_ui_pointer(x, y, 0);
+    if (!up) fprintf(stderr, "LVGL tap UP missed at %d,%d in phase %d\n", x, y, game_phase());
+    assert(up);ui_snapshot("tap_up");
 }
 static void ui_quick_tap(int x, int y) {
     /* Android may deliver DOWN+UP before one render frame; never miss a tap. */
@@ -218,14 +330,283 @@ static void ui_drag(int x0, int y0, int x1, int y1,
     assert(lvgl_ui_move(x1, y1));ui_snapshot(hover_shot);
     assert(lvgl_ui_pointer(x1, y1, 0));ui_snapshot("drag_drop");
 }
+static void native_trigger_runtime_regression(void) {
+    OnPublishedLevel level = {0};
+    snprintf(level.id, sizeof level.id, "%s", "1");
+    snprintf(level.title, sizeof level.title, "%s", "Trigger runtime test");
+    level.width = 16;level.height = 10;level.object_count = 8;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+        .x=0,.y=8,.w=16,.h=2,.visible=1,.number=3};
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
+        .x=1,.y=7,.w=.65f,.h=.85f,.visible=1,.number=1};
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_BLOCK,
+        .x=6,.y=6,.w=1,.h=1,.visible=1,.number=42};
+    level.objects[4] = (OnLevelObject){.id=5,.type=ON_LEVEL_BLOCK,
+        .x=8,.y=6,.w=1,.h=1,.visible=1,.number=42};
+    for (int i = 5; i < 8; ++i) {
+        level.objects[i] = (OnLevelObject){.id=i + 1,.type=ON_LEVEL_TRIGGER,
+            .x=1,.y=7,.w=1,.h=1,.visible=1,
+            .trigger_event=ON_TRIGGER_MANUAL,.target_id=0,
+            .trigger_group_id=42,.trigger_has_group=1};
+    }
+    level.objects[5].trigger_kind = ON_TRIGGER_KIND_MOVE;
+    level.objects[5].trigger_action = ON_TRIGGER_MOVE;
+    level.objects[5].trigger_value = 12;
+    level.objects[5].trigger_value_y = -7;
+    level.objects[6].trigger_kind = ON_TRIGGER_KIND_ROTATE;
+    level.objects[6].trigger_action = ON_TRIGGER_ROTATE;
+    level.objects[6].trigger_duration = 1;
+    level.objects[6].trigger_has_duration = 1;
+    level.objects[7].trigger_kind = ON_TRIGGER_KIND_FOREVER;
+    level.objects[7].trigger_action = ON_TRIGGER_UNACTIVATE;
+
+    game_workshop_open();game_workshop_open_details();game_workshop_open_editor();
+    assert(game_workshop_preview(&level));
+    game_custom_control(0, 0, 1);game_tick(.05f, NULL);game_custom_control(0, 0, 0);
+    OnLevelObject first, second;
+    assert(game_debug_custom_object(4, &first) && game_debug_custom_object(5, &second));
+    assert(first.x == 18 && first.y == -1 && first.angle > 17.9f &&
+           first.angle < 18.1f && !first.visible);
+    assert(second.x == 20 && second.y == -1 && second.angle > 17.9f &&
+           second.angle < 18.1f && !second.visible);
+    game_tick(.05f, NULL);
+    assert(game_debug_custom_object(4, &first) && !first.visible &&
+           first.angle > 35.9f && first.angle < 36.1f);
+    for (int i = 0; i < 18; ++i) game_tick(.05f, NULL);
+    assert(game_debug_custom_object(4, &first) && !first.visible &&
+           (first.angle < .01f || first.angle > 359.99f));
+    game_tick(.10f, NULL);
+    assert(game_debug_custom_object(4, &first) &&
+           (first.angle < .01f || first.angle > 359.99f));
+
+    game_custom_level_exit();
+    level.objects[7].trigger_action = ON_TRIGGER_ACTIVATE;
+    assert(game_workshop_preview(&level));
+    game_custom_control(0, 0, 1);game_tick(.05f, NULL);game_custom_control(0, 0, 0);
+    assert(game_debug_custom_object(4, &first) && first.visible &&
+           first.x == 18 && first.y == -1 && first.angle > 17.9f &&
+           first.angle < 18.1f);
+    game_tick(.05f, NULL);
+    assert(game_debug_custom_object(4, &first) && first.visible &&
+           first.angle > 35.9f && first.angle < 36.1f);
+    game_custom_level_exit();
+}
+
 static int run_lvgl_test(void) {
     static uint8_t before[20000], after[20000];
     size_t bytes = game_save_size();assert(bytes < sizeof before);
     game_init();assert(game_save_export(before, bytes));
+    native_trigger_runtime_regression();
+    game_init();assert(game_save_export(after, bytes) && !memcmp(before, after, bytes));
+    assert_platformer_art();
     assert(lvgl_ui_init());
+    assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER));
+    assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_ROTATE));
+    assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_FOREVER));
     game_set_lvgl_ui(1);
     ui_snapshot("menu");
-    ui_tap(1090, 79);assert(game_phase() == GAME_GARDEN);
+    assert(ui_pixels[60 * GAME_W + 545] == 0xFFFFFFFFu); /* campaign */
+    assert(ui_pixels[60 * GAME_W + 848] == 0xFFFFFFFFu); /* garden */
+    assert(ui_pixels[70 * GAME_W + 970] == 0xFFFFFFFFu); /* player levels */
+    assert(ui_pixels[580 * GAME_W + 100] == 0xFFFFFFFFu); /* book */
+    assert(ui_pixels[560 * GAME_W + 420] == 0xFFFFFFFFu); /* start */
+    assert(ui_pixels[580 * GAME_W + 905] == 0xFFFFFFFFu); /* online */
+
+    ui_tap(1080, 80);assert(game_phase() == GAME_CUSTOM_LEVELS);tick_pump(2);
+    ui_snapshot("menu_player_catalog");
+    ui_tap(912, 210);assert(game_phase() == GAME_WORKSHOP);
+    ui_snapshot("workshop_home");
+    ui_tap(310, 599);assert(game_phase() == GAME_WORKSHOP_DETAILS);
+    ui_snapshot("workshop_details");
+    ui_tap(638, 242); /* set the level title with the native virtual keyboard */
+    ui_snapshot("workshop_keyboard_open");
+    ui_tap(392, 620);ui_tap(392, 620); /* toggle case in both directions */
+    ui_tap(268, 620);ui_snapshot("workshop_keyboard_special");
+    ui_tap(167, 392); /* return to letters with the custom ASCII label */
+    ui_tap(640, 505);ui_tap(538, 275);ui_tap(336, 505);ui_tap(640, 505);
+    ui_tap(1132, 620); /* keyboard OK */
+    ui_tap(638, 395); /* set the level description */
+    ui_tap(437, 505);ui_tap(437, 390);ui_tap(639, 390);ui_tap(843, 275);
+    ui_tap(639, 390);ui_tap(336, 275);ui_tap(640, 505);
+    ui_tap(1132, 620); /* keyboard OK */
+    ui_snapshot("workshop_details_named");
+    ui_tap(964, 600);assert(game_phase() == GAME_WORKSHOP_EDIT);
+    ui_snapshot("workshop_editor");
+    ui_tap(191, 205);ui_snapshot("workshop_block_added");
+
+    /* Multi-select, move as a group, copy/paste, and delete the temporary
+     * copies without disturbing the earlier block used by trigger tests. */
+    ui_tap(80, 596);ui_tap(275, 247);ui_tap(317, 247);
+    ui_tap(929, 209); /* single-select mode */
+    ui_tap(275, 247); /* first temporary block */
+    ui_tap(1044, 209); /* multi-select mode */
+    ui_tap(317, 247); /* add the adjacent block to the selection */
+    ui_snapshot("workshop_multi_selected");
+#ifdef PVG3_LVGL_TEST
+    OnPublishedLevel editor_probe;
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.object_count == 6 &&
+           editor_probe.objects[4].x == 5 && editor_probe.objects[5].x == 6);
+#endif
+    ui_tap(214, 688); /* move both objects right by one world cell */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.object_count == 6 &&
+           editor_probe.objects[4].x == 6 && editor_probe.objects[5].x == 7);
+#endif
+    ui_tap(808, 690); /* copy selection */
+    ui_tap(932, 690); /* paste offset copies */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.object_count == 8 &&
+           editor_probe.objects[6].x == 7 && editor_probe.objects[6].y == 3 &&
+           editor_probe.objects[7].x == 8 && editor_probe.objects[7].y == 3 &&
+           editor_probe.objects[6].number == editor_probe.objects[4].number);
+#endif
+    ui_tap(1056, 690); /* delete only the pasted selection */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.object_count == 6);
+#endif
+    ui_tap(319, 247);ui_tap(361, 247); /* reselect the original pair */
+    ui_tap(1056, 690); /* remove the temporary pair */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.object_count == 4);
+#endif
+
+    ui_tap(929, 209); /* return to single-select mode */
+    ui_tap(191, 205); /* select the retained block */
+    ui_tap(1180, 690); /* independent size/rotation dialog */
+    ui_snapshot("workshop_transform_dialog");
+    ui_tap(809, 187); /* width +0.1 */
+    ui_tap(722, 375); /* counterclockwise 45-degree rotation */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[3].angle == 315.0f);
+#endif
+    ui_tap(809, 375); /* clockwise 45-degree rotation, independent of triggers */
+    ui_tap(809, 375); /* return from 0 to 45 degrees */
+    ui_tap(640, 610); /* save direct transform */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.object_count == 4 &&
+           editor_probe.objects[3].w > 1.09f && editor_probe.objects[3].w < 1.11f &&
+           editor_probe.objects[3].angle == 45.0f);
+#endif
+    ui_snapshot("workshop_direct_transform");
+
+    ui_tap(674, 596); /* trigger category; movement is the default */
+    ui_tap(294, 247); /* place a movement trigger */
+    ui_tap(835, 361); /* configure X and Y separately */
+    ui_tap(640, 343); /* X: replace 1 with 9999 */
+    ui_snapshot("workshop_numeric_keyboard");
+    ui_tap(975, 505);ui_tap(640, 505);ui_tap(640, 505);
+    ui_tap(640, 505);ui_tap(640, 505);ui_tap(975, 390);
+    ui_tap(640, 440); /* Y: replace 0 with -9999 */
+    ui_tap(975, 505);ui_tap(194, 620);
+    ui_tap(640, 505);ui_tap(640, 505);ui_tap(640, 505);ui_tap(640, 505);
+    ui_tap(975, 390);ui_tap(640, 248); /* choose another target group */
+    ui_tap(975, 505);ui_tap(417, 275);ui_tap(194, 390);ui_tap(975, 390);
+    ui_tap(640, 628); /* save movement settings */
+    ui_tap(990, 443); /* rotation variant */
+    ui_tap(338, 247); /* place the rotation trigger */
+    ui_tap(835, 361);ui_tap(640, 371); /* edit rotation angle */
+    ui_tap(975, 505);ui_tap(975, 505);
+    ui_tap(194, 275);ui_tap(640, 275);ui_tap(417, 390);ui_tap(975, 390);
+    ui_tap(640, 628);
+    ui_tap(1146, 443); /* forever variant */
+    ui_tap(380, 289); /* place the persistent group action */
+    ui_tap(835, 361);ui_tap(640, 248); /* group input */
+    ui_tap(975, 505);ui_tap(417, 275);ui_tap(194, 390);ui_tap(975, 390);
+    ui_tap(720, 371); /* unactivate forever */
+    ui_tap(640, 628); /* save trigger settings */
+    ui_tap(1178, 495); /* scroll the infinite workshop map */
+    ui_tap(80, 596); /* block category */
+    ui_tap(422, 205); /* now maps to world X=10 */
+    ui_snapshot("workshop_trigger_variants_and_pan");
+    ui_tap(929, 209); /* select the earlier block for the edit dialogs */
+    ui_tap(149, 195);
+    ui_tap(836, 377);ui_snapshot("workshop_move_dialog");
+    ui_tap(537, 152);ui_tap(1100, 152);
+    ui_snapshot("workshop_move_adjusted");
+    ui_tap(171, 253);ui_tap(687, 253);ui_snapshot("workshop_move_options");
+    ui_tap(171, 253);ui_tap(687, 253);
+    ui_tap(640, 638);assert(game_phase() == GAME_WORKSHOP_EDIT);
+    ui_tap(987, 377);ui_snapshot("workshop_group_dialog");
+    ui_tap(721, 159);ui_tap(640, 650);
+    ui_tap(1145, 377);ui_snapshot("workshop_color_dialog");
+    ui_tap(535, 208);ui_tap(351, 322);
+    ui_snapshot("workshop_color_selected");
+    ui_tap(640, 598); /* close the color dialog before using the toolbar */
+    ui_tap(820, 50);tick_pump(2);
+    OnNetView published = view();
+    assert(!published.level_publish_busy && published.level_publish_id[0] &&
+           strstr(published.level_publish_notice, "ОПУБЛИКОВАН") &&
+           uploaded_level_body[0] && uploaded_index_body[0]);
+    assert(strstr(uploaded_level_body, "\"title\":\"Новый уровеньтест\"") &&
+           strstr(uploaded_level_body, "\"description\":\"маршрут\"") &&
+           strstr(uploaded_level_body, "\"kind\":\"move\"") &&
+           strstr(uploaded_level_body, "\"kind\":\"rotate\"") &&
+           strstr(uploaded_level_body, "\"duration\":135") &&
+           strstr(uploaded_level_body, "\"valueX\":9999.0000") &&
+           strstr(uploaded_level_body, "\"valueY\":-9999.0000") &&
+           strstr(uploaded_level_body, "\"groupId\":24") &&
+           strstr(uploaded_level_body, "\"action\":\"unactivate\"") &&
+           strstr(uploaded_level_body, "\"kind\":\"forever\"") &&
+           strstr(uploaded_level_body, "\"x\":10.0000") &&
+           strstr(uploaded_level_body, "\"w\":1.1000") &&
+           strstr(uploaded_level_body, "\"angle\":45.000"));
+    ui_snapshot("workshop_published");
+    ui_tap(1158, 50);assert(game_phase() == GAME_CUSTOM_PLAY);
+    ui_snapshot("workshop_preview");
+    ui_tap(1140, 55);assert(game_phase() == GAME_WORKSHOP_EDIT);
+    ui_tap(977, 50);assert(game_phase() == GAME_WORKSHOP_DETAILS);
+    ui_tap(1130, 74);assert(game_phase() == GAME_WORKSHOP);
+    ui_snapshot("workshop_saved");
+    ui_tap(984, 599);assert(game_phase() == GAME_CUSTOM_LEVELS);
+    ui_tap(1140, 55);assert(game_phase() == GAME_WORKSHOP);
+    ui_tap(1130, 74);assert(game_phase() == GAME_CUSTOM_LEVELS);
+    ui_tap(1140, 77);assert(game_phase() == GAME_MENU);
+    ui_snapshot("menu_after_workshop");
+
+    ui_tap(680, 82);assert(game_phase() == GAME_SELECT);
+    ui_tap(1040, 620);assert(game_phase() == GAME_CUSTOM_LEVELS);
+    tick_pump(2);ui_snapshot("custom_levels");
+    OnNetView catalog = view();
+    assert(catalog.level_count == 2 && !strcmp(catalog.levels[0].id, "104") &&
+           !strcmp(catalog.levels[0].title,
+                   "Невероятное приключение через тайный мост к финишу") &&
+           !strcmp(catalog.levels[0].description,
+                   "Найди скрытый мост и монеты, затем доберись до финиша по платформам."));
+    ui_tap(185, 318);tick_pump(3);
+    assert(game_phase() == GAME_CUSTOM_PLAY);
+    game_tick(.05f, NULL); /* settle on the ground before jumping */
+    float custom_x = game_debug_custom_player_x();
+    float custom_y = game_debug_custom_player_y();
+    assert(lvgl_ui_touch_pointer(17, 230, 591, 1)); /* forward */
+    assert(lvgl_ui_touch_pointer(23, 1150, 591, 1)); /* second finger: jump */
+    for (int i = 0; i < 5; ++i) game_tick(.05f, NULL);
+    assert(game_debug_custom_player_x() > custom_x + 50);
+    assert(game_debug_custom_player_y() < custom_y - 20);
+    assert(lvgl_ui_touch_pointer(23, 1150, 591, 0));
+    custom_x = game_debug_custom_player_x();
+    for (int i = 0; i < 4; ++i) game_tick(.05f, NULL);
+    assert(game_debug_custom_player_x() > custom_x + 40); /* forward remains held */
+    assert(lvgl_ui_touch_pointer(17, 230, 591, 0));
+    custom_x = game_debug_custom_player_x();
+    assert(lvgl_ui_touch_pointer(31, 110, 591, 1)); /* back */
+    for (int i = 0; i < 5; ++i) game_tick(.05f, NULL);
+    assert(lvgl_ui_touch_pointer(31, 110, 591, 0));
+    assert(game_debug_custom_player_x() < custom_x);
+    ui_tap(1140, 55);assert(game_phase() == GAME_CUSTOM_LEVELS);
+    ui_snapshot("custom_level_return");
+    ui_tap(1150, 76);assert(game_phase() == GAME_SELECT);
+    ui_tap(1150, 76);assert(game_phase() == GAME_MENU);
+    ui_snapshot("menu_after_custom");
+    ui_tap(830, 79);assert(game_phase() == GAME_GARDEN);
     ui_snapshot("garden");
     /* Unoccupied soil/wood must be pixel-for-pixel from the author's PNG,
      * not the old checkerboard, fake-green wash or a hidden wooden path. */
@@ -245,6 +626,32 @@ static int run_lvgl_test(void) {
     game_garden_export(garden);assert(garden[1] == 1);
     ui_board_tap(535, 176); /* garden drag does not leave a seed selected */
     game_garden_export(garden);assert(garden[2] == 0);
+    ui_tap(180, 57); /* switch to the goose palette */
+    GameOfflineUIState garden_state;
+    game_offline_ui_snapshot(&garden_state);
+    assert(garden_state.garden_mode == 1);
+    ui_drag(450, 55, 649, 176, "garden_goose_hover");
+    game_garden_export(garden);assert(garden[3] == 6);
+    ui_tap(180, 93); /* water map is selectable without losing placements */
+    game_offline_ui_snapshot(&garden_state);
+    assert(garden_state.garden_map == 5 && garden[3] == 6);
+    ui_snapshot("garden_water");
+    const uint32_t *garden_water = game_art_rgba(PV_ART_WATER, &w, &h);
+    assert(garden_water && w == 500 && h == 500);
+    int garden_canal_x = 980, garden_canal_y = 300;
+    int garden_src_y = h / 5 + (garden_canal_y - 232) *
+        (h * 27 / 50 - h / 5) / 224;
+    int garden_src_x = w / 2 + (garden_canal_x - 250) *
+        (w - w / 2) / (GAME_W - 250);
+    assert(ui_pixels[garden_canal_y * GAME_W + garden_canal_x] ==
+           garden_water[garden_src_y * w + garden_src_x]);
+    ui_tap(60, 57); /* return to plants while keeping the water map */
+    ui_drag(840, 55, 535, 288, "garden_water_lily");
+    game_garden_export(garden);
+    assert(garden[11] == 5 && game_debug_garden_plant_type(1, 2) == 4);
+    ui_tap(60, 93); /* return to the lawn without losing either placement */
+    game_offline_ui_snapshot(&garden_state);
+    assert(garden_state.garden_mode == 0 && garden_state.garden_map == 1);
     ui_tap(989, 44);assert(game_phase() == GAME_BOOK);
     ui_snapshot("book_plants");
     ui_tap(430, 220);ui_snapshot("book_enemies");
@@ -252,14 +659,14 @@ static int run_lvgl_test(void) {
     GameOfflineUIState offline;
     game_offline_ui_snapshot(&offline);
     assert(offline.book_enemy_tab == 1 && offline.book_selection == 2);
-    ui_snapshot("book_helmet");
+    ui_snapshot("book_bucket");
     ui_tap(225, 525);ui_snapshot("book_robot");
     ui_tap(1150, 76);assert(game_phase() == GAME_GARDEN);
     ui_tap(1150, 44);assert(game_phase() == GAME_MENU);
-    assert(lvgl_ui_pointer(829, 78, 1));
+    assert(lvgl_ui_pointer(680, 78, 1));
     assert(lvgl_ui_cancel());ui_snapshot("cancel_menu_button");
     assert(game_phase() == GAME_MENU);
-    ui_quick_tap(829, 78);assert(game_phase() == GAME_SELECT);
+    ui_quick_tap(680, 78);assert(game_phase() == GAME_SELECT);
     ui_snapshot("levels");
     ui_tap(640, 620);assert(game_phase() == GAME_INTRO);
     ui_snapshot("intro_bread");
@@ -306,7 +713,8 @@ static int run_lvgl_test(void) {
     assert(game_save_export(before, bytes));
     ui_tap(1030, 611);assert(game_phase() == GAME_ONLINE_ROOMS);
     tick_pump(1);ui_snapshot("rooms_empty");
-    ui_tap(817, 209);ui_snapshot("search");
+    /* Catalog browsing and custom levels remain separate from online rooms. */
+    ui_tap(727, 210);ui_snapshot("search");
     ui_tap(307, 313);ui_snapshot("search_typed");
     ui_tap(948, 234);ui_tap(948, 137);
     ui_tap(384, 219);ui_tap(1060, 207);
@@ -319,6 +727,7 @@ static int run_lvgl_test(void) {
     ui_tap(352, 438);tick_pump(3);
     assert(game_phase() == GAME_ONLINE_MATCH && db.host_role == ON_ROLE_PLANTS);
     ui_snapshot("match_plants");
+    assert(ui_pixels[50 * GAME_W + 935] == 0xFFFFFFFFu); /* online book */
     ui_tap(120, 580);ui_board_tap(535, 288);
     OnMatch match;int role;
     game_online_ui_snapshot(&match, &role, NULL, NULL, 0, NULL);
@@ -330,7 +739,7 @@ static int run_lvgl_test(void) {
     ui_snapshot("match_lily_cooldown");
     ui_tap(1141, 75);tick_pump(2);
     assert(game_phase() == GAME_ONLINE_ROOMS && !db.present);
-    /* List join remains distinct from '+' and the square search button. */
+    /* List join remains distinct from room creation and search. */
     db.present = 1;db.map = 1;db.host_ping = epoch_ms();
     strcpy(db.room_id, "ABCDEF");strcpy(db.host_id, FAKE_HOST);
     db.host_role = ON_ROLE_PLANTS;db.guest_id[0] = 0;
@@ -359,8 +768,8 @@ static int run_lvgl_test(void) {
     db.host_ping = epoch_ms();
     on_net_refresh();tick_pump(2);
     ui_snapshot("rooms_after_guest");
-    ui_tap(818, 210);
-    /* The square search action is not '+': it accepts all six real keys. */
+    ui_tap(727, 210);
+    /* Search is separate from room creation actions. */
     for (int i = 0; i < 6; ++i) ui_tap(316 + i * 78, 314);
     ui_snapshot("search_complete");
     ui_tap(640, 625);tick_pump(2);
@@ -369,13 +778,18 @@ static int run_lvgl_test(void) {
     ui_tap(1150, 75);tick_pump(2);
     ui_tap(1140, 77);
     assert(game_phase() == GAME_MENU);
+    ui_tap(1030, 611);assert(game_phase() == GAME_ONLINE_ROOMS);tick_pump(1);
+    ui_tap(1144, 210);assert(game_phase() == GAME_WORKSHOP);
+    ui_snapshot("workshop_from_online");
+    ui_tap(1130, 74);assert(game_phase() == GAME_ONLINE_ROOMS);
+    ui_tap(1140, 77);assert(game_phase() == GAME_MENU);
     isolate_saves(before, after, bytes);
     game_garden_export(garden_after);
     assert(!memcmp(garden, garden_after, sizeof garden));
     lvgl_ui_shutdown();
     game_set_lvgl_ui(0);
     on_net_shutdown();
-    puts("LVGL uncluttered UI, drag planting, cooldown art, cancel, quick taps, both online roles and saves passed");
+    puts("Legacy and LVGL UI, native published-level list/play and multitouch controls, drag planting, both online roles and saves passed");
     return 0;
 }
 #endif
@@ -387,6 +801,16 @@ int main(void) {
     static uint8_t before[20000], after[20000];
     size_t size = game_save_size();assert(size <= sizeof before);
     game_init();assert(game_save_export(before, size));
+    OnPublishedLevel draft = sample_level();
+    assert(on_net_level_publish(&draft));tick_pump(1);
+    OnNetView published = view();
+    assert(!published.level_publish_busy && published.level_publish_id[0] &&
+           strstr(published.level_publish_notice, "ОПУБЛИКОВАН") &&
+           uploaded_level_body[0] && uploaded_index_body[0]);
+    OnPublishedLevel decoded;
+    assert(on_protocol_published_level(uploaded_level_body,
+                                       uploaded_level_id, &decoded));
+    assert(!strcmp(decoded.title, draft.title));
     game_input_press(1058, 615);
     assert(game_phase() == GAME_ONLINE_ROOMS);
     tick_pump(1);assert(view().room_count == 0);

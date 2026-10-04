@@ -199,6 +199,277 @@ static int role(const JD *d, int t, int *out) {
     if (eq(d, t, "zombies")) {*out = ON_ROLE_ZOMBIES;return 1;}
     return 0;
 }
+static int append_utf8(char *out, size_t cap, size_t *used, unsigned cp) {
+    unsigned char bytes[4];size_t n;
+    if (cp <= 0x7f) {bytes[0] = (unsigned char)cp;n = 1;}
+    else if (cp <= 0x7ff) {
+        bytes[0] = (unsigned char)(0xc0 | (cp >> 6));
+        bytes[1] = (unsigned char)(0x80 | (cp & 0x3f));n = 2;
+    } else if (cp <= 0xffff && (cp < 0xd800 || cp > 0xdfff)) {
+        bytes[0] = (unsigned char)(0xe0 | (cp >> 12));
+        bytes[1] = (unsigned char)(0x80 | ((cp >> 6) & 0x3f));
+        bytes[2] = (unsigned char)(0x80 | (cp & 0x3f));n = 3;
+    } else if (cp <= 0x10ffff) {
+        bytes[0] = (unsigned char)(0xf0 | (cp >> 18));
+        bytes[1] = (unsigned char)(0x80 | ((cp >> 12) & 0x3f));
+        bytes[2] = (unsigned char)(0x80 | ((cp >> 6) & 0x3f));
+        bytes[3] = (unsigned char)(0x80 | (cp & 0x3f));n = 4;
+    } else return 0;
+    if (*used + n >= cap) return 0;
+    memcpy(out + *used, bytes, n);*used += n;return 1;
+}
+static int hex4(const char *s, unsigned *out) {
+    unsigned v = 0;
+    for (int i = 0; i < 4; i++) {
+        unsigned char c = (unsigned char)s[i];
+        if (!isxdigit(c)) return 0;
+        v = (v << 4) | (unsigned)(isdigit(c) ? c - '0' :
+                                  tolower(c) - 'a' + 10);
+    }
+    *out = v;return 1;
+}
+static int text_string(const JD *d, int t, char *out, size_t cap) {
+    if (t < 0 || t >= d->used || d->t[t].type != 's' || cap < 1) return 0;
+    size_t used = 0;
+    for (int i = d->t[t].start; i < d->t[t].end;) {
+        unsigned char c = (unsigned char)d->s[i++];
+        if (c != '\\') {
+            if (used + 1 >= cap) return 0;
+            out[used++] = (char)c; /* Preserve raw UTF-8 bytes from JSON. */
+            continue;
+        }
+        if (i >= d->t[t].end) return 0;
+        char esc = d->s[i++];unsigned cp;
+        switch (esc) {
+        case '"': cp = '"';break; case '\\': cp = '\\';break;
+        case '/': cp = '/';break; case 'b': cp = '\b';break;
+        case 'f': cp = '\f';break; case 'n': cp = '\n';break;
+        case 'r': cp = '\r';break; case 't': cp = '\t';break;
+        case 'u':
+            if (i + 4 > d->t[t].end || !hex4(d->s + i, &cp)) return 0;
+            i += 4;
+            if (cp >= 0xd800 && cp <= 0xdbff) {
+                unsigned low;
+                if (i + 6 > d->t[t].end || d->s[i] != '\\' ||
+                    d->s[i + 1] != 'u' || !hex4(d->s + i + 2, &low) ||
+                    low < 0xdc00 || low > 0xdfff) return 0;
+                i += 6;cp = 0x10000 + ((cp - 0xd800) << 10) + (low - 0xdc00);
+            } else if (cp >= 0xdc00 && cp <= 0xdfff) return 0;
+            break;
+        default: return 0;
+        }
+        if (!append_utf8(out, cap, &used, cp)) return 0;
+    }
+    out[used] = 0;return 1;
+}
+static int color_value(const JD *d, int token, uint32_t *out) {
+    char value[8];
+    if (!text_string(d, token, value, sizeof value) || strlen(value) != 7 || value[0] != '#') return 0;
+    unsigned long rgb = strtoul(value + 1, NULL, 16);
+    if (rgb > 0xffffff) return 0;
+    *out = (uint32_t)rgb;return 1;
+}
+static int level_object_type(const JD *d, int token) {
+    static const char *const names[] = {
+        "block", "ground", "hazard", "coin", "enemy", "player", "goal", "trigger"
+    };
+    for (int i = 0; i < (int)(sizeof names / sizeof names[0]); i++)
+        if (eq(d, token, names[i])) return i;
+    return -1;
+}
+static int level_event(const JD *d, int token) {
+    if (eq(d, token, "touch")) return ON_TRIGGER_TOUCH;
+    if (eq(d, token, "coin")) return ON_TRIGGER_COIN;
+    if (eq(d, token, "manual")) return ON_TRIGGER_MANUAL;
+    return -1;
+}
+static int level_action(const JD *d, int token) {
+    if (eq(d, token, "toggle")) return ON_TRIGGER_TOGGLE;
+    if (eq(d, token, "move")) return ON_TRIGGER_MOVE;
+    if (eq(d, token, "recolor")) return ON_TRIGGER_RECOLOR;
+    if (eq(d, token, "number")) return ON_TRIGGER_NUMBER;
+    if (eq(d, token, "rotate")) return ON_TRIGGER_ROTATE;
+    if (eq(d, token, "activate")) return ON_TRIGGER_ACTIVATE;
+    if (eq(d, token, "unactivate")) return ON_TRIGGER_UNACTIVATE;
+    return -1;
+}
+static int level_trigger_kind(const JD *d, int token) {
+    if (eq(d, token, "move")) return ON_TRIGGER_KIND_MOVE;
+    if (eq(d, token, "rotate")) return ON_TRIGGER_KIND_ROTATE;
+    if (eq(d, token, "forever")) return ON_TRIGGER_KIND_FOREVER;
+    return -1;
+}
+int on_protocol_valid_level_id(const char *id) {
+    if (!id || !*id || strlen(id) >= ON_LEVEL_ID_SIZE) return 0;
+    if (id[0] == '0' && id[1]) return 0;
+    for (const unsigned char *p = (const unsigned char *)id; *p; p++)
+        if (!isdigit(*p)) return 0;
+    char *end = NULL;long value = strtol(id, &end, 10);
+    return end && !*end && value > 0 && value <= 999999;
+}
+int on_protocol_level_index(const char *json, OnPublishedLevelSummary *out, int cap) {
+    if (!json || cap < 0 || (cap && !out)) return -1;
+    JD d;if (!doc_open(&d, json)) return -1;
+    if (d.t[0].type == 'z') {free(d.t);return 0;}
+    if (d.t[0].type != 'o') {free(d.t);return -1;}
+    OnPublishedLevelSummary tmp[ON_LEVEL_LIST_CAP];int count = 0;
+    for (int key = 1; key < d.t[0].after;) {
+        int value = key + 1;
+        char id[ON_LEVEL_ID_SIZE], title[ON_LEVEL_TITLE_SIZE];
+        char description[ON_LEVEL_DESCRIPTION_SIZE] = {0};
+        if (str(&d, key, id, sizeof id) && on_protocol_valid_level_id(id) &&
+            d.t[value].type == 'o') {
+            int id_token = field(&d, value, "id");
+            int title_token = field(&d, value, "title");
+            int description_token = field(&d, value, "description");
+            char stored_id[ON_LEVEL_ID_SIZE];
+            int description_ok = description_token < 0 ||
+                text_string(&d, description_token, description, sizeof description);
+            if (str(&d, id_token, stored_id, sizeof stored_id) && !strcmp(id, stored_id) &&
+                text_string(&d, title_token, title, sizeof title) && title[0] &&
+                description_ok && count < cap && count < ON_LEVEL_LIST_CAP) {
+                snprintf(tmp[count].id, sizeof tmp[count].id, "%s", id);
+                snprintf(tmp[count].title, sizeof tmp[count].title, "%s", title);
+                snprintf(tmp[count].description, sizeof tmp[count].description, "%s", description);
+                count++;
+            }
+        }
+        key = d.t[value].after;
+    }
+    if (count) memcpy(out, tmp, (size_t)count * sizeof tmp[0]);
+    free(d.t);return count;
+}
+static int parse_level_object(const JD *d, int node, OnLevelObject *out) {
+    if (node < 0 || d->t[node].type != 'o' || !out) return 0;
+    OnLevelObject item = {0};
+    int type = level_object_type(d, field(d, node, "type"));
+    if (type < 0 || !int_field(d, node, "id", &item.id) || item.id < 1 || item.id > 1000000 ||
+        !float_field(d, node, "x", &item.x) || !float_field(d, node, "y", &item.y) ||
+        !float_field(d, node, "w", &item.w) || !float_field(d, node, "h", &item.h) ||
+        !float_field(d, node, "angle", &item.angle) ||
+        !color_value(d, field(d, node, "color"), &item.color) ||
+        !int_field(d, node, "number", &item.number) || item.number < 0 || item.number > 9999 ||
+        !bool_field(d, node, "visible", &item.visible) ||
+        item.x < -ON_LEVEL_WORLD_LIMIT || item.y < -ON_LEVEL_WORLD_LIMIT ||
+        item.w <= 0 || item.h <= 0 ||
+        item.x + item.w > ON_LEVEL_WORLD_LIMIT ||
+        item.y + item.h > ON_LEVEL_WORLD_LIMIT ||
+        item.w > 64 || item.h > 40 || item.angle < 0 || item.angle >= 360) return 0;
+    item.type = type;
+    int name = field(d, node, "name");
+    if (!text_string(d, name, item.name, sizeof item.name)) return 0;
+    if (type == ON_LEVEL_TRIGGER) {
+        int trigger = field(d, node, "trigger");
+        if (trigger < 0 || d->t[trigger].type != 'o') return 0;
+        int kind_token = field(d, trigger, "kind");
+        item.trigger_kind = kind_token < 0 ? ON_TRIGGER_KIND_MOVE :
+                            level_trigger_kind(d, kind_token);
+        item.trigger_event = level_event(d, field(d, trigger, "event"));
+        item.trigger_action = level_action(d, field(d, trigger, "action"));
+        int target_token = field(d, trigger, "targetId");
+        int group_token = field(d, trigger, "groupId");
+        int value_token = field(d, trigger, "value");
+        int value_x_token = field(d, trigger, "valueX");
+        int value_y_token = field(d, trigger, "valueY");
+        int degrees_token = field(d, trigger, "degrees");
+        int duration_token = field(d, trigger, "duration");
+        if (item.trigger_kind == ON_TRIGGER_KIND_ROTATE && duration_token >= 0)
+            value_token = -1;
+        else if (item.trigger_kind == ON_TRIGGER_KIND_ROTATE && degrees_token >= 0)
+            value_token = degrees_token;
+        else if (item.trigger_kind == ON_TRIGGER_KIND_MOVE && value_x_token >= 0)
+            value_token = value_x_token;
+        item.target_id = 0;
+        item.trigger_value = item.trigger_value_y = 0;
+        item.trigger_group_id = 0;item.trigger_has_group = 0;
+        item.trigger_duration = 0;item.trigger_has_duration = 0;
+        item.trigger_color = 0xffc54eu;
+        if (value_token >= 0) {
+            double parsed_value;
+            if (!num(d, value_token, &parsed_value)) return 0;
+            item.trigger_value = (float)parsed_value;
+        }
+        if (item.trigger_kind == ON_TRIGGER_KIND_ROTATE && duration_token >= 0) {
+            if (!int_field(d, trigger, "duration", &item.trigger_duration)) return 0;
+            item.trigger_has_duration = 1;
+        }
+        if (item.trigger_kind < ON_TRIGGER_KIND_MOVE ||
+            item.trigger_kind > ON_TRIGGER_KIND_FOREVER ||
+            item.trigger_event < 0 || item.trigger_action < 0 ||
+            (target_token >= 0 && !int_field(d, trigger, "targetId", &item.target_id)) ||
+            (value_y_token >= 0 && !float_field(d, trigger, "valueY", &item.trigger_value_y)) ||
+            (group_token >= 0 && (!int_field(d, trigger, "groupId", &item.trigger_group_id) ||
+                                  item.trigger_group_id < 0 || item.trigger_group_id > 9999)) ||
+            item.target_id < 0 || item.target_id > 1000000 ||
+            (field(d, trigger, "color") >= 0 &&
+             !color_value(d, field(d, trigger, "color"), &item.trigger_color))) return 0;
+        item.trigger_has_group = group_token >= 0;
+        if (item.trigger_kind == ON_TRIGGER_KIND_MOVE) {
+            if ((item.trigger_action == ON_TRIGGER_ACTIVATE ||
+                 item.trigger_action == ON_TRIGGER_UNACTIVATE) ||
+                item.trigger_value < -9999 || item.trigger_value > 9999 ||
+                item.trigger_value_y < -9999 || item.trigger_value_y > 9999 ||
+                (item.trigger_has_group && item.trigger_group_id > 9999)) return 0;
+        } else if (item.trigger_kind == ON_TRIGGER_KIND_ROTATE) {
+            if (item.trigger_has_duration) {
+                if (item.trigger_action != ON_TRIGGER_ROTATE || !item.trigger_has_group ||
+                    item.trigger_duration < 1 || item.trigger_duration > 9999) return 0;
+            } else if ((item.trigger_action == ON_TRIGGER_ACTIVATE ||
+                        item.trigger_action == ON_TRIGGER_UNACTIVATE) ||
+                       item.trigger_value < -360 || item.trigger_value > 360) return 0;
+        } else if (item.trigger_has_group) {
+            if (item.trigger_action != ON_TRIGGER_ACTIVATE &&
+                item.trigger_action != ON_TRIGGER_UNACTIVATE) return 0;
+        } else if ((item.trigger_action == ON_TRIGGER_ACTIVATE ||
+                    item.trigger_action == ON_TRIGGER_UNACTIVATE) ||
+                   item.trigger_value < -100 || item.trigger_value > 100) return 0;
+    }
+    *out = item;return 1;
+}
+int on_protocol_published_level(const char *json, const char *expected_id,
+                                OnPublishedLevel *out) {
+    if (!json || !out || !on_protocol_valid_level_id(expected_id)) return 0;
+    JD d;if (!doc_open(&d, json)) return 0;
+    int project = field(&d, 0, "project");
+    OnPublishedLevel value = {0};int version = 0;
+    int ok = eq(&d, field(&d, 0, "format"), "PVG3-PUBLISHED-LEVEL") &&
+             int_field(&d, 0, "version", &version) && version == 1 &&
+             str(&d, field(&d, 0, "id"), value.id, sizeof value.id) &&
+             !strcmp(value.id, expected_id) &&
+             text_string(&d, field(&d, 0, "title"), value.title, sizeof value.title) &&
+             value.title[0] && project >= 0 && d.t[project].type == 'o' &&
+             eq(&d, field(&d, project, "format"), "PVG3-MAKER") &&
+             int_field(&d, project, "version", &version) && version == 1 &&
+             int_field(&d, project, "width", &value.width) && value.width == 16 &&
+             int_field(&d, project, "height", &value.height) && value.height == 10;
+    int description_token = field(&d, 0, "description");
+    if (ok && description_token >= 0 &&
+        !text_string(&d, description_token, value.description, sizeof value.description)) ok = 0;
+    if (ok && description_token < 0) {
+        description_token = field(&d, project, "description");
+        if (description_token >= 0 &&
+            !text_string(&d, description_token, value.description, sizeof value.description)) ok = 0;
+    }
+    int objects = field(&d, project, "objects");
+    if (ok && (objects < 0 || d.t[objects].type != 'a' ||
+               d.t[objects].count < 1 || d.t[objects].count > ON_LEVEL_OBJECT_CAP)) ok = 0;
+    int has_player = 0, has_goal = 0;
+    if (ok) {
+        for (int token = objects + 1; token < d.t[objects].after; token = d.t[token].after) {
+            OnLevelObject *item = &value.objects[value.object_count];
+            if (!parse_level_object(&d, token, item)) {ok = 0;break;}
+            for (int i = 0; i < value.object_count; i++)
+                if (value.objects[i].id == item->id) {ok = 0;break;}
+            if (!ok) break;
+            has_player |= item->type == ON_LEVEL_PLAYER;
+            has_goal |= item->type == ON_LEVEL_GOAL;
+            value.object_count++;
+        }
+    }
+    if (ok && (!has_player || !has_goal)) ok = 0;
+    if (ok) *out = value;
+    free(d.t);return ok;
+}
 int on_protocol_valid_room_id(const char *id) {
     if (!id || strlen(id) != 6) return 0;
     for (int i = 0; i < 6; i++)
@@ -526,6 +797,185 @@ size_t on_protocol_command_json(const OnCommand *c, const char *player_id,
     else if (c->kind == ON_CMD_COIN) put(&w, ",\"coinId\":%d", c->id);
     else if (c->kind == ON_CMD_SPAWN) put(&w, ",\"row\":%d,\"type\":%d",c->row,c->type);
     put(&w, "}");
+    if (w.bad) {out[0] = 0;return 0;}
+    return w.at;
+}
+
+static void put_json_string(JW *w, const char *text) {
+    put(w, "\"");
+    for (const unsigned char *p = (const unsigned char *)text; *p && !w->bad; ++p) {
+        switch (*p) {
+        case '"': put(w, "\\\"");break;
+        case '\\': put(w, "\\\\");break;
+        case '\b': put(w, "\\b");break;
+        case '\f': put(w, "\\f");break;
+        case '\n': put(w, "\\n");break;
+        case '\r': put(w, "\\r");break;
+        case '\t': put(w, "\\t");break;
+        default:
+            if (*p < 0x20) put(w, "\\u%04x", (unsigned)*p);
+            else put(w, "%c", (int)*p);
+        }
+    }
+    put(w, "\"");
+}
+
+static int utf8_units(const char *text, size_t cap, size_t limit) {
+    const unsigned char *p = (const unsigned char *)text;
+    const unsigned char *end = p + cap;
+    size_t units = 0;
+    while (p < end && *p) {
+        unsigned cp;size_t width;
+        if (*p < 0x80) {cp = *p;width = 1;}
+        else if ((*p & 0xe0) == 0xc0) {cp = *p & 0x1f;width = 2;}
+        else if ((*p & 0xf0) == 0xe0) {cp = *p & 0x0f;width = 3;}
+        else if ((*p & 0xf8) == 0xf0) {cp = *p & 0x07;width = 4;}
+        else return 0;
+        if ((size_t)(end - p) < width) return 0;
+        for (size_t i = 1; i < width; ++i) {
+            if ((p[i] & 0xc0) != 0x80) return 0;
+            cp = (cp << 6) | (p[i] & 0x3f);
+        }
+        if ((width == 2 && cp < 0x80) || (width == 3 && cp < 0x800) ||
+            (width == 4 && cp < 0x10000) || cp > 0x10ffff ||
+            (cp >= 0xd800 && cp <= 0xdfff)) return 0;
+        units += cp > 0xffff ? 2 : 1;
+        if (units > limit) return 0;
+        p += width;
+    }
+    return p < end && *p == 0;
+}
+static int published_trigger_valid(const OnLevelObject *o) {
+    if (!o || o->trigger_kind < ON_TRIGGER_KIND_MOVE ||
+        o->trigger_kind > ON_TRIGGER_KIND_FOREVER ||
+        o->trigger_event < ON_TRIGGER_TOUCH || o->trigger_event > ON_TRIGGER_MANUAL ||
+        o->trigger_action < ON_TRIGGER_TOGGLE ||
+        o->trigger_action > ON_TRIGGER_UNACTIVATE ||
+        o->target_id < 0 || o->target_id > 1000000 ||
+        (o->trigger_has_group != 0 && o->trigger_has_group != 1) ||
+        (o->trigger_has_group &&
+         (o->trigger_group_id < 0 || o->trigger_group_id > 9999)) ||
+        (o->trigger_has_duration != 0 && o->trigger_has_duration != 1) ||
+        (o->trigger_has_duration && o->trigger_kind != ON_TRIGGER_KIND_ROTATE) ||
+        !isfinite(o->trigger_value) || !isfinite(o->trigger_value_y) ||
+        o->trigger_color > 0xffffffu) return 0;
+    if (o->trigger_kind == ON_TRIGGER_KIND_MOVE) {
+        return o->trigger_action <= ON_TRIGGER_ROTATE &&
+            o->trigger_value >= -9999 && o->trigger_value <= 9999 &&
+            o->trigger_value_y >= -9999 && o->trigger_value_y <= 9999;
+    }
+    if (o->trigger_kind == ON_TRIGGER_KIND_ROTATE) {
+        if (o->trigger_has_duration)
+            return o->trigger_has_group && o->trigger_action == ON_TRIGGER_ROTATE &&
+                o->trigger_duration >= 1 && o->trigger_duration <= 9999;
+        return o->trigger_action <= ON_TRIGGER_ROTATE &&
+            o->trigger_value >= -360 && o->trigger_value <= 360;
+    }
+    if (o->trigger_has_group)
+        return o->trigger_action == ON_TRIGGER_ACTIVATE ||
+               o->trigger_action == ON_TRIGGER_UNACTIVATE;
+    return o->trigger_action <= ON_TRIGGER_ROTATE &&
+        o->trigger_value >= -100 && o->trigger_value <= 100;
+}
+
+static int published_level_valid(const OnPublishedLevel *level) {
+    if (!level || !on_protocol_valid_level_id(level->id) ||
+        !level->title[0] || !memchr(level->title, 0, sizeof level->title) ||
+        !memchr(level->description, 0, sizeof level->description) ||
+        !utf8_units(level->title, sizeof level->title, 80) ||
+        !utf8_units(level->description, sizeof level->description, 160) ||
+        !level->width || !level->height || level->width != 16 || level->height != 10 ||
+        level->object_count < 1 || level->object_count > ON_LEVEL_OBJECT_CAP) return 0;
+    int has_player = 0, has_goal = 0;
+    for (int i = 0; i < level->object_count; ++i) {
+        const OnLevelObject *o = &level->objects[i];
+        if (o->id < 1 || o->id > 1000000 || o->type < ON_LEVEL_BLOCK ||
+            o->type > ON_LEVEL_TRIGGER || !memchr(o->name, 0, sizeof o->name) ||
+            !utf8_units(o->name, sizeof o->name, 48) || !isfinite(o->x) || !isfinite(o->y) || !isfinite(o->w) ||
+            !isfinite(o->h) || !isfinite(o->angle) ||
+            o->x < -ON_LEVEL_WORLD_LIMIT || o->y < -ON_LEVEL_WORLD_LIMIT ||
+            o->w <= 0 || o->h <= 0 ||
+            o->x + o->w > ON_LEVEL_WORLD_LIMIT ||
+            o->y + o->h > ON_LEVEL_WORLD_LIMIT || o->w > 64 || o->h > 40 ||
+            o->angle < 0 || o->angle >= 360 || o->color > 0xffffffu ||
+            o->number < 0 || o->number > 9999 || (o->visible != 0 && o->visible != 1)) return 0;
+        for (int j = 0; j < i; ++j)
+            if (level->objects[j].id == o->id) return 0;
+        has_player |= o->type == ON_LEVEL_PLAYER;
+        has_goal |= o->type == ON_LEVEL_GOAL;
+        if (o->type == ON_LEVEL_TRIGGER && !published_trigger_valid(o)) return 0;
+    }
+    return has_player && has_goal;
+}
+
+size_t on_protocol_published_level_json(const OnPublishedLevel *level,
+                                        char *out, size_t cap) {
+    if (!out || !cap || !published_level_valid(level)) return 0;
+    static const char *const types[] = {
+        "block", "ground", "hazard", "coin", "enemy", "player", "goal", "trigger"
+    };
+    static const char *const events[] = {"touch", "coin", "manual"};
+    static const char *const actions[] = {
+        "toggle", "move", "recolor", "number", "rotate", "activate", "unactivate"
+    };
+    static const char *const trigger_kinds[] = {"move", "rotate", "forever"};
+    static const char *const names[] = {
+        "Блок", "Платформа", "Шипы", "Монета", "Гусь", "Игрок", "Финиш", "Триггер"
+    };
+    JW w = {out, cap, 0, 0};
+    put(&w, "{\"format\":\"PVG3-PUBLISHED-LEVEL\",\"version\":1,\"id\":");
+    put_json_string(&w, level->id);
+    put(&w, ",\"title\":");put_json_string(&w, level->title);
+    put(&w, ",\"description\":");put_json_string(&w, level->description);
+    put(&w, ",\"project\":{\"format\":\"PVG3-MAKER\",\"version\":1,"
+        "\"width\":%d,\"height\":%d,\"objects\":[",
+        level->width, level->height);
+    for (int i = 0; i < level->object_count; ++i) {
+        const OnLevelObject *o = &level->objects[i];
+        put(&w, "%s{\"id\":%d,\"type\":\"%s\",\"name\":",
+            i ? "," : "", o->id, types[o->type]);
+        put_json_string(&w, o->name[0] ? o->name : names[o->type]);
+        put(&w, ",\"x\":%.4f,\"y\":%.4f,\"w\":%.4f,\"h\":%.4f,"
+            "\"angle\":%.3f,\"color\":\"#%06x\",\"number\":%d,"
+            "\"visible\":%s,\"layer\":0,\"layer2\":0,\"zOrder\":0",
+            (double)o->x, (double)o->y, (double)o->w, (double)o->h,
+            (double)o->angle, (unsigned)o->color, o->number,
+            o->visible ? "true" : "false");
+        if (o->type == ON_LEVEL_TRIGGER) {
+            put(&w, ",\"trigger\":{\"kind\":\"%s\",\"event\":\"%s\",\"action\":\"%s\",\"targetId\":%d",
+                trigger_kinds[o->trigger_kind], events[o->trigger_event],
+                actions[o->trigger_action], o->target_id);
+            if (o->trigger_has_group)
+                put(&w, ",\"groupId\":%d", o->trigger_group_id);
+            if (o->trigger_kind == ON_TRIGGER_KIND_MOVE) {
+                put(&w, ",\"valueX\":%.4f,\"valueY\":%.4f,\"value\":%.4f",
+                    (double)o->trigger_value, (double)o->trigger_value_y,
+                    (double)o->trigger_value);
+            } else if (o->trigger_kind == ON_TRIGGER_KIND_ROTATE) {
+                if (o->trigger_has_duration)
+                    put(&w, ",\"duration\":%d", o->trigger_duration);
+                else
+                    put(&w, ",\"degrees\":%.4f,\"value\":%.4f",
+                        (double)o->trigger_value, (double)o->trigger_value);
+            } else if (!o->trigger_has_group) {
+                put(&w, ",\"value\":%.4f", (double)o->trigger_value);
+            }
+            put(&w, ",\"color\":\"#%06x\"}", (unsigned)o->trigger_color);
+        }
+        put(&w, "}");
+    }
+    put(&w, "]}}");
+    if (w.bad) {out[0] = 0;return 0;}
+    return w.at;
+}
+size_t on_protocol_level_summary_json(const OnPublishedLevel *level,
+                                      char *out, size_t cap, int64_t updated_at) {
+    if (!out || !cap || updated_at < 0 || !published_level_valid(level)) return 0;
+    JW w = {out, cap, 0, 0};
+    put(&w, "{\"id\":");put_json_string(&w, level->id);
+    put(&w, ",\"title\":");put_json_string(&w, level->title);
+    put(&w, ",\"description\":");put_json_string(&w, level->description);
+    put(&w, ",\"updatedAt\":%lld}", (long long)updated_at);
     if (w.bad) {out[0] = 0;return 0;}
     return w.at;
 }

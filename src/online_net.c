@@ -4,20 +4,36 @@
 #define _POSIX_C_SOURCE 200809L
 #include "online_net.h"
 
-#include <fcntl.h>
 #include <pthread.h>
 #include <stdint.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef _WIN32
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0601
+#endif
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <bcrypt.h>
+#define NET_CLOCK_REALTIME 0
+#define NET_CLOCK_MONOTONIC 1
+#else
+#include <fcntl.h>
 #include <time.h>
 #include <unistd.h>
+#define NET_CLOCK_REALTIME CLOCK_REALTIME
+#define NET_CLOCK_MONOTONIC CLOCK_MONOTONIC
+#endif
 
 #define RESPONSE_CAP (1024u * 1024u + 1u)
 
 enum { A_NONE, A_CREATE, A_JOIN, A_ROLE, A_LEAVE, A_REFRESH };
 enum { T_IDLE, T_CREATE, T_JOIN, T_ROLE, T_LEAVE, T_REFRESH,
-       T_LIST, T_POLL, T_HEARTBEAT, T_COMMAND, T_PUBLISH };
+       T_LIST, T_POLL, T_HEARTBEAT, T_COMMAND, T_PUBLISH,
+       T_LEVEL_LIST, T_LEVEL_GET, T_LEVEL_PUBLISH };
 
 typedef struct {
     OnNetView view;
@@ -33,19 +49,43 @@ typedef struct {
     unsigned pub_revision, sent_revision;
     int next_seq;
     int64_t next_list, next_room, next_ping, next_publish;
+    int level_list_requested, level_fetch_requested;
+    unsigned level_generation;
+    char level_fetch_id[ON_LEVEL_ID_SIZE];
     char *response;
+    int level_publish_requested;
+    unsigned level_publish_generation;
+    OnPublishedLevel level_to_publish;
 } Net;
 static Net net;
 static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
 
-static int64_t clock_ms(clockid_t clock_id) {
+static int64_t clock_ms(int clock_kind) {
+#ifdef _WIN32
+    if (clock_kind == NET_CLOCK_REALTIME) {
+        FILETIME file_time;
+        ULARGE_INTEGER ticks;
+        GetSystemTimeAsFileTime(&file_time);
+        ticks.LowPart = file_time.dwLowDateTime;
+        ticks.HighPart = file_time.dwHighDateTime;
+        return (int64_t)(ticks.QuadPart / 10000ULL) - 11644473600000LL;
+    }
+    return (int64_t)GetTickCount64();
+#else
     struct timespec ts;
-    if (clock_gettime(clock_id, &ts)) return 0;
+    if (clock_gettime(clock_kind, &ts)) return 0;
     return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+#endif
 }
 static void random_bytes(unsigned char *bytes, size_t n) {
-    int fd = open("/dev/urandom", O_RDONLY);
     size_t got = 0;
+#ifdef _WIN32
+    if (n <= ULONG_MAX &&
+        BCryptGenRandom(NULL, bytes, (ULONG)n,
+                        BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0)
+        got = n;
+#else
+    int fd = open("/dev/urandom", O_RDONLY);
     if (fd >= 0) {
         while (got < n) {
             ssize_t count = read(fd, bytes + got, n - got);
@@ -54,8 +94,9 @@ static void random_bytes(unsigned char *bytes, size_t n) {
         }
         close(fd);
     }
-    uint64_t seed = (uint64_t)clock_ms(CLOCK_REALTIME) ^
-                    ((uint64_t)clock_ms(CLOCK_MONOTONIC) << 19) ^ (uintptr_t)bytes;
+#endif
+    uint64_t seed = (uint64_t)clock_ms(NET_CLOCK_REALTIME) ^
+                    ((uint64_t)clock_ms(NET_CLOCK_MONOTONIC) << 19) ^ (uintptr_t)bytes;
     for (size_t i = got; i < n; i++) {
         seed ^= seed << 13;seed ^= seed >> 7;seed ^= seed << 17;
         bytes[i] = (unsigned char)seed;
@@ -75,6 +116,12 @@ static void room_code(char id[ON_ROOM_ID_SIZE]) {
     unsigned char bytes[6];random_bytes(bytes, sizeof bytes);
     for (int i = 0; i < 6; i++) id[i] = alphabet[bytes[i] & 31];
     id[6] = 0;
+}
+static void level_code(char id[ON_LEVEL_ID_SIZE]) {
+    unsigned char bytes[4];random_bytes(bytes, sizeof bytes);
+    unsigned value = ((unsigned)bytes[0] << 24) | ((unsigned)bytes[1] << 16) |
+                     ((unsigned)bytes[2] << 8) | bytes[3];
+    snprintf(id, ON_LEVEL_ID_SIZE, "%u", value % 999999u + 1u);
 }
 static void message(unsigned gen, const char *text, int connected) {
     pthread_mutex_lock(&mu);
@@ -107,19 +154,39 @@ static void *worker(void *arg) {
         pthread_mutex_unlock(&mu);
         if (stop) break;
         on_net_pump_once();
+#ifdef _WIN32
+        Sleep(80);
+#else
         struct timespec wait = {0, 80 * 1000000L};
         nanosleep(&wait, NULL);
+#endif
     }
     return NULL;
 }
 #endif
-void on_net_open(void) {
-    pthread_mutex_lock(&mu);
+static int ensure_transport_locked(void) {
     if (!net.player_id[0]) make_id(net.player_id);
     if (!net.response) net.response = (char *)malloc(RESPONSE_CAP);
     if (!net.response) {
-        net.view.mode = ON_NET_ROOMS;
         snprintf(net.view.notice, sizeof(net.view.notice), "НЕ ХВАТИЛО ПАМЯТИ ДЛЯ СЕТИ");
+        return 0;
+    }
+#ifndef ON_NET_MANUAL
+    if (!net.thread_started) {
+        net.stopping = 0;
+        if (pthread_create(&net.worker, NULL, worker, NULL) == 0) net.thread_started = 1;
+        else {
+            snprintf(net.view.notice, sizeof(net.view.notice), "НЕ УДАЛОСЬ ЗАПУСТИТЬ СЕТЬ");
+            return 0;
+        }
+    }
+#endif
+    return 1;
+}
+void on_net_open(void) {
+    pthread_mutex_lock(&mu);
+    if (!ensure_transport_locked()) {
+        net.view.mode = ON_NET_ROOMS;
         pthread_mutex_unlock(&mu);
         return;
     }
@@ -129,13 +196,6 @@ void on_net_open(void) {
         net.view.connected = 0;
         net.next_list = 0;
     }
-#ifndef ON_NET_MANUAL
-    if (!net.thread_started) {
-        net.stopping = 0;
-        if (pthread_create(&net.worker, NULL, worker, NULL) == 0) net.thread_started = 1;
-        else snprintf(net.view.notice, sizeof(net.view.notice), "НЕ УДАЛОСЬ ЗАПУСТИТЬ СЕТЬ");
-    }
-#endif
     pthread_mutex_unlock(&mu);
 }
 void on_net_close(void) {
@@ -164,6 +224,8 @@ void on_net_shutdown(void) {
     net.view.room_id[0] = 0;
     net.queued_command = 0;
     net.action = A_NONE;
+    net.level_publish_requested = 0;
+    net.view.level_publish_busy = 0;
     net.generation++;
     free(net.response);net.response = NULL;
     pthread_mutex_unlock(&mu);
@@ -177,6 +239,62 @@ void on_net_view(OnNetView *out) {
 void on_net_refresh(void) {
     pthread_mutex_lock(&mu);
     if (net.view.mode == ON_NET_ROOMS) net.next_list = 0;
+    pthread_mutex_unlock(&mu);
+}
+void on_net_levels_refresh(void) {
+    pthread_mutex_lock(&mu);
+    net.level_list_requested = 1;
+    net.level_fetch_requested = 0;
+    net.level_generation++;
+    net.view.levels_busy = 1;
+    net.view.level_loaded = 0;
+    net.view.levels_notice[0] = 0;
+    pthread_mutex_unlock(&mu);
+}
+void on_net_level_fetch(const char *id) {
+    if (!on_protocol_valid_level_id(id)) return;
+    pthread_mutex_lock(&mu);
+    net.level_fetch_requested = 1;
+    net.level_list_requested = 0;
+    net.level_generation++;
+    snprintf(net.level_fetch_id, sizeof net.level_fetch_id, "%s", id);
+    net.view.levels_busy = 1;
+    net.view.level_loaded = 0;
+    net.view.levels_notice[0] = 0;
+    pthread_mutex_unlock(&mu);
+}
+int on_net_level_publish(const OnPublishedLevel *level) {
+    if (!level) return 0;
+    pthread_mutex_lock(&mu);
+    if (net.view.level_publish_busy || net.level_publish_requested) {
+        pthread_mutex_unlock(&mu);return 0;
+    }
+    if (!ensure_transport_locked()) {
+        net.view.level_publish_busy = 0;
+        snprintf(net.view.level_publish_notice, sizeof net.view.level_publish_notice,
+                 "%s", net.view.notice[0] ? net.view.notice :
+                 "НЕ УДАЛОСЬ ЗАПУСТИТЬ ПУБЛИКАЦИЮ");
+        pthread_mutex_unlock(&mu);return 0;
+    }
+    net.level_to_publish = *level;
+    net.level_publish_requested = 1;
+    net.level_publish_generation++;
+    net.view.level_publish_busy = 1;
+    net.view.level_publish_id[0] = 0;
+    net.view.level_publish_notice[0] = 0;
+    pthread_mutex_unlock(&mu);return 1;
+}
+void on_net_level_cancel(void) {
+    pthread_mutex_lock(&mu);
+    net.level_fetch_requested = net.level_list_requested = 0;
+    net.level_generation++;
+    net.view.levels_busy = 0;
+    net.view.level_loaded = 0;
+    pthread_mutex_unlock(&mu);
+}
+void on_net_level_consumed(void) {
+    pthread_mutex_lock(&mu);
+    net.view.level_loaded = 0;
     pthread_mutex_unlock(&mu);
 }
 void on_net_create(int map) {
@@ -256,22 +374,110 @@ int on_net_send(OnCommand command) {
     return good;
 }
 
+static void finish_level_publish(unsigned publish_gen, const char *id,
+                                 const char *notice) {
+    pthread_mutex_lock(&mu);
+    if (publish_gen == net.level_publish_generation) {
+        net.view.level_publish_busy = 0;
+        snprintf(net.view.level_publish_id, sizeof net.view.level_publish_id, "%s", id ? id : "");
+        snprintf(net.view.level_publish_notice, sizeof net.view.level_publish_notice,
+                 "%s", notice ? notice : "");
+    }
+    pthread_mutex_unlock(&mu);
+}
+static void publish_level_record(unsigned publish_gen,
+                                 const OnPublishedLevel *source) {
+    char *body = (char *)malloc(RESPONSE_CAP);
+    if (!body) {
+        finish_level_publish(publish_gen, "", "НЕ ХВАТИЛО ПАМЯТИ ДЛЯ ПУБЛИКАЦИИ");
+        return;
+    }
+    OnPublishedLevel record = *source;
+    int code = 0;char saved_id[ON_LEVEL_ID_SIZE] = {0};
+    for (int attempt = 0; attempt < 5; ++attempt) {
+        level_code(record.id);
+        if (!on_protocol_published_level_json(&record, body, RESPONSE_CAP)) {
+            free(body);
+            finish_level_publish(publish_gen, "", "ЧЕРНОВИК ПОВРЕЖДЁН ИЛИ НЕ ПОДДЕРЖИВАЕТСЯ");
+            return;
+        }
+        char path[48];snprintf(path, sizeof path, "levels/%s.json", record.id);
+        code = request(path, "PUT", body, "null_etag");
+        if (code != 412) break;
+    }
+    if (code == 412) {
+        free(body);
+        finish_level_publish(publish_gen, "", "НЕ УДАЛОСЬ НАЙТИ СВОБОДНЫЙ ID УРОВНЯ");
+        return;
+    }
+    if (code != 200) {
+        free(body);
+        finish_level_publish(publish_gen, "", code == 401 || code == 403 ?
+            "FIREBASE ЗАПРЕТИЛ ЗАПИСЬ В /LEVELS. ПРОВЕРЬ ПРАВИЛА." :
+            "НЕ УДАЛОСЬ ОПУБЛИКОВАТЬ УРОВЕНЬ. ПРОВЕРЬ ИНТЕРНЕТ.");
+        return;
+    }
+    snprintf(saved_id, sizeof saved_id, "%s", record.id);
+    char summary[ON_LEVEL_TITLE_SIZE + ON_LEVEL_DESCRIPTION_SIZE + 128];
+    if (!on_protocol_level_summary_json(&record, summary, sizeof summary,
+                                        clock_ms(NET_CLOCK_REALTIME))) {
+        free(body);
+        finish_level_publish(publish_gen, saved_id,
+            "УРОВЕНЬ ЗАПИСАН, НО НЕ УДАЛОСЬ ПОДГОТОВИТЬ КАТАЛОГ.");
+        return;
+    }
+    char index_path[56];snprintf(index_path, sizeof index_path,
+                                 "levels-index/%s.json", saved_id);
+    code = request(index_path, "PUT", summary, "null_etag");
+    free(body);
+    if (code != 200) {
+        finish_level_publish(publish_gen, saved_id, code == 401 || code == 403 ?
+            "УРОВЕНЬ ЗАПИСАН, НО FIREBASE ЗАПРЕТИЛ /LEVELS-INDEX. ПРОВЕРЬ ПРАВИЛА." :
+            "УРОВЕНЬ ЗАПИСАН, НО НЕ УДАЛОСЬ ДОБАВИТЬ ЕГО В КАТАЛОГ.");
+        return;
+    }
+    char notice[144];snprintf(notice, sizeof notice,
+                              "УРОВЕНЬ ОПУБЛИКОВАН · ID %s", saved_id);
+    finish_level_publish(publish_gen, saved_id, notice);
+    pthread_mutex_lock(&mu);
+    if (net.view.mode != ON_NET_CLOSED) {
+        net.level_list_requested = 1;net.view.levels_busy = 1;
+        net.view.level_loaded = 0;net.view.levels_notice[0] = 0;
+    }
+    pthread_mutex_unlock(&mu);
+}
+
 void on_net_pump_once(void) {
     int task = T_IDLE, map = 1, role = 0, slot = 0;
-    unsigned gen;
+    unsigned gen, level_gen, publish_gen;
     char id[ON_ROOM_ID_SIZE] = {0}, player[ON_PLAYER_ID_SIZE] = {0};
+    char level_id[ON_LEVEL_ID_SIZE] = {0};
     OnCommand command = {0};
     OnMatch state;
+    OnPublishedLevel level_to_publish;
     unsigned revision = 0;
-    int64_t now = clock_ms(CLOCK_MONOTONIC);
+    int64_t now = clock_ms(NET_CLOCK_MONOTONIC);
     pthread_mutex_lock(&mu);
     if (net.stopping || !net.response ||
-        (net.view.mode == ON_NET_CLOSED && net.action != A_LEAVE)) {
+        (net.view.mode == ON_NET_CLOSED && net.action != A_LEAVE &&
+         !net.level_publish_requested && !net.level_fetch_requested &&
+         !net.level_list_requested)) {
         pthread_mutex_unlock(&mu);return;
     }
-    gen = net.generation;
+    gen = net.generation;level_gen = net.level_generation;
+    publish_gen = net.level_publish_generation;
     memcpy(player, net.player_id, sizeof(player));
-    if (net.action) {
+    if (net.level_fetch_requested) {
+        task = T_LEVEL_GET;
+        memcpy(level_id, net.level_fetch_id, sizeof(level_id));
+        net.level_fetch_requested = 0;
+    } else if (net.level_list_requested) {
+        task = T_LEVEL_LIST;
+        net.level_list_requested = 0;
+    } else if (net.level_publish_requested) {
+        task = T_LEVEL_PUBLISH;net.level_publish_requested = 0;
+        level_to_publish = net.level_to_publish;
+    } else if (net.action) {
         task = net.action == A_CREATE ? T_CREATE : net.action == A_JOIN ? T_JOIN :
                net.action == A_ROLE ? T_ROLE : net.action == A_LEAVE ? T_LEAVE : T_REFRESH;
         net.action = A_NONE;
@@ -298,16 +504,70 @@ void on_net_pump_once(void) {
     }
     pthread_mutex_unlock(&mu);
     if (task == T_IDLE) return;
+    if (task == T_LEVEL_PUBLISH) {
+        publish_level_record(publish_gen, &level_to_publish);return;
+    }
 
     char path[96], body[256];
     int code;
+    if (task == T_LEVEL_LIST) {
+        code = request("levels-index.json", "GET", NULL, NULL);
+        if (code != 200) {
+            pthread_mutex_lock(&mu);
+            if (level_gen == net.level_generation) {
+                net.view.levels_busy = 0;
+                snprintf(net.view.levels_notice, sizeof net.view.levels_notice,
+                    code == 401 || code == 403 ?
+                    "Firebase запретил чтение /levels-index. Проверь правила." :
+                    "Не удалось получить каталог уровней. Проверь интернет.");
+            }
+            pthread_mutex_unlock(&mu);return;
+        }
+        OnPublishedLevelSummary levels[ON_LEVEL_LIST_CAP];
+        int count = on_protocol_level_index(net.response, levels, ON_LEVEL_LIST_CAP);
+        pthread_mutex_lock(&mu);
+        if (level_gen == net.level_generation) {
+            net.view.levels_busy = 0;
+            net.view.level_loaded = 0;
+            if (count < 0) {
+                snprintf(net.view.levels_notice, sizeof net.view.levels_notice,
+                         "Каталог уровней повреждён или слишком велик.");
+            } else {
+                memcpy(net.view.levels, levels, (size_t)count * sizeof levels[0]);
+                net.view.level_count = count;net.view.levels_notice[0] = 0;
+            }
+        }
+        pthread_mutex_unlock(&mu);return;
+    }
+    if (task == T_LEVEL_GET) {
+        snprintf(path, sizeof path, "levels/%s.json", level_id);
+        code = request(path, "GET", NULL, NULL);
+        OnPublishedLevel loaded;
+        int valid = code == 200 && on_protocol_published_level(net.response, level_id, &loaded);
+        pthread_mutex_lock(&mu);
+        if (level_gen == net.level_generation) {
+            net.view.levels_busy = 0;
+            net.view.level_loaded = valid;
+            if (valid) {
+                net.view.loaded_level = loaded;
+                net.view.levels_notice[0] = 0;
+            } else {
+                snprintf(net.view.levels_notice, sizeof net.view.levels_notice,
+                    code == 401 || code == 403 ?
+                    "Firebase запретил чтение уровня. Проверь правила /levels." :
+                    code == 200 ? "Уровень не найден или его формат не поддерживается." :
+                    "Не удалось загрузить уровень. Проверь интернет.");
+            }
+        }
+        pthread_mutex_unlock(&mu);return;
+    }
     if (task == T_REFRESH) {on_net_refresh();return;}
     if (task == T_LIST) {
         code = request("rooms.json", "GET", NULL, NULL);
         if (code != 200) {message(gen, http_error(code), 0);return;}
         OnRoomSummary rooms[ON_ROOM_LIST_CAP];
         int count = on_protocol_rooms(net.response, rooms, ON_ROOM_LIST_CAP,
-                                      clock_ms(CLOCK_REALTIME));
+                                      clock_ms(NET_CLOCK_REALTIME));
         if (count < 0) {message(gen, "НЕ УДАЛОСЬ ПРОЧИТАТЬ СПИСОК КОМНАТ", 0);return;}
         pthread_mutex_lock(&mu);
         if (gen == net.generation && net.view.mode == ON_NET_ROOMS) {
@@ -326,7 +586,7 @@ void on_net_pump_once(void) {
             snprintf(body, sizeof body,
                      "{\"version\":1,\"map\":%d,\"host\":{\"id\":\"%s\","
                      "\"ping\":%lld}}", map, player,
-                     (long long)clock_ms(CLOCK_REALTIME));
+                     (long long)clock_ms(NET_CLOCK_REALTIME));
             code = request(path, "PUT", body, "null_etag");
             last = code;
             if (code != 412) break;
@@ -352,12 +612,12 @@ void on_net_pump_once(void) {
         if (code != 200) {message(gen, http_error(code), 0);return;}
         if (!on_protocol_room(net.response, &r) || !r.present ||
             r.guest_id[0] || r.has_state ||
-            clock_ms(CLOCK_REALTIME) - r.host_ping > 600000) {
+            clock_ms(NET_CLOCK_REALTIME) - r.host_ping > 600000) {
             message(gen, "КОМНАТА ЗАКРЫТА ИЛИ УЖЕ ЗАНЯТА", 1);return;
         }
         snprintf(path, sizeof path, "rooms/%s/guest.json", id);
         snprintf(body, sizeof body, "{\"id\":\"%s\",\"ping\":%lld}",
-                 player, (long long)clock_ms(CLOCK_REALTIME));
+                 player, (long long)clock_ms(NET_CLOCK_REALTIME));
         code = request(path, "PUT", body, "null_etag");
         if (code != 200) {message(gen, http_error(code), 0);return;}
         snprintf(path, sizeof path, "rooms/%s.json", id);
@@ -436,7 +696,7 @@ void on_net_pump_once(void) {
         free(json);
         pthread_mutex_lock(&mu);
         if (gen == net.generation && net.view.slot == ON_SLOT_HOST) {
-            net.next_publish = clock_ms(CLOCK_MONOTONIC) + 350;
+            net.next_publish = clock_ms(NET_CLOCK_MONOTONIC) + 350;
             if (code == 200) {
                 net.sent_revision = revision;
                 net.view.connected = 1;
@@ -444,7 +704,7 @@ void on_net_pump_once(void) {
             } else {
                 net.view.connected = 0;
                 snprintf(net.view.notice, sizeof(net.view.notice), "%s", http_error(code));
-                net.next_publish = clock_ms(CLOCK_MONOTONIC) + 1200;
+                net.next_publish = clock_ms(NET_CLOCK_MONOTONIC) + 1200;
             }
         }
         pthread_mutex_unlock(&mu);
@@ -453,7 +713,7 @@ void on_net_pump_once(void) {
     if (task == T_HEARTBEAT) {
         snprintf(path, sizeof path, "rooms/%s/%s/ping.json", id,
                  slot == ON_SLOT_HOST ? "host" : "guest");
-        snprintf(body, sizeof body, "%lld", (long long)clock_ms(CLOCK_REALTIME));
+        snprintf(body, sizeof body, "%lld", (long long)clock_ms(NET_CLOCK_REALTIME));
         code = request(path, "PUT", body, NULL);
         if (code != 200) message(gen, http_error(code), 0);
         return;
@@ -462,7 +722,7 @@ void on_net_pump_once(void) {
         snprintf(path, sizeof path, "rooms/%s.json", id);
         code = request(path, "GET", NULL, NULL);
         pthread_mutex_lock(&mu);
-        if (gen == net.generation) net.next_room = clock_ms(CLOCK_MONOTONIC) + 650;
+        if (gen == net.generation) net.next_room = clock_ms(NET_CLOCK_MONOTONIC) + 650;
         pthread_mutex_unlock(&mu);
         if (code != 200) {message(gen, http_error(code), 0);return;}
         OnRoomData r;

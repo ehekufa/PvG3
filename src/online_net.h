@@ -7,7 +7,8 @@
 
 /* Firebase RTDB REST lives on a background pthread; game_tick and touch never
  * block on HTTPS. The Android transport below uses HttpURLConnection via JNI.
- * Host tests replace it with an in-memory fake. Only /rooms is touched. */
+ * Host tests replace it with an in-memory fake. Only /rooms and the public
+ * /levels catalog are touched. */
 int on_http_request(const char *path, const char *method, const char *body,
                     const char *if_match, char *response, size_t response_cap);
 
@@ -23,6 +24,13 @@ typedef struct {
     int has_state, has_command;
     OnMatch state;
     OnCommand command;
+    OnPublishedLevelSummary levels[ON_LEVEL_LIST_CAP]; int level_count;
+    int levels_busy, level_loaded;
+    char levels_notice[144];
+    int level_publish_busy;
+    char level_publish_id[ON_LEVEL_ID_SIZE];
+    char level_publish_notice[144];
+    OnPublishedLevel loaded_level;
 } OnNetView;
 
 void on_net_open(void);
@@ -30,6 +38,12 @@ void on_net_close(void); /* return to menu without waiting for in-flight HTTPS *
 void on_net_shutdown(void); /* app exit: join thread, release response buffer */
 void on_net_view(OnNetView *out);
 void on_net_refresh(void);
+void on_net_levels_refresh(void);
+void on_net_level_fetch(const char *id);
+/* Explicit native-workshop action: creates a new public level and index entry. */
+int on_net_level_publish(const OnPublishedLevel *level);
+void on_net_level_cancel(void);
+void on_net_level_consumed(void);
 void on_net_create(int map);
 void on_net_join(const char *id);
 void on_net_choose(int role);
