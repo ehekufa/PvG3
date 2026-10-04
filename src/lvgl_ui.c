@@ -2130,7 +2130,8 @@ int lvgl_ui_init(void) {
                            PV_ART_ROBOT, PV_ART_PEA, PV_ART_WALNUT, PV_ART_SUNFLOWER,
                            PV_ART_JUMPER, PV_ART_LILY, PV_ART_COIN,
                            PV_ART_LEVEL_BLOCK, PV_ART_LEVEL_PLATFORM,
-                           PV_ART_LEVEL_TRIGGER, PV_ART_LEVEL_FLAG,
+                           PV_ART_LEVEL_TRIGGER, PV_ART_LEVEL_TRIGGER_ROTATE,
+                           PV_ART_LEVEL_TRIGGER_FOREVER, PV_ART_LEVEL_FLAG,
                            PV_ART_LEVEL_SPIKE};
     for (size_t j = 0; j < sizeof art_ids / sizeof art_ids[0]; j++) {
         int id = art_ids[j], w = 0, h = 0;
@@ -2159,6 +2160,12 @@ int lvgl_ui_init(void) {
     search_code[0] = local_notice[0] = 0;
     return 1;
 }
+
+#ifdef PVG3_LVGL_TEST
+int lvgl_ui_test_art_loaded(int id) {
+    return id >= 0 && id < PV_ART_COUNT && pictures[id].data != NULL;
+}
+#endif
 
 void lvgl_ui_shutdown(void) {
     if (display) {

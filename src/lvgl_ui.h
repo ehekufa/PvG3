@@ -19,4 +19,8 @@ int lvgl_ui_cancel(void);
 /* Call after game_tick; composites LVGL's ARGB8888 layer over RGBA8 gameplay. */
 void lvgl_ui_frame(float dt, uint32_t *game_rgba);
 
+#ifdef PVG3_LVGL_TEST
+int lvgl_ui_test_art_loaded(int id);
+#endif
+
 #endif

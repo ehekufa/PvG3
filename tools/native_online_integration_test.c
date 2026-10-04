@@ -336,6 +336,9 @@ static int run_lvgl_test(void) {
     game_init();assert(game_save_export(before, bytes));
     assert_platformer_art();
     assert(lvgl_ui_init());
+    assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER));
+    assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_ROTATE));
+    assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_FOREVER));
     game_set_lvgl_ui(1);
     ui_snapshot("menu");
     assert(ui_pixels[60 * GAME_W + 545] == 0xFFFFFFFFu); /* campaign */
