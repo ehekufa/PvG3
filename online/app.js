@@ -8,7 +8,7 @@ import {LEVEL_WIDTH, LEVEL_HEIGHT, MAX_LEVEL_OBJECTS, WORLD_LIMIT,
         MIN_OBJECT_SIZE, MAX_OBJECT_WIDTH, MAX_OBJECT_HEIGHT, TYPE_LABELS,
         TRIGGER_LABELS, newDraft,
         addObject, findObjectAt, validateDraft, draftFromPublished,
-        moveObjects, resizeObjects, rotateObjects, copyObjects, pasteObjects,
+        moveObjects, resizeObjects, rotateObjects, panCamera, copyObjects, pasteObjects,
         createPreviewState, stepPreview, drawEditorCanvas, drawPreviewCanvas,
         resolveControlMode, createTouchButtonState} from './workshop.js';
 
@@ -382,6 +382,13 @@ function wsStep(id, fallback) {
   const value = Number($(id).value);
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
+function wsPan(direction) {
+  const step = wsStep('ws-pan-step', 1);
+  const offsets = {left: [-step, 0], right: [step, 0], up: [0, -step], down: [0, step]};
+  const [dx, dy] = offsets[direction] || [0, 0];
+  wsCamera = panCamera(wsCamera, dx, dy);
+  wsRedrawEditor();
+}
 function wsNudge(direction, multiplier = 1) {
   const step = wsStep('ws-move-step', 1) * multiplier;
   const offsets = {left: [-step, 0], right: [step, 0], up: [0, -step], down: [0, step]};
@@ -395,9 +402,17 @@ function wsScale(axis, sign) {
   saveWorkshopDraft();wsRedrawEditor();
 }
 function wsRotate(sign) {
-  const step = wsStep('ws-rotate-step', 15) * sign;
+  const step = wsStep('ws-rotate-step', 45) * sign;
   if (!rotateObjects(wsDraft, wsSelectedIds, step)) return;
   saveWorkshopDraft();wsRedrawEditor();
+}
+function wsUpdateRotateLabels() {
+  const step = Math.round(wsStep('ws-rotate-step', 45) * 10) / 10;
+  for (const button of document.querySelectorAll('[data-ws-rotate]')) {
+    const sign = Number(button.dataset.wsRotate) < 0 ? '-' : '+';
+    const label = button.querySelector('[data-ws-rotate-label]');
+    if (label) label.textContent = `${sign}${step}°`;
+  }
 }
 function wsCopySelection() {
   wsClipboard = copyObjects(wsDraft, wsSelectedIds);
@@ -894,6 +909,10 @@ for (const button of document.querySelectorAll('[data-ws-scale]')) {
 }
 for (const button of document.querySelectorAll('[data-ws-rotate]'))
   button.addEventListener('click', () => wsRotate(Number(button.dataset.wsRotate)));
+$('ws-rotate-step').addEventListener('input', wsUpdateRotateLabels);
+wsUpdateRotateLabels();
+for (const button of document.querySelectorAll('[data-ws-pan]'))
+  button.addEventListener('click', () => wsPan(button.dataset.wsPan));
 $('ws-object-x').addEventListener('change', e => updateSelectedProperty('x', e.target.value));
 $('ws-object-y').addEventListener('change', e => updateSelectedProperty('y', e.target.value));
 $('ws-object-width').addEventListener('change', e => updateSelectedProperty('width', e.target.value));

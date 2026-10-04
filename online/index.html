@@ -94,7 +94,7 @@
             <div class="ws-board-column">
               <div class="ws-board-heading"><strong>Сцена · окно карты 16 × 10</strong><span id="ws-object-count">0 / 120 объектов</span></div>
               <div class="canvas-wrap ws-canvas-wrap"><canvas id="ws-editor-canvas" width="1280" height="720" aria-label="Окно бесконечной прокручиваемой карты платформера"></canvas></div>
-              <p class="hint">Перетаскивай выбранное в режиме «Выбрать». Для группы включи «Мульти» или используй Shift + нажатие. Стрелки двигают выделение.</p>
+              <p class="hint">Перетаскивай объекты в «Выбрать», карту — в «Карта». Зелёные стрелки двигают выделение; бирюзовые — окно карты. Для группы включи «Мульти» или Shift + нажатие.</p>
               <p class="ws-error hidden" id="ws-editor-message" role="status" aria-live="polite"></p>
             </div>
             <aside class="ws-tools" aria-label="Инструменты редактора">
@@ -107,17 +107,31 @@
                 <div class="ws-transform-move">
                   <label>Шаг перемещения<input id="ws-move-step" type="number" min="0.1" max="100" step="0.1" value="1"></label>
                   <div class="ws-nudge-grid" role="group" aria-label="Переместить выбранные объекты">
-                    <span></span><button type="button" data-ws-nudge="up" aria-label="Вверх"><span class="ws-editor-arrow arrow-up" aria-hidden="true"></span></button><span></span>
-                    <button type="button" data-ws-nudge="left" aria-label="Влево"><span class="ws-editor-arrow arrow-left" aria-hidden="true"></span></button><span class="ws-nudge-center" aria-hidden="true"></span><button type="button" data-ws-nudge="right" aria-label="Вправо"><span class="ws-editor-arrow arrow-right" aria-hidden="true"></span></button>
-                    <span></span><button type="button" data-ws-nudge="down" aria-label="Вниз"><span class="ws-editor-arrow arrow-down" aria-hidden="true"></span></button><span></span>
+                    <span></span><button type="button" data-ws-nudge="up" aria-label="Сдвинуть объекты вверх" title="Сдвинуть объекты вверх"><span class="ws-editor-arrow arrow-up" aria-hidden="true"></span></button><span></span>
+                    <button type="button" data-ws-nudge="left" aria-label="Сдвинуть объекты влево" title="Сдвинуть объекты влево"><span class="ws-editor-arrow arrow-left" aria-hidden="true"></span></button><span class="ws-nudge-center" aria-hidden="true"></span><button type="button" data-ws-nudge="right" aria-label="Сдвинуть объекты вправо" title="Сдвинуть объекты вправо"><span class="ws-editor-arrow arrow-right" aria-hidden="true"></span></button>
+                    <span></span><button type="button" data-ws-nudge="down" aria-label="Сдвинуть объекты вниз" title="Сдвинуть объекты вниз"><span class="ws-editor-arrow arrow-down" aria-hidden="true"></span></button><span></span>
                   </div>
                 </div>
                 <label>Шаг размера<input id="ws-scale-step" type="number" min="0.1" max="16" step="0.1" value="0.1"></label>
                 <div class="ws-scale-grid" role="group" aria-label="Изменить ширину и высоту выбранных объектов">
-                  <button type="button" data-ws-scale="width:-1">W -</button><button type="button" data-ws-scale="width:1">W +</button><button type="button" data-ws-scale="height:-1">H -</button><button type="button" data-ws-scale="height:1">H +</button>
+                  <button type="button" data-ws-scale="width:-1">W −</button><button type="button" data-ws-scale="width:1">W +</button><button type="button" data-ws-scale="height:-1">H −</button><button type="button" data-ws-scale="height:1">H +</button>
                 </div>
-                <label>Шаг поворота<input id="ws-rotate-step" type="number" min="0.1" max="359.9" step="0.1" value="15"></label>
-                <div class="ws-rotate-actions"><button type="button" data-ws-rotate="-1">Повернуть -</button><button type="button" data-ws-rotate="1">Повернуть +</button></div>
+                <label>Шаг поворота, °<input id="ws-rotate-step" type="number" min="0.1" max="359.9" step="0.1" value="45"></label>
+                <div class="ws-rotate-actions" role="group" aria-label="Повернуть выделение">
+                  <button type="button" data-ws-rotate="-1" aria-label="Повернуть против часовой стрелки" title="Повернуть против часовой стрелки"><svg class="ws-rotate-icon rotate-ccw" viewBox="0 0 32 32" aria-hidden="true"><path d="M22 5a12 12 0 1 0 5 14"/><path d="M27 11v9h-9"/></svg><span data-ws-rotate-label>-45°</span></button>
+                  <button type="button" data-ws-rotate="1" aria-label="Повернуть по часовой стрелке" title="Повернуть по часовой стрелке"><svg class="ws-rotate-icon rotate-cw" viewBox="0 0 32 32" aria-hidden="true"><path d="M22 5a12 12 0 1 0 5 14"/><path d="M27 11v9h-9"/></svg><span data-ws-rotate-label>+45°</span></button>
+                </div>
+              </div>
+              <div class="ws-tool-group ws-map-pan-tools">
+                <span class="overline">ПЕРЕМЕЩЕНИЕ КАРТЫ</span>
+                <div class="ws-transform-move">
+                  <label>Шаг карты<input id="ws-pan-step" type="number" min="0.1" max="100" step="0.1" value="1"></label>
+                  <div class="ws-nudge-grid ws-pan-grid" role="group" aria-label="Сдвинуть окно карты">
+                    <span></span><button type="button" data-ws-pan="up" aria-label="Сдвинуть карту вверх" title="Сдвинуть карту вверх"><span class="ws-editor-arrow arrow-up" aria-hidden="true"></span></button><span></span>
+                    <button type="button" data-ws-pan="left" aria-label="Сдвинуть карту влево" title="Сдвинуть карту влево"><span class="ws-editor-arrow arrow-left" aria-hidden="true"></span></button><span class="ws-nudge-center" aria-hidden="true"></span><button type="button" data-ws-pan="right" aria-label="Сдвинуть карту вправо" title="Сдвинуть карту вправо"><span class="ws-editor-arrow arrow-right" aria-hidden="true"></span></button>
+                    <span></span><button type="button" data-ws-pan="down" aria-label="Сдвинуть карту вниз" title="Сдвинуть карту вниз"><span class="ws-editor-arrow arrow-down" aria-hidden="true"></span></button><span></span>
+                  </div>
+                </div>
               </div>
               <div class="ws-tool-group"><span class="overline">КАТЕГОРИИ ОБЪЕКТОВ</span>
                 <div id="ws-palette" class="ws-palette ws-category-list">

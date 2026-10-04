@@ -1035,6 +1035,10 @@ static int workshop_geometry_refs(int object, float **x, float **y,
     return 0;
 }
 static void workshop_rotate_selected(float degrees);
+static lv_obj_t *workshop_rotation_button(lv_obj_t *parent, int x, int y,
+                                           int w, int h, int action,
+                                           lv_color_t face, int direction,
+                                           const char *caption, int caption_size);
 static int workshop_primary_geometry(float **x, float **y, float **w,
                                      float **h, float **angle) {
     return workshop_selection_count() > 0 &&
@@ -1922,10 +1926,12 @@ static void workshop_draw_transform_dialog(lv_obj_t *root) {
     snprintf(value, sizeof value, "%.2f", *angle);
     workshop_button(root, 416, 343, 252, 64, value, 2,
                     U_WORKSHOP_OBJECT_ANGLE_EDIT, WS_DARK_VALUE);
-    workshop_button(root, 683, 343, 78, 64, "- 15", 1,
-                    U_WORKSHOP_ROTATE_BASE, BUTTON_GRAY);
-    workshop_button(root, 770, 343, 78, 64, "+ 15", 1,
-                    U_WORKSHOP_ROTATE_BASE + 1, BUTTON_GRAY);
+    workshop_rotation_button(root, 683, 343, 78, 64,
+                             U_WORKSHOP_ROTATE_BASE, BUTTON_GRAY, -1,
+                             "-45°", 0);
+    workshop_rotation_button(root, 770, 343, 78, 64,
+                             U_WORKSHOP_ROTATE_BASE + 1, BUTTON_GRAY, 1,
+                             "+45°", 0);
 
     char note[96];
     snprintf(note, sizeof note,
@@ -2133,13 +2139,13 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
     label(root, 768, 477, 214, 38, camera_label, 0,
           WS_CREAM, LV_TEXT_ALIGN_LEFT);
     workshop_arrow_button(root, 984, 473, 52, 45,
-                          U_WORKSHOP_PAN_BASE, BUTTON_GRAY, -1);
+                          U_WORKSHOP_PAN_BASE, WS_CYAN, -1);
     workshop_arrow_button(root, 1040, 473, 52, 45,
-                          U_WORKSHOP_PAN_BASE + 1, BUTTON_GRAY, 0);
+                          U_WORKSHOP_PAN_BASE + 1, WS_CYAN, 0);
     workshop_arrow_button(root, 1096, 473, 52, 45,
-                          U_WORKSHOP_PAN_BASE + 2, BUTTON_GRAY, 2);
+                          U_WORKSHOP_PAN_BASE + 2, WS_CYAN, 2);
     workshop_arrow_button(root, 1152, 473, 52, 45,
-                          U_WORKSHOP_PAN_BASE + 3, BUTTON_GRAY, 1);
+                          U_WORKSHOP_PAN_BASE + 3, WS_CYAN, 1);
 
     const int palette_types[] = {ON_LEVEL_BLOCK, ON_LEVEL_GROUND,
         ON_LEVEL_HAZARD, ON_LEVEL_COIN, ON_LEVEL_ENEMY, ON_LEVEL_PLAYER,
@@ -2156,25 +2162,32 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
         label(root, x + 2, 599, 76, 24, palette_names[i], 0,
               BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
     }
-    label(root, 43, 637, 265, 28, "СДВИГ ВЫДЕЛЕНИЯ", 0,
+    label(root, 43, 637, 193, 28, "ДВИГАТЬ ОБЪЕКТЫ", 0,
           WS_YELLOW, LV_TEXT_ALIGN_LEFT);
     workshop_arrow_button(root, 43, 666, 46, 44,
-                          U_WORKSHOP_NUDGE_BASE, BUTTON_GRAY, -1);
+                          U_WORKSHOP_NUDGE_BASE, WS_GREEN, -1);
     workshop_arrow_button(root, 92, 666, 46, 44,
-                          U_WORKSHOP_NUDGE_BASE + 1, BUTTON_GRAY, 0);
+                          U_WORKSHOP_NUDGE_BASE + 1, WS_GREEN, 0);
     workshop_arrow_button(root, 141, 666, 46, 44,
-                          U_WORKSHOP_NUDGE_BASE + 2, BUTTON_GRAY, 2);
+                          U_WORKSHOP_NUDGE_BASE + 2, WS_GREEN, 2);
     workshop_arrow_button(root, 190, 666, 46, 44,
-                          U_WORKSHOP_NUDGE_BASE + 3, BUTTON_GRAY, 1);
-    label(root, 252, 660, 468, 49,
-          workshop_selection_count() ? "Стрелки перемещают весь выбор на 1 клетку." :
-          "Выбери объект или включи «Мульти». Затем сдвигай стрелками.",
+                          U_WORKSHOP_NUDGE_BASE + 3, WS_GREEN, 1);
+    label(root, 252, 637, 96, 28, "ПОВОРОТ", 0,
+          WS_YELLOW, LV_TEXT_ALIGN_CENTER);
+    workshop_rotation_button(root, 252, 666, 46, 44,
+                             U_WORKSHOP_ROTATE_BASE, WS_GREEN, -1, NULL, 0);
+    workshop_rotation_button(root, 303, 666, 46, 44,
+                             U_WORKSHOP_ROTATE_BASE + 1, WS_GREEN, 1, NULL, 0);
+    label(root, 357, 660, 363, 49,
+          workshop_selection_count() ?
+          "Стрелки двигают выбор; закруглённые кнопки вращают его на 45°." :
+          "Выбери объекты: зелёные стрелки двигают, закруглённые поворачивают.",
           0, WS_CREAM, LV_TEXT_ALIGN_LEFT);
     const char *publish_status = workshop_notice[0] ? workshop_notice :
         view->level_publish_busy ? "Публикуем уровень в общий каталог…" :
         view->level_publish_notice[0] ? view->level_publish_notice :
         view->level_publish_id[0] ? "Уровень опубликован. ID показан ниже." :
-        "Категория, объект, клетка карты. Карта прокручивается стрелками.";
+        "Зелёные стрелки двигают выделение, бирюзовые — карту.";
     label(root, 747, 562, 493, 64, publish_status,
           1, WS_CREAM, LV_TEXT_ALIGN_CENTER);
     if (view->level_publish_id[0]) {
@@ -2296,6 +2309,79 @@ static void vector_refresh_draw(lv_event_t *event) {
     head.p[1] = (lv_point_precise_t){cx + 1, cy - 11};
     head.p[2] = (lv_point_precise_t){cx + 11, cy - 1};
     lv_draw_triangle(layer, &head);
+}
+
+static void vector_rotation_draw(lv_event_t *event) {
+    if (lv_event_get_code(event) != LV_EVENT_DRAW_MAIN) return;
+    lv_obj_t *object = lv_event_get_current_target(event);
+    lv_layer_t *layer = lv_event_get_layer(event);
+    lv_area_t bounds;
+    lv_obj_get_coords(object, &bounds);
+    int direction = (int)(intptr_t)lv_event_get_user_data(event);
+    int width = bounds.x2 - bounds.x1 + 1;
+    int height = bounds.y2 - bounds.y1 + 1;
+    int size = width < height ? width : height;
+    int radius = size * 24 / 100;
+    if (radius < 7) radius = 7;
+    int cx = (bounds.x1 + bounds.x2) / 2;
+    int cy = bounds.y1 + height * 39 / 100;
+    float sign = direction < 0 ? -1.0f : 1.0f;
+    float start = direction < 0 ? 135.0f : 45.0f;
+    float sweep = direction < 0 ? -270.0f : 270.0f;
+    lv_draw_line_dsc_t line;
+    lv_draw_line_dsc_init(&line);
+    line.color = BUTTON_TEXT;
+    line.opa = LV_OPA_COVER;
+    line.width = size < 56 ? 2 : 3;
+    line.round_start = 1;
+    line.round_end = 1;
+    const int segments = 20;
+    for (int i = 0; i < segments; ++i) {
+        float a0 = (start + sweep * i / segments) * 0.01745329251994329577f;
+        float a1 = (start + sweep * (i + 1) / segments) * 0.01745329251994329577f;
+        line.p1 = (lv_point_precise_t){cx + lroundf(cosf(a0) * radius),
+                                       cy + lroundf(sinf(a0) * radius)};
+        line.p2 = (lv_point_precise_t){cx + lroundf(cosf(a1) * radius),
+                                       cy + lroundf(sinf(a1) * radius)};
+        lv_draw_line(layer, &line);
+    }
+    float end = (start + sweep) * 0.01745329251994329577f;
+    float tip_x = cx + cosf(end) * radius;
+    float tip_y = cy + sinf(end) * radius;
+    float tangent_x = -sinf(end) * sign;
+    float tangent_y = cosf(end) * sign;
+    float arrow_length = size < 56 ? 6.0f : 8.0f;
+    float arrow_half = size < 56 ? 3.5f : 4.5f;
+    float base_x = tip_x - tangent_x * arrow_length;
+    float base_y = tip_y - tangent_y * arrow_length;
+    float side_x = -tangent_y * arrow_half;
+    float side_y = tangent_x * arrow_half;
+    lv_draw_triangle_dsc_t head;
+    lv_draw_triangle_dsc_init(&head);
+    head.color = BUTTON_TEXT;
+    head.opa = LV_OPA_COVER;
+    head.p[0] = (lv_point_precise_t){lroundf(tip_x), lroundf(tip_y)};
+    head.p[1] = (lv_point_precise_t){lroundf(base_x + side_x),
+                                     lroundf(base_y + side_y)};
+    head.p[2] = (lv_point_precise_t){lroundf(base_x - side_x),
+                                     lroundf(base_y - side_y)};
+    lv_draw_triangle(layer, &head);
+}
+
+static lv_obj_t *workshop_rotation_button(lv_obj_t *parent, int x, int y,
+                                           int w, int h, int action,
+                                           lv_color_t face, int direction,
+                                           const char *caption, int caption_size) {
+    lv_obj_t *rotate = workshop_button(parent, x, y, w, h, "", 0,
+                                       action, face);
+    lv_obj_add_event_cb(rotate, vector_rotation_draw, LV_EVENT_DRAW_MAIN,
+                        (void *)(intptr_t)direction);
+    if (caption && caption[0]) {
+        int caption_height = caption_size == 0 ? 19 : 22;
+        label(rotate, 2, h - caption_height - 2, w - 4, caption_height,
+              caption, caption_size, BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
+    }
+    return rotate;
 }
 
 static lv_obj_t *workshop_arrow_button(lv_obj_t *parent, int x, int y,
@@ -2989,9 +3075,9 @@ static void pressed(lv_event_t *ev) {
     case U_WORKSHOP_SCALE_BASE + 3:
         workshop_resize_selected(0, .1f);dirty = 1;break;
     case U_WORKSHOP_ROTATE_BASE:
-        workshop_rotate_selected(-15.0f);dirty = 1;break;
+        workshop_rotate_selected(-45.0f);dirty = 1;break;
     case U_WORKSHOP_ROTATE_BASE + 1:
-        workshop_rotate_selected(15.0f);dirty = 1;break;
+        workshop_rotate_selected(45.0f);dirty = 1;break;
     case U_WORKSHOP_GROUP_DEC:
         if (workshop_dialog == WS_DIALOG_MOVE) {
             if (workshop_target_group > 0) workshop_target_group--;

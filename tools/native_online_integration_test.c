@@ -482,13 +482,19 @@ static int run_lvgl_test(void) {
     ui_tap(1180, 690); /* independent size/rotation dialog */
     ui_snapshot("workshop_transform_dialog");
     ui_tap(809, 187); /* width +0.1 */
-    ui_tap(809, 375); /* direct rotation +15 degrees, no trigger */
+    ui_tap(722, 375); /* counterclockwise 45-degree rotation */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[3].angle == 315.0f);
+#endif
+    ui_tap(809, 375); /* clockwise 45-degree rotation, independent of triggers */
+    ui_tap(809, 375); /* return from 0 to 45 degrees */
     ui_tap(640, 610); /* save direct transform */
 #ifdef PVG3_LVGL_TEST
     assert(lvgl_ui_test_workshop_level(&editor_probe));
     assert(editor_probe.object_count == 4 &&
            editor_probe.objects[3].w > 1.09f && editor_probe.objects[3].w < 1.11f &&
-           editor_probe.objects[3].angle == 15.0f);
+           editor_probe.objects[3].angle == 45.0f);
 #endif
     ui_snapshot("workshop_direct_transform");
 
@@ -552,7 +558,7 @@ static int run_lvgl_test(void) {
            strstr(uploaded_level_body, "\"kind\":\"forever\"") &&
            strstr(uploaded_level_body, "\"x\":10.0000") &&
            strstr(uploaded_level_body, "\"w\":1.1000") &&
-           strstr(uploaded_level_body, "\"angle\":15.000"));
+           strstr(uploaded_level_body, "\"angle\":45.000"));
     ui_snapshot("workshop_published");
     ui_tap(1158, 50);assert(game_phase() == GAME_CUSTOM_PLAY);
     ui_snapshot("workshop_preview");

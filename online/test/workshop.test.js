@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {LEVEL_TYPES, TRIGGER_KINDS, WORLD_LIMIT, MAX_LEVEL_OBJECTS,
         MAX_OBJECT_WIDTH, MAX_OBJECT_HEIGHT, newDraft, addObject, findObjectAt,
-        moveObjects, resizeObjects, rotateObjects, copyObjects, pasteObjects, validateDraft,
+        moveObjects, resizeObjects, rotateObjects, panCamera, copyObjects, pasteObjects, validateDraft,
         publishedRecord, isPublishedRecord, draftFromPublished, resolveControlMode,
         createTouchButtonState, createPreviewState, stepPreview,
         drawEditorCanvas, drawPreviewCanvas} from '../workshop.js';
@@ -58,6 +58,15 @@ test('world placement is scrollable across large positive and negative coordinat
     assert.equal(addObject(level, 'trigger', kind === 'rotate' ? 8 : 7, 5, kind).trigger.kind, kind);
   assert.deepEqual(TRIGGER_KINDS, ['move', 'rotate', 'forever']);
   assert.equal(validateDraft(level).ok, true);
+});
+
+test('map arrow controls pan the viewport independently and clamp to the world edges', () => {
+  assert.deepEqual(panCamera({x: 0, y: 0}, 4, -3), {x: 4, y: -3});
+  assert.deepEqual(panCamera({x: WORLD_LIMIT - 16, y: WORLD_LIMIT - 10}, 4, 3),
+    {x: WORLD_LIMIT - 16, y: WORLD_LIMIT - 10});
+  assert.deepEqual(panCamera({x: -WORLD_LIMIT, y: -WORLD_LIMIT}, -2, -5),
+    {x: -WORLD_LIMIT, y: -WORLD_LIMIT});
+  assert.deepEqual(panCamera({x: 1, y: 2}, NaN, Infinity), {x: 1, y: 2});
 });
 
 test('published records round-trip through the browser/native wire schema', () => {

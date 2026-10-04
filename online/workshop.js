@@ -152,6 +152,17 @@ export function rotateObjects(level, ids, degrees) {
   return objects.length;
 }
 
+export function panCamera(camera, dx, dy) {
+  const x = finite(camera?.x) ? camera.x : 0;
+  const y = finite(camera?.y) ? camera.y : 0;
+  if (!finite(dx)) dx = 0;
+  if (!finite(dy)) dy = 0;
+  return {
+    x: clamp(x + dx, -WORLD_LIMIT, WORLD_LIMIT - LEVEL_WIDTH),
+    y: clamp(y + dy, -WORLD_LIMIT, WORLD_LIMIT - LEVEL_HEIGHT),
+  };
+}
+
 export function copyObjects(level, ids) {
   return selectedObjects(level, ids)
     .filter(object => object.type !== 'player' && object.type !== 'goal')

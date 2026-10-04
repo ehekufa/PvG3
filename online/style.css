@@ -615,7 +615,14 @@ button, .panel, .map-card, .room-item, .side-card, .code-panel, .canvas-wrap,
 .ws-transform-move { display: grid; grid-template-columns: minmax(0, 1fr) 108px; align-items: end; gap: 6px; }
 .ws-nudge-grid { display: grid; grid-template-columns: repeat(3, 32px); grid-template-rows: repeat(3, 30px); gap: 3px; }
 .ws-nudge-grid button { display: grid; min-height: 30px; place-items: center; padding: 0; }
+.ws-nudge-grid:not(.ws-pan-grid) button { background: #c8edaa; }
+.ws-pan-grid button { border-color: #168f98; background: #bff1f2; }
 .ws-nudge-center { width: 8px; height: 8px; justify-self: center; align-self: center; border-radius: 50%; background: currentColor; }
+.ws-map-pan-tools { padding-top: 10px; border-top: 2px solid var(--outline); }
+.ws-rotate-actions button { display: flex; min-height: 52px; flex-direction: column; align-items: center; justify-content: center; gap: 1px; }
+.ws-rotate-icon { width: 23px; height: 23px; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+.ws-rotate-icon path:last-child { fill: currentColor; stroke: none; }
+.ws-rotate-icon.rotate-cw { transform: scaleX(-1); }
 .ws-editor-arrow { position: relative; display: inline-block; width: 19px; height: 4px; border-radius: 2px; background: currentColor; }
 .ws-editor-arrow::after {
   position: absolute; top: 50%; right: -2px; width: 0; height: 0;
