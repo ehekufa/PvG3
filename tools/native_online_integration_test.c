@@ -347,9 +347,10 @@ static void native_trigger_runtime_regression(void) {
         .x=6,.y=6,.w=1,.h=1,.visible=1,.number=42};
     level.objects[4] = (OnLevelObject){.id=5,.type=ON_LEVEL_BLOCK,
         .x=8,.y=6,.w=1,.h=1,.visible=1,.number=42};
+    /* Action-button events must fire even when the player is nowhere near them. */
     for (int i = 5; i < 8; ++i) {
         level.objects[i] = (OnLevelObject){.id=i + 1,.type=ON_LEVEL_TRIGGER,
-            .x=1,.y=7,.w=1,.h=1,.visible=1,
+            .x=100,.y=100,.w=1,.h=1,.visible=1,
             .trigger_event=ON_TRIGGER_MANUAL,.target_id=0,
             .trigger_group_id=42,.trigger_has_group=1};
     }
@@ -408,10 +409,9 @@ static void native_trigger_runtime_regression(void) {
     level.objects[4] = (OnLevelObject){.id=5,.type=ON_LEVEL_TRIGGER,
         .x=1,.y=7,.w=1,.h=1,.visible=1,
         .trigger_kind=ON_TRIGGER_KIND_INVISIBILITY,
-        .trigger_event=ON_TRIGGER_MANUAL,.trigger_action=ON_TRIGGER_INVISIBLE,
+        .trigger_event=ON_TRIGGER_START,.trigger_action=ON_TRIGGER_INVISIBLE,
         .trigger_group_id=42,.trigger_has_group=1};
     assert(game_workshop_preview(&level));
-    game_custom_control(0, 0, 1);game_tick(.05f, NULL);game_custom_control(0, 0, 0);
     assert(game_debug_custom_object(4, &first) && first.visible &&
            game_debug_custom_object_invisible(4));
     for (int i = 0; i < 20; ++i) game_tick(.05f, NULL);
@@ -419,9 +419,23 @@ static void native_trigger_runtime_regression(void) {
            game_debug_custom_player_y() < 8 * 72);
     game_custom_level_exit();
 
+    /* Touch events need actual contact; merely pressing action never substitutes for touch. */
+    level.objects[4].trigger_event = ON_TRIGGER_TOUCH;
+    level.objects[4].x = 100;level.objects[4].y = 100;
+    assert(game_workshop_preview(&level));
+    for (int i = 0; i < 20; ++i) game_tick(.05f, NULL);
+    assert(!game_debug_custom_object_invisible(4));
+    game_custom_level_exit();
+    level.objects[4].x = 1;level.objects[4].y = 7;
+    assert(game_workshop_preview(&level));
+    game_tick(.01f, NULL);
+    assert(game_debug_custom_object_invisible(4));
+    game_custom_level_exit();
+
     /* The collision trigger leaves its block visible but lets the player fall through. */
     level.objects[3].visible = 1;
     level.objects[4].trigger_kind = ON_TRIGGER_KIND_NO_COLLISION;
+    level.objects[4].trigger_event = ON_TRIGGER_MANUAL;
     level.objects[4].trigger_action = ON_TRIGGER_NO_COLLISION;
     assert(game_workshop_preview(&level));
     game_custom_control(0, 0, 1);game_tick(.05f, NULL);game_custom_control(0, 0, 0);
@@ -619,11 +633,14 @@ static int run_lvgl_test(void) {
     ui_tap(835, 361); /* open trigger settings */
     ui_tap(870, 528); /* switch the selected trigger to invisibility */
     ui_tap(1108, 528); /* and back to no-collision */
+    ui_tap(878, 173);ui_tap(878, 173);ui_tap(878, 173); /* event: start */
     ui_tap(640, 628); /* close trigger settings */
 #ifdef PVG3_LVGL_TEST
     assert(lvgl_ui_test_workshop_level(&editor_probe));
     assert(editor_probe.objects[editor_probe.object_count - 1].trigger_kind ==
-           ON_TRIGGER_KIND_NO_COLLISION);
+           ON_TRIGGER_KIND_NO_COLLISION &&
+           editor_probe.objects[editor_probe.object_count - 1].trigger_event ==
+           ON_TRIGGER_START);
 #endif
     ui_tap(1178, 526); /* scroll the infinite workshop map */
     ui_tap(80, 596); /* block category */
@@ -665,6 +682,7 @@ static int run_lvgl_test(void) {
            strstr(uploaded_level_body, "\"action\":\"invisible\"") &&
            strstr(uploaded_level_body, "\"kind\":\"no-collision\"") &&
            strstr(uploaded_level_body, "\"action\":\"no-collision\"") &&
+           strstr(uploaded_level_body, "\"event\":\"start\"") &&
            strstr(uploaded_level_body, "\"x\":10.0000") &&
            strstr(uploaded_level_body, "\"w\":1.1000") &&
            strstr(uploaded_level_body, "\"angle\":45.000"));

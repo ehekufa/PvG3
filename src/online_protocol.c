@@ -281,6 +281,7 @@ static int level_event(const JD *d, int token) {
     if (eq(d, token, "touch")) return ON_TRIGGER_TOUCH;
     if (eq(d, token, "coin")) return ON_TRIGGER_COIN;
     if (eq(d, token, "manual")) return ON_TRIGGER_MANUAL;
+    if (eq(d, token, "start")) return ON_TRIGGER_START;
     return -1;
 }
 static int level_action(const JD *d, int token) {
@@ -859,7 +860,7 @@ static int utf8_units(const char *text, size_t cap, size_t limit) {
 static int published_trigger_valid(const OnLevelObject *o) {
     if (!o || o->trigger_kind < ON_TRIGGER_KIND_MOVE ||
         o->trigger_kind > ON_TRIGGER_KIND_NO_COLLISION ||
-        o->trigger_event < ON_TRIGGER_TOUCH || o->trigger_event > ON_TRIGGER_MANUAL ||
+        o->trigger_event < ON_TRIGGER_TOUCH || o->trigger_event > ON_TRIGGER_START ||
         o->trigger_action < ON_TRIGGER_TOGGLE ||
         o->trigger_action > ON_TRIGGER_NO_COLLISION ||
         o->target_id < 0 || o->target_id > 1000000 ||
@@ -932,7 +933,7 @@ size_t on_protocol_published_level_json(const OnPublishedLevel *level,
     static const char *const types[] = {
         "block", "ground", "hazard", "coin", "enemy", "player", "goal", "trigger"
     };
-    static const char *const events[] = {"touch", "coin", "manual"};
+    static const char *const events[] = {"touch", "coin", "manual", "start"};
     static const char *const actions[] = {
         "toggle", "move", "recolor", "number", "rotate", "activate", "unactivate",
         "invisible", "no-collision"

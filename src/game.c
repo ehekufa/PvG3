@@ -466,6 +466,7 @@ void game_set_lvgl_ui(int enabled) {
 
 static int custom_platformer_start(const OnPublishedLevel *level);
 static void custom_platformer_stop(void);
+static void custom_fire_triggers(int event);
 static void custom_platformer_update(float dt);
 static void custom_platformer_draw(void);
 
@@ -2340,6 +2341,7 @@ static int custom_platformer_start(const OnPublishedLevel *source) {
     custom_level_coins = 0;custom_level_won = 0;custom_level_active = 1;
     custom_control_axis = custom_jump_request = custom_jump_held = 0;
     custom_trigger_request = custom_trigger_held = 0;
+    custom_fire_triggers(ON_TRIGGER_START);
     return 1;
 }
 static void custom_platformer_stop(void) {
@@ -2462,17 +2464,10 @@ static void custom_fire_triggers(int event) {
         int legacy_loop = trigger->trigger_kind == ON_TRIGGER_KIND_FOREVER &&
                           !trigger->trigger_has_group;
         if (legacy_loop ? custom_trigger_active[i] : custom_trigger_fired[i]) continue;
-        float tx = trigger->x * CUSTOM_TILE_W, ty = trigger->y * CUSTOM_TILE_H;
-        float tw = trigger->w * CUSTOM_TILE_W, th = trigger->h * CUSTOM_TILE_H;
         if (event == ON_TRIGGER_TOUCH &&
             !custom_player_object_contact(custom_player_x, custom_player_y,
                 custom_player_w, custom_player_h, trigger,
                 custom_player_vx, custom_player_vy, NULL)) continue;
-        if (event == ON_TRIGGER_MANUAL) {
-            float dx = custom_player_x + custom_player_w * .5f - (tx + tw * .5f);
-            float dy = custom_player_y + custom_player_h * .5f - (ty + th * .5f);
-            if (dx * dx + dy * dy > 150.0f * 150.0f) continue;
-        }
         if (legacy_loop) {
             custom_trigger_active[i] = 1;
             custom_trigger_timers[i] = 0;

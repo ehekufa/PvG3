@@ -74,7 +74,7 @@ test('published records round-trip through the browser/native wire schema', () =
   const level = newDraft();level.title = 'Острова над рекой';level.description = 'Монеты и тайный мост';
   const block = addObject(level, 'block', 6, 6);
   const trigger = addObject(level, 'trigger', 4, 7);
-  trigger.trigger = {event:'manual',action:'recolor',targetId:block.id,value:0,color:'#ffcc44'};
+  trigger.trigger = {event:'start',action:'recolor',targetId:block.id,value:0,color:'#ffcc44'};
   const record = publishedRecord('104', level);
   assert.equal(record.format, 'PVG3-PUBLISHED-LEVEL');
   assert.equal(record.project.format, 'PVG3-MAKER');
@@ -83,6 +83,7 @@ test('published records round-trip through the browser/native wire schema', () =
   const restored = draftFromPublished(record);
   assert.equal(restored.title, level.title);
   assert.equal(restored.objects.find(o => o.id === trigger.id).trigger.action, 'recolor');
+  assert.equal(restored.objects.find(o => o.id === trigger.id).trigger.event, 'start');
   assert.equal(validateDraft(restored).ok, true);
   assert.throws(() => publishedRecord('0', level), /ID/);
 });
@@ -227,6 +228,46 @@ test('invisibility and no-collision variants round-trip and change grouped targe
   for (let i = 0; i < 20; i++) stepPreview(falling, {}, .05);
   assert(falling.noCollision.includes(platform.id));
   assert(falling.y > 9 * 72, 'the player falls through the collision-disabled block');
+});
+
+test('start and action events do not need contact, while touch events do', () => {
+  const startLevel = newDraft('trigger-start-event');
+  const startBlock = addObject(startLevel, 'block', 6, 6);
+  startBlock.number = 42;
+  const startTrigger = addObject(startLevel, 'trigger', 100, 100, 'invisibility');
+  startTrigger.trigger = {kind: 'invisibility', event: 'start', action: 'invisible',
+    targetId: startBlock.id, groupId: 42, color: '#ffc54e'};
+  assert.equal(validateDraft(startLevel).ok, true);
+  const started = createPreviewState(startLevel);
+  assert(started.invisible.includes(startBlock.id),
+    'start triggers fire immediately when the preview is created');
+
+  const manualLevel = newDraft('trigger-manual-anywhere');
+  const manualBlock = addObject(manualLevel, 'block', 6, 6);
+  manualBlock.number = 42;
+  const manualTrigger = addObject(manualLevel, 'trigger', 100, 100, 'no-collision');
+  manualTrigger.trigger = {kind: 'no-collision', event: 'manual', action: 'no-collision',
+    targetId: manualBlock.id, groupId: 42, color: '#ffc54e'};
+  const manual = createPreviewState(manualLevel);
+  stepPreview(manual, {trigger: true}, .01);
+  assert(manual.noCollision.includes(manualBlock.id),
+    'the action button activates its event without touching the trigger');
+
+  const touchLevel = newDraft('trigger-touch-contact');
+  const touchBlock = addObject(touchLevel, 'block', 6, 6);
+  touchBlock.number = 42;
+  const touchTrigger = addObject(touchLevel, 'trigger', 100, 100, 'invisibility');
+  touchTrigger.trigger = {kind: 'invisibility', event: 'touch', action: 'invisible',
+    targetId: touchBlock.id, groupId: 42, color: '#ffc54e'};
+  const touched = createPreviewState(touchLevel);
+  stepPreview(touched, {}, .01);
+  assert(!touched.invisible.includes(touchBlock.id),
+    'a touch trigger does not fire while it is far away');
+  const runtimeTrigger = touched.objects.find(object => object.id === touchTrigger.id);
+  runtimeTrigger.x = 1;runtimeTrigger.y = 7;
+  stepPreview(touched, {}, .01);
+  assert(touched.invisible.includes(touchBlock.id),
+    'the touch trigger fires once the player contacts it');
 });
 
 test('rotated collision follows the drawn block and play preview hides all trigger art', () => {

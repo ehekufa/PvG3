@@ -44,7 +44,7 @@ const TYPE_TO_ID = Object.freeze({
 const TYPE_NAMES = Object.freeze([
   'block', 'ground', 'hazard', 'coin', 'enemy', 'player', 'goal', 'trigger',
 ]);
-const EVENTS = new Set(['touch', 'coin', 'manual']);
+const EVENTS = new Set(['touch', 'coin', 'manual', 'start']);
 const ACTIONS = new Set([
   'toggle', 'move', 'recolor', 'number', 'rotate', 'invisible', 'no-collision',
 ]);
@@ -391,11 +391,13 @@ export function createTouchButtonState() {
 export function createPreviewState(level) {
   const player = level.objects.find(o => o.type === 'player');
   if (!player) throw new Error('Уровень без игрока.');
-  return {objects: copy(level.objects), x: player.x * TILE_W, y: player.y * TILE_H,
+  const state = {objects: copy(level.objects), x: player.x * TILE_W, y: player.y * TILE_H,
     vx: 0, vy: 0, grounded: false, time: 0, coins: 0, won: false,
     collected: [], triggerFired: [], triggerActive: [], triggerTimers: Object.create(null),
     invisible: [], noCollision: [], groupRotations: [],
     spawn: {x: player.x * TILE_W, y: player.y * TILE_H}};
+  runTriggers(state, 'start');
+  return state;
 }
 function playerObjectContact(px, py, pw, ph, object, vx = 0, vy = 0) {
   const angle = (Number(object.angle) || 0) * Math.PI / 180;
@@ -534,8 +536,6 @@ function runTriggers(state, event) {
       ph = (player?.h || .85) * TILE_H;
     if (event === 'touch' &&
         !playerObjectContact(px, py, pw, ph, trigger, state.vx, state.vy)) continue;
-    if (event === 'manual' && Math.hypot(px + pw / 2 - (trigger.x + trigger.w / 2) * TILE_W,
-        py + ph / 2 - (trigger.y + trigger.h / 2) * TILE_H) > 150) continue;
     if (legacyLoop) {
       state.triggerActive.push(trigger.id);
       state.triggerTimers[trigger.id] = 0;

@@ -1846,7 +1846,9 @@ static void workshop_draw_trigger_dialog(lv_obj_t *root) {
     if (workshop_selected < 0 || workshop_selected >= workshop_object_count) return;
     WorkshopObject *o = &workshop_objects[workshop_selected];
     if (o->type != ON_LEVEL_TRIGGER) return;
-    static const char *const events[] = {"Касание", "Подбор монеты", "Кнопка действия"};
+    static const char *const events[] = {
+        "Касание", "Подбор монеты", "Кнопка действия", "Старт уровня"
+    };
     workshop_dialog_shade(root);
     box(root, 92, 34, 1096, 652, 17, WS_BROWN, 0);
     box(root, 103, 45, 1074, 76, 12, WS_BROWN_DARK, 0);
@@ -1858,7 +1860,7 @@ static void workshop_draw_trigger_dialog(lv_obj_t *root) {
     workshop_button(root, 433, 144, 66, 58, "‹", 2,
                     U_WORKSHOP_TRIGGER_EVENT_PREV, BUTTON_GRAY);
     box(root, 507, 144, 330, 58, 8, WS_DARK_VALUE, 0);
-    label(root, 514, 151, 316, 44, events[o->trigger_event % 3], 2,
+    label(root, 514, 151, 316, 44, events[o->trigger_event % 4], 2,
           WS_CREAM, LV_TEXT_ALIGN_CENTER);
     workshop_button(root, 845, 144, 66, 58, "›", 2,
                     U_WORKSHOP_TRIGGER_EVENT_NEXT, BUTTON_GRAY);
@@ -3021,9 +3023,9 @@ static void pressed(lv_event_t *ev) {
     case U_WORKSHOP_TRIGGER_EVENT_NEXT:
         if (workshop_selected >= 0 && workshop_selected < workshop_object_count &&
             workshop_objects[workshop_selected].type == ON_LEVEL_TRIGGER) {
-            int step = code == U_WORKSHOP_TRIGGER_EVENT_NEXT ? 1 : 2;
+            int step = code == U_WORKSHOP_TRIGGER_EVENT_NEXT ? 1 : 3;
             WorkshopObject *o = &workshop_objects[workshop_selected];
-            o->trigger_event = (o->trigger_event + step) % 3;
+            o->trigger_event = (o->trigger_event + step) % 4;
         }
         dirty = 1;break;
     case U_WORKSHOP_TRIGGER_ACTION:
