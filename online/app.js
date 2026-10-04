@@ -6,9 +6,9 @@ import {DATABASE, validId, randomPlayerId, listRooms, getRoom, createRoom,
 import {preloadArtwork, drawGame} from './draw.js';
 import {LEVEL_WIDTH, LEVEL_HEIGHT, MAX_LEVEL_OBJECTS, WORLD_LIMIT,
         MIN_OBJECT_SIZE, MAX_OBJECT_WIDTH, MAX_OBJECT_HEIGHT, TYPE_LABELS,
-        TRIGGER_LABELS, newDraft,
+        TRIGGER_KINDS, TRIGGER_LABELS, newDraft, setTriggerKind,
         addObject, findObjectAt, validateDraft, draftFromPublished,
-        moveObjects, resizeObjects, rotateObjects, panCamera, copyObjects, pasteObjects,
+        moveObjects, resizeObjects, rotateObjects, flipObjects, panCamera, copyObjects, pasteObjects,
         createPreviewState, stepPreview, drawEditorCanvas, drawPreviewCanvas,
         resolveControlMode, createTouchButtonState} from './workshop.js';
 
@@ -26,7 +26,7 @@ const WS_CONTROL_KEY = 'pvg3-workshop-control-v1';
 const wsPages = {home: $('ws-home-page'), editor: $('ws-editor-page'),
   preview: $('ws-preview-page'), catalog: $('ws-catalog-page')};
 let wsPage = 'home', wsDraft = loadWorkshopDraft(), wsTool = 'build', wsType = 'block';
-let wsTriggerKind = 'move', wsPaletteSelected = true;
+let wsTriggerKind = 'move', wsBlockType = 'block', wsPaletteSelected = true;
 let wsSelectedId = 0, wsSelectedIds = new Set(), wsClipboard = [];
 let wsDrag = null, wsPanDrag = null, wsCatalogGeneration = 0, wsCatalog = [];
 let wsCamera = {x: 0, y: 0};
@@ -37,11 +37,13 @@ const wsTouchButtons = createTouchButtonState();
 const wsKeys = new Set();
 let wsWinAnnounced = false;
 const WS_ART_FILES = {
-  block: 'Блок.png', ground: 'Платформа.png', hazard: 'Шип.png',
+  block: 'Блок.png', ground: 'Платформа.png', hazard: 'Шип.png', slope: 'Склон.png',
   coin: 'coin-token.png', enemy: 'zombie-duck.png', player: 'khlebushek.png',
   goal: 'Флажок - финиш.png',
   triggerMove: 'Триггер-движения.png', triggerRotate: 'Триггер-вращения.png',
   triggerForever: 'Триггер-вечно.png',
+  triggerInvisibility: 'Триггер-невидимости.png',
+  triggerNoCollision: 'Триггер-нет столкновения.png',
 };
 const wsArt = Object.fromEntries(Object.entries(WS_ART_FILES).map(([type, file]) => {
   const image = new Image();
@@ -82,7 +84,9 @@ function loadWorkshopDraft() {
         Number.isFinite(o.x) && Number.isFinite(o.y) && Number.isFinite(o.w) && Number.isFinite(o.h) &&
         typeof o.color === 'string' && /^#[0-9a-f]{6}$/i.test(o.color));
     if (validShape) {
-      for (const object of saved.objects) if (object.type === 'trigger') {
+      for (const object of saved.objects) {
+        object.flipX = object.flipX === true;object.flipY = object.flipY === true;
+        if (object.type !== 'trigger') continue;
         object.trigger ||= {event: 'touch', action: 'move', targetId: 0, value: 1, color: '#ffc54e'};
         object.trigger.kind ||= 'move';
         if (object.trigger.kind === 'rotate' && object.trigger.duration === undefined) {
@@ -139,16 +143,23 @@ function renderPaletteOptions() {
   for (const button of document.querySelectorAll('[data-ws-type]'))
     button.classList.toggle('active', button.dataset.wsType === wsType);
   container.replaceChildren();
-  const options = wsType === 'trigger' ? [
+  const options = wsType === 'block' ? [
+    {kind: 'block', label: TYPE_LABELS.block, art: 'block'},
+    {kind: 'slope', label: TYPE_LABELS.slope, art: 'slope'},
+    {kind: 'ground', label: TYPE_LABELS.ground, art: 'ground'},
+  ] : wsType === 'trigger' ? [
     {kind: 'move', label: TRIGGER_LABELS.move, art: 'triggerMove'},
     {kind: 'rotate', label: TRIGGER_LABELS.rotate, art: 'triggerRotate'},
     {kind: 'forever', label: TRIGGER_LABELS.forever, art: 'triggerForever'},
+    {kind: 'invisibility', label: TRIGGER_LABELS.invisibility, art: 'triggerInvisibility'},
+    {kind: 'no-collision', label: TRIGGER_LABELS['no-collision'], art: 'triggerNoCollision'},
   ] : [{kind: 'single', label: TYPE_LABELS[wsType], art: wsType}];
   for (const option of options) {
     const button = document.createElement('button');
     button.type = 'button';button.className = 'ws-palette-item';
     const active = wsPaletteSelected &&
-      (wsType !== 'trigger' || wsTriggerKind === option.kind);
+      (wsType === 'trigger' ? wsTriggerKind === option.kind :
+        wsType === 'block' ? wsBlockType === option.kind : true);
     if (active) button.classList.add('active');
     const icon = document.createElement('img');
     icon.alt = '';icon.setAttribute('aria-hidden', 'true');
@@ -157,6 +168,7 @@ function renderPaletteOptions() {
     button.append(icon, label);
     button.addEventListener('click', () => {
       if (wsType === 'trigger') wsTriggerKind = option.kind;
+      else if (wsType === 'block') wsBlockType = option.kind;
       wsPaletteSelected = true;
       wsTool = 'build';
       renderWorkshopEditor();
@@ -220,7 +232,7 @@ function renderSelectedObject() {
   $('ws-paste-selected').disabled = !wsClipboard.length ||
     wsDraft.objects.length + wsClipboard.length > MAX_LEVEL_OBJECTS;
   $('ws-delete-selected').disabled = !selected.length;
-  for (const button of document.querySelectorAll('[data-ws-nudge], [data-ws-scale], [data-ws-rotate]'))
+  for (const button of document.querySelectorAll('[data-ws-nudge], [data-ws-scale], [data-ws-rotate], [data-ws-flip]'))
     button.disabled = !selected.length;
   if (!selected.length) return;
   if (selected.length > 1) {
@@ -241,15 +253,17 @@ function renderSelectedObject() {
   triggerFields.classList.toggle('hidden', object.type !== 'trigger');
   if (object.type !== 'trigger') return;
   const t = object.trigger || {};
-  const kind = t.kind || 'move';
+  const kind = TRIGGER_KINDS.includes(t.kind) ? t.kind : 'move';
+  $('ws-trigger-kind').value = kind;
   const forever = kind === 'forever';
   const rotate = kind === 'rotate';
+  const moving = kind === 'move';
   const legacyTarget = wsDraft.objects.find(candidate => candidate.id === t.targetId);
   const groupId = Number.isInteger(t.groupId) ? t.groupId :
     Number.isInteger(legacyTarget?.number) ? legacyTarget.number : 0;
   $('ws-trigger-event').value = t.event || 'touch';
   $('ws-trigger-motion-fields').classList.toggle('hidden', forever);
-  $('ws-trigger-move-fields').classList.toggle('hidden', rotate);
+  $('ws-trigger-move-fields').classList.toggle('hidden', !moving);
   $('ws-trigger-rotate-field').classList.toggle('hidden', !rotate);
   $('ws-trigger-forever-fields').classList.toggle('hidden', !forever);
   $('ws-trigger-group').value = groupId;
@@ -293,7 +307,8 @@ function wsPointerDown(event) {
     if (!wsPaletteSelected) {
       showWorkshopMessage('Сначала выбери объект в выбранной категории.');return;
     }
-    const placed = addObject(wsDraft, wsType, Math.floor(point.x), Math.floor(point.y), wsTriggerKind);
+    const objectType = wsType === 'block' ? wsBlockType : wsType;
+    const placed = addObject(wsDraft, objectType, Math.floor(point.x), Math.floor(point.y), wsTriggerKind);
     if (!placed) {
       showWorkshopMessage('Достигнут лимит 120 объектов. Удали лишние объекты перед добавлением новых.');return;
     }
@@ -390,7 +405,7 @@ function wsPan(direction) {
   wsRedrawEditor();
 }
 function wsNudge(direction, multiplier = 1) {
-  const step = wsStep('ws-move-step', 1) * multiplier;
+  const step = wsStep('ws-move-step', .5) * multiplier;
   const offsets = {left: [-step, 0], right: [step, 0], up: [0, -step], down: [0, step]};
   const [dx, dy] = offsets[direction] || [0, 0];
   if (!moveObjects(wsDraft, wsSelectedIds, dx, dy)) return;
@@ -404,6 +419,10 @@ function wsScale(axis, sign) {
 function wsRotate(sign) {
   const step = wsStep('ws-rotate-step', 45) * sign;
   if (!rotateObjects(wsDraft, wsSelectedIds, step)) return;
+  saveWorkshopDraft();wsRedrawEditor();
+}
+function wsFlip(axis) {
+  if (!flipObjects(wsDraft, wsSelectedIds, axis)) return;
   saveWorkshopDraft();wsRedrawEditor();
 }
 function wsUpdateRotateLabels() {
@@ -447,7 +466,9 @@ function updateSelectedTrigger(property, value) {
   const object = wsObject(wsSelectedId);
   if (!object || object.type !== 'trigger') return;
   const t = object.trigger ||= {kind: 'move', event: 'touch', action: 'move'};
-  if (property === 'event') {
+  if (property === 'kind') {
+    if (!setTriggerKind(wsDraft, object.id, value)) return;
+  } else if (property === 'event') {
     t.event = value;
   } else if (property === 'groupId') {
     const n = Number(value);if (!Number.isFinite(n)) return;
@@ -890,6 +911,7 @@ for (const button of document.querySelectorAll('[data-ws-tool]'))
 for (const button of document.querySelectorAll('[data-ws-type]')) button.addEventListener('click', () => {
   wsType = button.dataset.wsType;
   if (wsType === 'trigger') wsTriggerKind = 'move';
+  if (wsType === 'block') wsBlockType = 'block';
   wsPaletteSelected = false;wsTool = 'build';
   renderWorkshopEditor();
 });
@@ -909,6 +931,8 @@ for (const button of document.querySelectorAll('[data-ws-scale]')) {
 }
 for (const button of document.querySelectorAll('[data-ws-rotate]'))
   button.addEventListener('click', () => wsRotate(Number(button.dataset.wsRotate)));
+for (const button of document.querySelectorAll('[data-ws-flip]'))
+  button.addEventListener('click', () => wsFlip(button.dataset.wsFlip));
 $('ws-rotate-step').addEventListener('input', wsUpdateRotateLabels);
 wsUpdateRotateLabels();
 for (const button of document.querySelectorAll('[data-ws-pan]'))
@@ -920,6 +944,7 @@ $('ws-object-height').addEventListener('change', e => updateSelectedProperty('he
 $('ws-object-angle').addEventListener('change', e => updateSelectedProperty('angle', e.target.value));
 $('ws-object-number').addEventListener('change', e => updateSelectedProperty('number', e.target.value));
 $('ws-object-color').addEventListener('input', e => updateSelectedProperty('color', e.target.value));
+$('ws-trigger-kind').addEventListener('change', e => updateSelectedTrigger('kind', e.target.value));
 $('ws-trigger-event').addEventListener('change', e => updateSelectedTrigger('event', e.target.value));
 $('ws-trigger-group').addEventListener('change', e => updateSelectedTrigger('groupId', e.target.value));
 $('ws-trigger-forever-group').addEventListener('change', e => updateSelectedTrigger('groupId', e.target.value));

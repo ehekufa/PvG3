@@ -603,7 +603,7 @@ button, .panel, .map-card, .room-item, .side-card, .code-panel, .canvas-wrap,
   width: 100%; min-height: 34px; padding: 4px 6px; border: 2px solid var(--outline);
   border-radius: 4px; color: var(--ink); background: var(--white); font: inherit; font-weight: normal;
 }
-.ws-transform-actions, .ws-rotate-actions {
+.ws-transform-actions, .ws-rotate-actions, .ws-flip-actions {
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px;
 }
 .ws-transform-tools button {
@@ -623,7 +623,12 @@ button, .panel, .map-card, .room-item, .side-card, .code-panel, .canvas-wrap,
 .ws-rotate-icon { width: 23px; height: 23px; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
 .ws-rotate-icon path:last-child { fill: currentColor; stroke: none; }
 .ws-rotate-icon.rotate-cw { transform: scaleX(-1); }
+.ws-flip-actions button { display: flex; min-height: 52px; flex-direction: column; align-items: center; justify-content: center; gap: 1px; font-size: 11px !important; }
+.ws-flip-icon { width: 22px; height: 22px; fill: currentColor; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.ws-flip-icon .mirror-axis { fill: none; stroke-dasharray: 2 2; }
 .ws-editor-arrow { position: relative; display: inline-block; width: 19px; height: 4px; border-radius: 2px; background: currentColor; }
+.ws-editor-arrow.arrow-head-only { width: 0; height: 0; border-radius: 0; border-top: 7px solid transparent; border-bottom: 7px solid transparent; border-left: 10px solid currentColor; background: transparent; }
+.ws-editor-arrow.arrow-head-only::after { content: none; }
 .ws-editor-arrow::after {
   position: absolute; top: 50%; right: -2px; width: 0; height: 0;
   border-top: 7px solid transparent; border-bottom: 7px solid transparent;

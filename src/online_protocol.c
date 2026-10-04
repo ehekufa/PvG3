@@ -271,7 +271,7 @@ static int color_value(const JD *d, int token, uint32_t *out) {
 }
 static int level_object_type(const JD *d, int token) {
     static const char *const names[] = {
-        "block", "ground", "hazard", "coin", "enemy", "player", "goal", "trigger"
+        "block", "ground", "hazard", "coin", "enemy", "player", "goal", "trigger", "slope"
     };
     for (int i = 0; i < (int)(sizeof names / sizeof names[0]); i++)
         if (eq(d, token, names[i])) return i;
@@ -281,6 +281,7 @@ static int level_event(const JD *d, int token) {
     if (eq(d, token, "touch")) return ON_TRIGGER_TOUCH;
     if (eq(d, token, "coin")) return ON_TRIGGER_COIN;
     if (eq(d, token, "manual")) return ON_TRIGGER_MANUAL;
+    if (eq(d, token, "start")) return ON_TRIGGER_START;
     return -1;
 }
 static int level_action(const JD *d, int token) {
@@ -291,12 +292,16 @@ static int level_action(const JD *d, int token) {
     if (eq(d, token, "rotate")) return ON_TRIGGER_ROTATE;
     if (eq(d, token, "activate")) return ON_TRIGGER_ACTIVATE;
     if (eq(d, token, "unactivate")) return ON_TRIGGER_UNACTIVATE;
+    if (eq(d, token, "invisible")) return ON_TRIGGER_INVISIBLE;
+    if (eq(d, token, "no-collision")) return ON_TRIGGER_NO_COLLISION;
     return -1;
 }
 static int level_trigger_kind(const JD *d, int token) {
     if (eq(d, token, "move")) return ON_TRIGGER_KIND_MOVE;
     if (eq(d, token, "rotate")) return ON_TRIGGER_KIND_ROTATE;
     if (eq(d, token, "forever")) return ON_TRIGGER_KIND_FOREVER;
+    if (eq(d, token, "invisibility")) return ON_TRIGGER_KIND_INVISIBILITY;
+    if (eq(d, token, "no-collision")) return ON_TRIGGER_KIND_NO_COLLISION;
     return -1;
 }
 int on_protocol_valid_level_id(const char *id) {
@@ -343,6 +348,10 @@ static int parse_level_object(const JD *d, int node, OnLevelObject *out) {
     if (node < 0 || d->t[node].type != 'o' || !out) return 0;
     OnLevelObject item = {0};
     int type = level_object_type(d, field(d, node, "type"));
+    int flip_x_token = field(d, node, "flipX");
+    int flip_y_token = field(d, node, "flipY");
+    if ((flip_x_token >= 0 && !bool_field(d, node, "flipX", &item.flip_x)) ||
+        (flip_y_token >= 0 && !bool_field(d, node, "flipY", &item.flip_y))) return 0;
     if (type < 0 || !int_field(d, node, "id", &item.id) || item.id < 1 || item.id > 1000000 ||
         !float_field(d, node, "x", &item.x) || !float_field(d, node, "y", &item.y) ||
         !float_field(d, node, "w", &item.w) || !float_field(d, node, "h", &item.h) ||
@@ -394,10 +403,11 @@ static int parse_level_object(const JD *d, int node, OnLevelObject *out) {
             item.trigger_has_duration = 1;
         }
         if (item.trigger_kind < ON_TRIGGER_KIND_MOVE ||
-            item.trigger_kind > ON_TRIGGER_KIND_FOREVER ||
+            item.trigger_kind > ON_TRIGGER_KIND_NO_COLLISION ||
             item.trigger_event < 0 || item.trigger_action < 0 ||
             (target_token >= 0 && !int_field(d, trigger, "targetId", &item.target_id)) ||
             (value_y_token >= 0 && !float_field(d, trigger, "valueY", &item.trigger_value_y)) ||
+            !isfinite(item.trigger_value) || !isfinite(item.trigger_value_y) ||
             (group_token >= 0 && (!int_field(d, trigger, "groupId", &item.trigger_group_id) ||
                                   item.trigger_group_id < 0 || item.trigger_group_id > 9999)) ||
             item.target_id < 0 || item.target_id > 1000000 ||
@@ -405,8 +415,7 @@ static int parse_level_object(const JD *d, int node, OnLevelObject *out) {
              !color_value(d, field(d, trigger, "color"), &item.trigger_color))) return 0;
         item.trigger_has_group = group_token >= 0;
         if (item.trigger_kind == ON_TRIGGER_KIND_MOVE) {
-            if ((item.trigger_action == ON_TRIGGER_ACTIVATE ||
-                 item.trigger_action == ON_TRIGGER_UNACTIVATE) ||
+            if (item.trigger_action > ON_TRIGGER_ROTATE ||
                 item.trigger_value < -9999 || item.trigger_value > 9999 ||
                 item.trigger_value_y < -9999 || item.trigger_value_y > 9999 ||
                 (item.trigger_has_group && item.trigger_group_id > 9999)) return 0;
@@ -414,15 +423,22 @@ static int parse_level_object(const JD *d, int node, OnLevelObject *out) {
             if (item.trigger_has_duration) {
                 if (item.trigger_action != ON_TRIGGER_ROTATE || !item.trigger_has_group ||
                     item.trigger_duration < 1 || item.trigger_duration > 9999) return 0;
-            } else if ((item.trigger_action == ON_TRIGGER_ACTIVATE ||
-                        item.trigger_action == ON_TRIGGER_UNACTIVATE) ||
+            } else if (item.trigger_action > ON_TRIGGER_ROTATE ||
                        item.trigger_value < -360 || item.trigger_value > 360) return 0;
-        } else if (item.trigger_has_group) {
-            if (item.trigger_action != ON_TRIGGER_ACTIVATE &&
-                item.trigger_action != ON_TRIGGER_UNACTIVATE) return 0;
-        } else if ((item.trigger_action == ON_TRIGGER_ACTIVATE ||
-                    item.trigger_action == ON_TRIGGER_UNACTIVATE) ||
-                   item.trigger_value < -100 || item.trigger_value > 100) return 0;
+        } else if (item.trigger_kind == ON_TRIGGER_KIND_FOREVER) {
+            if (item.trigger_has_group) {
+                if (item.trigger_action != ON_TRIGGER_ACTIVATE &&
+                    item.trigger_action != ON_TRIGGER_UNACTIVATE) return 0;
+            } else if (item.trigger_action > ON_TRIGGER_ROTATE ||
+                       item.trigger_value < -100 || item.trigger_value > 100) return 0;
+        } else if (!item.trigger_has_group && item.target_id <= 0) {
+            return 0;
+        } else if ((item.trigger_kind == ON_TRIGGER_KIND_INVISIBILITY &&
+                    item.trigger_action != ON_TRIGGER_INVISIBLE) ||
+                   (item.trigger_kind == ON_TRIGGER_KIND_NO_COLLISION &&
+                    item.trigger_action != ON_TRIGGER_NO_COLLISION)) {
+            return 0;
+        }
     }
     *out = item;return 1;
 }
@@ -847,10 +863,10 @@ static int utf8_units(const char *text, size_t cap, size_t limit) {
 }
 static int published_trigger_valid(const OnLevelObject *o) {
     if (!o || o->trigger_kind < ON_TRIGGER_KIND_MOVE ||
-        o->trigger_kind > ON_TRIGGER_KIND_FOREVER ||
-        o->trigger_event < ON_TRIGGER_TOUCH || o->trigger_event > ON_TRIGGER_MANUAL ||
+        o->trigger_kind > ON_TRIGGER_KIND_NO_COLLISION ||
+        o->trigger_event < ON_TRIGGER_TOUCH || o->trigger_event > ON_TRIGGER_START ||
         o->trigger_action < ON_TRIGGER_TOGGLE ||
-        o->trigger_action > ON_TRIGGER_UNACTIVATE ||
+        o->trigger_action > ON_TRIGGER_NO_COLLISION ||
         o->target_id < 0 || o->target_id > 1000000 ||
         (o->trigger_has_group != 0 && o->trigger_has_group != 1) ||
         (o->trigger_has_group &&
@@ -871,11 +887,18 @@ static int published_trigger_valid(const OnLevelObject *o) {
         return o->trigger_action <= ON_TRIGGER_ROTATE &&
             o->trigger_value >= -360 && o->trigger_value <= 360;
     }
-    if (o->trigger_has_group)
-        return o->trigger_action == ON_TRIGGER_ACTIVATE ||
-               o->trigger_action == ON_TRIGGER_UNACTIVATE;
-    return o->trigger_action <= ON_TRIGGER_ROTATE &&
-        o->trigger_value >= -100 && o->trigger_value <= 100;
+    if (o->trigger_kind == ON_TRIGGER_KIND_FOREVER) {
+        if (o->trigger_has_group)
+            return o->trigger_action == ON_TRIGGER_ACTIVATE ||
+                   o->trigger_action == ON_TRIGGER_UNACTIVATE;
+        return o->trigger_action <= ON_TRIGGER_ROTATE &&
+            o->trigger_value >= -100 && o->trigger_value <= 100;
+    }
+    if (!o->trigger_has_group && o->target_id <= 0) return 0;
+    return (o->trigger_kind == ON_TRIGGER_KIND_INVISIBILITY &&
+            o->trigger_action == ON_TRIGGER_INVISIBLE) ||
+           (o->trigger_kind == ON_TRIGGER_KIND_NO_COLLISION &&
+            o->trigger_action == ON_TRIGGER_NO_COLLISION);
 }
 
 static int published_level_valid(const OnPublishedLevel *level) {
@@ -890,7 +913,7 @@ static int published_level_valid(const OnPublishedLevel *level) {
     for (int i = 0; i < level->object_count; ++i) {
         const OnLevelObject *o = &level->objects[i];
         if (o->id < 1 || o->id > 1000000 || o->type < ON_LEVEL_BLOCK ||
-            o->type > ON_LEVEL_TRIGGER || !memchr(o->name, 0, sizeof o->name) ||
+            o->type > ON_LEVEL_SLOPE || !memchr(o->name, 0, sizeof o->name) ||
             !utf8_units(o->name, sizeof o->name, 48) || !isfinite(o->x) || !isfinite(o->y) || !isfinite(o->w) ||
             !isfinite(o->h) || !isfinite(o->angle) ||
             o->x < -ON_LEVEL_WORLD_LIMIT || o->y < -ON_LEVEL_WORLD_LIMIT ||
@@ -898,6 +921,8 @@ static int published_level_valid(const OnPublishedLevel *level) {
             o->x + o->w > ON_LEVEL_WORLD_LIMIT ||
             o->y + o->h > ON_LEVEL_WORLD_LIMIT || o->w > 64 || o->h > 40 ||
             o->angle < 0 || o->angle >= 360 || o->color > 0xffffffu ||
+            (o->flip_x != 0 && o->flip_x != 1) ||
+            (o->flip_y != 0 && o->flip_y != 1) ||
             o->number < 0 || o->number > 9999 || (o->visible != 0 && o->visible != 1)) return 0;
         for (int j = 0; j < i; ++j)
             if (level->objects[j].id == o->id) return 0;
@@ -912,15 +937,18 @@ size_t on_protocol_published_level_json(const OnPublishedLevel *level,
                                         char *out, size_t cap) {
     if (!out || !cap || !published_level_valid(level)) return 0;
     static const char *const types[] = {
-        "block", "ground", "hazard", "coin", "enemy", "player", "goal", "trigger"
+        "block", "ground", "hazard", "coin", "enemy", "player", "goal", "trigger", "slope"
     };
-    static const char *const events[] = {"touch", "coin", "manual"};
+    static const char *const events[] = {"touch", "coin", "manual", "start"};
     static const char *const actions[] = {
-        "toggle", "move", "recolor", "number", "rotate", "activate", "unactivate"
+        "toggle", "move", "recolor", "number", "rotate", "activate", "unactivate",
+        "invisible", "no-collision"
     };
-    static const char *const trigger_kinds[] = {"move", "rotate", "forever"};
+    static const char *const trigger_kinds[] = {
+        "move", "rotate", "forever", "invisibility", "no-collision"
+    };
     static const char *const names[] = {
-        "Блок", "Платформа", "Шипы", "Монета", "Гусь", "Игрок", "Финиш", "Триггер"
+        "Блок", "Платформа", "Шипы", "Монета", "Гусь", "Игрок", "Финиш", "Триггер", "Склон"
     };
     JW w = {out, cap, 0, 0};
     put(&w, "{\"format\":\"PVG3-PUBLISHED-LEVEL\",\"version\":1,\"id\":");
@@ -936,10 +964,12 @@ size_t on_protocol_published_level_json(const OnPublishedLevel *level,
             i ? "," : "", o->id, types[o->type]);
         put_json_string(&w, o->name[0] ? o->name : names[o->type]);
         put(&w, ",\"x\":%.4f,\"y\":%.4f,\"w\":%.4f,\"h\":%.4f,"
-            "\"angle\":%.3f,\"color\":\"#%06x\",\"number\":%d,"
+            "\"angle\":%.3f,\"flipX\":%s,\"flipY\":%s,"
+            "\"color\":\"#%06x\",\"number\":%d,"
             "\"visible\":%s,\"layer\":0,\"layer2\":0,\"zOrder\":0",
             (double)o->x, (double)o->y, (double)o->w, (double)o->h,
-            (double)o->angle, (unsigned)o->color, o->number,
+            (double)o->angle, o->flip_x ? "true" : "false",
+            o->flip_y ? "true" : "false", (unsigned)o->color, o->number,
             o->visible ? "true" : "false");
         if (o->type == ON_LEVEL_TRIGGER) {
             put(&w, ",\"trigger\":{\"kind\":\"%s\",\"event\":\"%s\",\"action\":\"%s\",\"targetId\":%d",
@@ -957,7 +987,8 @@ size_t on_protocol_published_level_json(const OnPublishedLevel *level,
                 else
                     put(&w, ",\"degrees\":%.4f,\"value\":%.4f",
                         (double)o->trigger_value, (double)o->trigger_value);
-            } else if (!o->trigger_has_group) {
+            } else if (o->trigger_kind == ON_TRIGGER_KIND_FOREVER &&
+                       !o->trigger_has_group) {
                 put(&w, ",\"value\":%.4f", (double)o->trigger_value);
             }
             put(&w, ",\"color\":\"#%06x\"}", (unsigned)o->trigger_color);

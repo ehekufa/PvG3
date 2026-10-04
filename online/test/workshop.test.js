@@ -2,22 +2,29 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {LEVEL_TYPES, TRIGGER_KINDS, WORLD_LIMIT, MAX_LEVEL_OBJECTS,
         MAX_OBJECT_WIDTH, MAX_OBJECT_HEIGHT, newDraft, addObject, findObjectAt,
-        moveObjects, resizeObjects, rotateObjects, panCamera, copyObjects, pasteObjects, validateDraft,
+        moveObjects, resizeObjects, rotateObjects, flipObjects, panCamera, copyObjects, pasteObjects, validateDraft,
         publishedRecord, isPublishedRecord, draftFromPublished, resolveControlMode,
-        createTouchButtonState, createPreviewState, stepPreview,
+        setTriggerKind, createTouchButtonState, createPreviewState, stepPreview,
         drawEditorCanvas, drawPreviewCanvas} from '../workshop.js';
 
 function recordingCanvas() {
   const images = [];
   const outlines = [];
+  const scales = [];
+  let pathPoints = 0;
   const context = {
-    clearRect() {}, fillRect() {}, beginPath() {}, moveTo() {}, lineTo() {},
-    closePath() {}, fill() {}, stroke() {}, arc() {}, ellipse() {},
+    clearRect() {}, fillRect() {}, beginPath() {pathPoints = 0;},
+    moveTo() {pathPoints++;}, lineTo() {pathPoints++;},
+    closePath() {pathPoints++;}, fill() {},
+    stroke() {if (pathPoints >= 4) outlines.push({type: 'polygon'});},
+    arc() {}, ellipse() {},
     save() {}, restore() {}, translate() {}, rotate() {},
+    scale(...value) {scales.push(value);},
     strokeRect(...bounds) {outlines.push(bounds);}, fillText() {},
     drawImage(image, ...bounds) {images.push({image, bounds});},
   };
-  return {canvas: {width: 1280, height: 720, getContext: () => context}, images, outlines};
+  return {canvas: {width: 1280, height: 720, getContext: () => context},
+    images, outlines, scales};
 }
 
 test('new drafts are valid and object placement keeps player and finish unique', () => {
@@ -56,7 +63,8 @@ test('world placement is scrollable across large positive and negative coordinat
   assert.equal(validateDraft(level).ok, true);
   for (const kind of TRIGGER_KINDS)
     assert.equal(addObject(level, 'trigger', kind === 'rotate' ? 8 : 7, 5, kind).trigger.kind, kind);
-  assert.deepEqual(TRIGGER_KINDS, ['move', 'rotate', 'forever']);
+  assert.deepEqual(TRIGGER_KINDS,
+    ['move', 'rotate', 'forever', 'invisibility', 'no-collision']);
   assert.equal(validateDraft(level).ok, true);
 });
 
@@ -72,8 +80,9 @@ test('map arrow controls pan the viewport independently and clamp to the world e
 test('published records round-trip through the browser/native wire schema', () => {
   const level = newDraft();level.title = 'Острова над рекой';level.description = 'Монеты и тайный мост';
   const block = addObject(level, 'block', 6, 6);
+  const slope = addObject(level, 'slope', 8, 6);
   const trigger = addObject(level, 'trigger', 4, 7);
-  trigger.trigger = {event:'manual',action:'recolor',targetId:block.id,value:0,color:'#ffcc44'};
+  trigger.trigger = {event:'start',action:'recolor',targetId:block.id,value:0,color:'#ffcc44'};
   const record = publishedRecord('104', level);
   assert.equal(record.format, 'PVG3-PUBLISHED-LEVEL');
   assert.equal(record.project.format, 'PVG3-MAKER');
@@ -81,7 +90,9 @@ test('published records round-trip through the browser/native wire schema', () =
   assert(!isPublishedRecord(record, '105'));
   const restored = draftFromPublished(record);
   assert.equal(restored.title, level.title);
+  assert.equal(restored.objects.find(o => o.id === slope.id).type, 'slope');
   assert.equal(restored.objects.find(o => o.id === trigger.id).trigger.action, 'recolor');
+  assert.equal(restored.objects.find(o => o.id === trigger.id).trigger.event, 'start');
   assert.equal(validateDraft(restored).ok, true);
   assert.throws(() => publishedRecord('0', level), /ID/);
 });
@@ -95,12 +106,15 @@ test('control mode defaults to buttons on touch devices and can be chosen explic
 
 test('workshop editor and preview use the supplied level artwork and tile wide platforms', () => {
   const level = newDraft();
+  addObject(level, 'slope', 5, 6);
   const art = Object.fromEntries(LEVEL_TYPES.map(type => [type,
     {type, naturalWidth: 100, naturalHeight: type === 'ground' ? 50 : 100}]));
   const editor = recordingCanvas();
   drawEditorCanvas(editor.canvas, level, 0, 'build', art);
   assert(editor.images.some(call => call.image.type === 'player'));
   assert(editor.images.some(call => call.image.type === 'goal'));
+  assert(editor.images.some(call => call.image.type === 'slope'),
+    'the slope uses the supplied slope drawing');
   assert.equal(editor.images.filter(call => call.image.type === 'ground').length, 16);
 
   const preview = recordingCanvas();
@@ -150,6 +164,237 @@ test('typed trigger settings persist per object and apply group movement, rotati
   for (let i = 0; i < 30; i++) stepPreview(state, {}, .05);
   assert(Math.min(moved[0].angle, 360 - moved[0].angle) < .01);
   assert.deepEqual(moved.map(o => o.visible), [false, false]);
+});
+
+test('invisibility and no-collision variants round-trip and change grouped targets', () => {
+  const level = newDraft('visibility-collision');
+  const first = addObject(level, 'block', 6, 6);
+  const second = addObject(level, 'block', 8, 6);
+  first.number = second.number = 42;
+  const invisible = addObject(level, 'trigger', 1, 7, 'invisibility');
+  invisible.trigger = {kind: 'invisibility', event: 'manual', action: 'invisible',
+    targetId: first.id, groupId: 42, color: '#ffc54e'};
+  const noCollision = addObject(level, 'trigger', 1, 7, 'no-collision');
+  noCollision.trigger = {kind: 'no-collision', event: 'manual', action: 'no-collision',
+    targetId: first.id, groupId: 42, color: '#ffc54e'};
+
+  assert.equal(validateDraft(level).ok, true);
+  const record = publishedRecord('316', level);
+  assert(isPublishedRecord(record, '316'));
+  assert.equal(record.project.objects.find(object => object.id === invisible.id)
+    .trigger.kind, 'invisibility');
+  assert.equal(record.project.objects.find(object => object.id === noCollision.id)
+    .trigger.action, 'no-collision');
+  const restored = draftFromPublished(record);
+  const state = createPreviewState(restored);
+  stepPreview(state, {trigger: true}, 1 / 60);
+  assert.deepEqual(state.objects.filter(object => object.id === first.id ||
+    object.id === second.id).map(object => object.visible), [true, true]);
+  assert.deepEqual(state.invisible, [first.id, second.id]);
+  assert.deepEqual(state.noCollision, [first.id, second.id]);
+
+  const reconfigured = structuredClone(restored);
+  assert.equal(setTriggerKind(reconfigured, invisible.id, 'rotate'), true);
+  const reconfiguredTrigger = reconfigured.objects.find(object => object.id === invisible.id).trigger;
+  assert.equal(reconfiguredTrigger.kind, 'rotate');
+  assert.equal(reconfiguredTrigger.action, 'rotate');
+  assert.equal(reconfiguredTrigger.duration, 3);
+  assert.equal(setTriggerKind(reconfigured, invisible.id, 'invisibility'), true);
+  assert.equal(reconfigured.objects.find(object => object.id === invisible.id).trigger.action,
+    'invisible');
+  assert.equal(setTriggerKind(reconfigured, invisible.id, 'not-a-trigger'), false);
+
+  const invisibleFloorLevel = newDraft('invisible-floor');
+  const invisibleFloor = invisibleFloorLevel.objects.find(object => object.type === 'ground');
+  invisibleFloor.y = 20;invisibleFloor.h = 1;
+  const invisibleBlock = addObject(invisibleFloorLevel, 'block', 1, 8);
+  invisibleBlock.number = 55;
+  const hideBlock = addObject(invisibleFloorLevel, 'trigger', 1, 7, 'invisibility');
+  hideBlock.trigger = {kind: 'invisibility', event: 'manual', action: 'invisible',
+    targetId: invisibleBlock.id, groupId: 55, color: '#ffc54e'};
+  const standing = createPreviewState(invisibleFloorLevel);
+  stepPreview(standing, {trigger: true}, .05);
+  for (let i = 0; i < 20; i++) stepPreview(standing, {}, .05);
+  assert(standing.invisible.includes(invisibleBlock.id));
+  assert.equal(standing.objects.find(object => object.id === invisibleBlock.id).visible, true);
+  assert.equal(standing.grounded, true);
+  const standingPlayer = standing.objects.find(object => object.type === 'player');
+  assert(Math.abs(standing.y + standingPlayer.h * 72 * .96 - 8 * 72) < 2,
+    'the visible bottom of the player can stand on a visually hidden block');
+  const preview = recordingCanvas();
+  drawPreviewCanvas(preview.canvas, standing, 'keyboard', {
+    block: {type: 'block', naturalWidth: 100},
+  });
+  assert(!preview.images.some(call => call.image.type === 'block'),
+    'the hidden block is not drawn even though it remains solid');
+
+  const fallLevel = newDraft('no-collision-fall');
+  const floor = fallLevel.objects.find(object => object.type === 'ground');
+  floor.y = 20;floor.h = 1;
+  const platform = addObject(fallLevel, 'block', 1, 8);
+  platform.number = 55;
+  const passThrough = addObject(fallLevel, 'trigger', 1, 7, 'no-collision');
+  passThrough.trigger = {kind: 'no-collision', event: 'manual', action: 'no-collision',
+    targetId: platform.id, groupId: 55, color: '#ffc54e'};
+  const falling = createPreviewState(fallLevel);
+  stepPreview(falling, {trigger: true}, .05);
+  for (let i = 0; i < 20; i++) stepPreview(falling, {}, .05);
+  assert(falling.noCollision.includes(platform.id));
+  assert(falling.y > 9 * 72, 'the player falls through the collision-disabled block');
+});
+
+test('start and action events do not need contact, while touch events do', () => {
+  const startLevel = newDraft('trigger-start-event');
+  const startBlock = addObject(startLevel, 'block', 6, 6);
+  startBlock.number = 42;
+  const startTrigger = addObject(startLevel, 'trigger', 100, 100, 'invisibility');
+  startTrigger.trigger = {kind: 'invisibility', event: 'start', action: 'invisible',
+    targetId: startBlock.id, groupId: 42, color: '#ffc54e'};
+  assert.equal(validateDraft(startLevel).ok, true);
+  const started = createPreviewState(startLevel);
+  assert(started.invisible.includes(startBlock.id),
+    'start triggers fire immediately when the preview is created');
+
+  const manualLevel = newDraft('trigger-manual-anywhere');
+  const manualBlock = addObject(manualLevel, 'block', 6, 6);
+  manualBlock.number = 42;
+  const manualTrigger = addObject(manualLevel, 'trigger', 100, 100, 'no-collision');
+  manualTrigger.trigger = {kind: 'no-collision', event: 'manual', action: 'no-collision',
+    targetId: manualBlock.id, groupId: 42, color: '#ffc54e'};
+  const manual = createPreviewState(manualLevel);
+  stepPreview(manual, {trigger: true}, .01);
+  assert(manual.noCollision.includes(manualBlock.id),
+    'the action button activates its event without touching the trigger');
+
+  const touchLevel = newDraft('trigger-touch-contact');
+  const touchBlock = addObject(touchLevel, 'block', 6, 6);
+  touchBlock.number = 42;
+  const touchTrigger = addObject(touchLevel, 'trigger', 100, 100, 'invisibility');
+  touchTrigger.trigger = {kind: 'invisibility', event: 'touch', action: 'invisible',
+    targetId: touchBlock.id, groupId: 42, color: '#ffc54e'};
+  const touched = createPreviewState(touchLevel);
+  stepPreview(touched, {}, .01);
+  assert(!touched.invisible.includes(touchBlock.id),
+    'a touch trigger does not fire while it is far away');
+  const runtimeTrigger = touched.objects.find(object => object.id === touchTrigger.id);
+  runtimeTrigger.x = 1;runtimeTrigger.y = 7;
+  stepPreview(touched, {}, .01);
+  assert(touched.invisible.includes(touchBlock.id),
+    'the touch trigger fires once the player contacts it');
+});
+
+test('character and spike hitboxes follow opaque artwork instead of transparent canvas corners', () => {
+  const level = newDraft('alpha-hitbox');
+  const player = level.objects.find(object => object.type === 'player');
+  assert.equal(findObjectAt(level, player.x + player.w * .1,
+    player.y + player.h * .5), null,
+  'transparent sides of the character PNG are not selectable');
+  assert.equal(findObjectAt(level, player.x + player.w * .5,
+    player.y + player.h * .5)?.id, player.id);
+
+  const hazard = addObject(level, 'hazard', 4, 4);
+  assert.equal(findObjectAt(level, 4.05, 4.10), null,
+    'transparent corners around the spike triangle are not selectable');
+  assert.equal(findObjectAt(level, 4.5, 4.5)?.id, hazard.id);
+
+  const wallLevel = newDraft('alpha-player-wall');
+  const wallPlayer = wallLevel.objects.find(object => object.type === 'player');
+  wallPlayer.x = 1;wallPlayer.y = 7;
+  addObject(wallLevel, 'block', 2, 7);
+  const state = createPreviewState(wallLevel);
+  for (let i = 0; i < 3; i++) stepPreview(state, {axis: 1}, .05);
+  assert(state.x > 112,
+    'the player reaches the wall only when the visible character reaches it');
+
+  const spikeLevel = newDraft('alpha-spike-graze');
+  const grazer = spikeLevel.objects.find(object => object.type === 'player');
+  grazer.x = 2.53;grazer.y = 4.033;
+  addObject(spikeLevel, 'hazard', 3, 4);
+  const graze = createPreviewState(spikeLevel);
+  stepPreview(graze, {axis: 1}, .001);
+  assert(graze.x > graze.spawn.x + .1,
+    'transparent top-left area around the spike does not reset the player');
+});
+
+test('the safe triangular slope matches its artwork and can be climbed', () => {
+  const level = newDraft('climbable-slope');
+  const player = level.objects.find(object => object.type === 'player');
+  player.x = 1;player.y = 7;
+  const slope = addObject(level, 'slope', 3, 7);
+  assert.equal(validateDraft(level).ok, true);
+  assert.equal(findObjectAt(level, 3.5, 7.5)?.id, slope.id);
+  assert.equal(findObjectAt(level, 3.1, 7.2), null,
+    'transparent space outside the triangle is not selectable');
+  slope.angle = 90;
+  assert.equal(findObjectAt(level, 3.3, 7.6)?.id, slope.id,
+    'selection follows the triangle when it is rotated');
+  assert.equal(findObjectAt(level, 3.8, 7.1), null);
+  slope.angle = 0;
+
+  const state = createPreviewState(level);
+  const spawnY = state.y;
+  let highestY = spawnY;
+  for (let i = 0; i < 24; i++) {
+    stepPreview(state, {axis: 1}, .05);
+    highestY = Math.min(highestY, state.y);
+  }
+  assert(state.x > 240, 'the player gets past the slope instead of hitting a wall');
+  assert(highestY < spawnY - 35, 'the player rises while walking up the triangle');
+  assert(!state.won, 'the slope is not treated as a damaging spike');
+
+  slope.flipX = true;player.x = 5;
+  assert.equal(findObjectAt(level, 3.1, 7.2)?.id, slope.id,
+    'horizontal mirroring moves the solid triangle into the opposite corner');
+  const mirrored = createPreviewState(level);
+  const mirroredSpawnY = mirrored.y;
+  let mirroredHighestY = mirroredSpawnY;
+  for (let i = 0; i < 24; i++) {
+    stepPreview(mirrored, {axis: -1}, .05);
+    mirroredHighestY = Math.min(mirroredHighestY, mirrored.y);
+  }
+  assert(mirrored.x < 3 * 72,
+    'the player can traverse the horizontally mirrored slope in reverse');
+  assert(mirroredHighestY < mirroredSpawnY - 35,
+    'collision follows the mirrored hypotenuse instead of an unflipped triangle');
+
+  slope.flipX = false;slope.angle = 90;
+  const rotated = createPreviewState(level);
+  const rotatedSpawnY = rotated.y;
+  let rotatedHighestY = rotatedSpawnY;
+  for (let i = 0; i < 24; i++) {
+    stepPreview(rotated, {axis: -1}, .05);
+    rotatedHighestY = Math.min(rotatedHighestY, rotated.y);
+  }
+  assert(rotated.x < 3 * 72 && rotatedHighestY < rotatedSpawnY - 35,
+    'rotated slope collision follows its drawn hypotenuse and remains climbable');
+});
+
+test('rotated collision follows the drawn block and play preview hides all trigger art', () => {
+  const level = newDraft('rotated-collision');
+  const player = level.objects.find(object => object.type === 'player');
+  const floor = level.objects.find(object => object.type === 'ground');
+  player.x = 4.5;player.y = 4.5;floor.y = 12;floor.h = 1;
+  const block = addObject(level, 'block', 4, 6);
+  block.w = 2;block.h = 1;block.angle = 90;
+  const trigger = addObject(level, 'trigger', 10, 1, 'invisibility');
+  const state = createPreviewState(level);
+  for (let i = 0; i < 120; i++) stepPreview(state, {}, 1 / 60);
+  assert.equal(state.grounded, true);
+  assert(state.y > 315 && state.y < 345,
+    `the rotated block's top surface should support the player (y=${state.y})`);
+
+  const art = {triggerInvisibility: {type: 'triggerInvisibility', naturalWidth: 100},
+    block: {type: 'block', naturalWidth: 100}, ground: {type: 'ground', naturalWidth: 100},
+    player: {type: 'player', naturalWidth: 100}, goal: {type: 'goal', naturalWidth: 100}};
+  const editor = recordingCanvas();
+  drawEditorCanvas(editor.canvas, level, 0, 'build', art);
+  assert(editor.images.some(call => call.image.type === 'triggerInvisibility'),
+    'the icon remains available in the editor');
+  const preview = recordingCanvas();
+  drawPreviewCanvas(preview.canvas, createPreviewState(level), 'keyboard', art);
+  assert(!preview.images.some(call => call.image.type.startsWith('trigger')),
+    'triggers are invisible in the playable preview');
+  assert.equal(trigger.trigger.kind, 'invisibility');
 });
 
 test('movement offsets accept the full requested range and reject values beyond it', () => {
@@ -241,6 +486,61 @@ test('multi-object transforms clamp geometry, preserve independent angles and hi
   assert.equal(first.angle, 10);assert.equal(second.angle, 30);
   assert.equal(findObjectAt(level, first.x + first.w / 2, first.y + first.h / 2)?.id, first.id);
   assert.equal(validateDraft(level).ok, true);
+});
+
+test('half-block movement and mirror flips persist and match editor hit-testing and artwork', () => {
+  const level = newDraft('half-mirror');
+  const block = addObject(level, 'block', 4, 4);
+  const hazard = addObject(level, 'hazard', 8, 4);
+  const enemy = addObject(level, 'enemy', 11, 4);
+  assert.equal(moveObjects(level, [block.id], .5, -.5), 1);
+  assert.deepEqual([block.x, block.y], [4.5, 3.5]);
+  assert.equal(flipObjects(level, [block.id], 'x'), 1);
+  assert.equal(flipObjects(level, [block.id], 'y'), 1);
+  assert.equal(flipObjects(level, [hazard.id], 'z'), 0);
+  assert.equal(block.flipX, true);assert.equal(block.flipY, true);
+
+  const cornerX = hazard.x + hazard.w * .45;
+  const cornerY = hazard.y + hazard.h * .1;
+  assert.equal(findObjectAt(level, cornerX, cornerY), null,
+    'the upper-left corner of the normal spike is transparent');
+  assert.equal(flipObjects(level, [hazard.id], 'y'), 1);
+  assert.equal(findObjectAt(level, cornerX, cornerY)?.id, hazard.id,
+    'mirroring vertically moves the visible triangle under the pointer');
+
+  const enemyFarSideX = enemy.x + enemy.w * .95;
+  const enemyCenterY = enemy.y + enemy.h * .5;
+  assert.equal(findObjectAt(level, enemyFarSideX, enemyCenterY), null,
+    'the default enemy art and hitbox share its left-facing orientation');
+  assert.equal(flipObjects(level, [enemy.id], 'x'), 1);
+  assert.equal(findObjectAt(level, enemyFarSideX, enemyCenterY)?.id, enemy.id,
+    'mirroring the enemy also mirrors its visible hitbox');
+
+  const art = {block: {naturalWidth: 100}, hazard: {naturalWidth: 100},
+    enemy: {naturalWidth: 100}};
+  const canvas = recordingCanvas();
+  drawEditorCanvas(canvas.canvas, level,
+    new Set([block.id, hazard.id, enemy.id]), 'select', art);
+  assert(canvas.scales.some(scale => scale[0] === -1 && scale[1] === -1));
+  assert(canvas.scales.some(scale => scale[0] === 1 && scale[1] === -1));
+  assert(canvas.scales.some(scale => scale[0] === 1 && scale[1] === 1));
+
+  const published = publishedRecord('996', level);
+  const roundTrip = draftFromPublished(published);
+  const mirroredBlock = roundTrip.objects.find(object => object.id === block.id);
+  assert.equal(mirroredBlock.flipX, true);assert.equal(mirroredBlock.flipY, true);
+  assert.equal(roundTrip.objects.find(object => object.id === hazard.id).flipY, true);
+  assert.equal(roundTrip.objects.find(object => object.id === enemy.id).flipX, true);
+  const legacy = structuredClone(published);
+  for (const object of legacy.project.objects) {
+    delete object.flipX;delete object.flipY;
+  }
+  assert.equal(isPublishedRecord(legacy), true,
+    'older level records without mirror fields remain compatible');
+  const legacyDraft = draftFromPublished(legacy);
+  assert.equal(legacyDraft.objects.every(object => !object.flipX && !object.flipY), true);
+  const invalid = structuredClone(level);invalid.objects[3].flipX = 'yes';
+  assert.equal(validateDraft(invalid).ok, false);
 });
 
 test('copy and paste duplicate a selection independently, preserve group data, and skip singleton objects', () => {
