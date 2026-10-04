@@ -18,6 +18,10 @@ export const TRIGGER_LABELS = Object.freeze({
   move: 'Движение', rotate: 'Разворот', forever: 'Вечно',
   invisibility: 'Невидимость', 'no-collision': 'Нет столкновения',
 });
+const TRIGGER_ACTIONS = Object.freeze({
+  move: 'move', rotate: 'rotate', forever: 'activate',
+  invisibility: 'invisible', 'no-collision': 'no-collision',
+});
 export const LEVEL_TYPES = Object.freeze([
   'block', 'ground', 'hazard', 'coin', 'enemy', 'player', 'goal', 'trigger',
 ]);
@@ -64,6 +68,24 @@ function defaultObject(id, type, x, y, width, height, color, number = 0) {
     angle: 0, color, number, visible: true, layer: 0, layer2: 0, zOrder: 0};
 }
 
+export function setTriggerKind(level, id, kind) {
+  if (!TRIGGER_KINDS.includes(kind)) return false;
+  const object = level?.objects?.find(item => item.id === id && item.type === 'trigger');
+  if (!object) return false;
+  const trigger = object.trigger ||= {event: 'touch'};
+  const previousKind = trigger.kind || 'move';
+  trigger.kind = kind;
+  trigger.action = TRIGGER_ACTIONS[kind];
+  if (kind === 'move' && previousKind !== 'move') {
+    trigger.valueX = 1;trigger.valueY = 0;
+  } else if (kind === 'rotate') {
+    if (!Number.isInteger(trigger.duration) || trigger.duration < 1 ||
+        trigger.duration > ROTATION_DURATION_MAX) trigger.duration = 3;
+    delete trigger.degrees;delete trigger.value;
+  }
+  return true;
+}
+
 export function newDraft(id = localId()) {
   return {
     localId: id, title: 'Новый уровень', description: '', width: LEVEL_WIDTH,
@@ -88,10 +110,7 @@ export function addObject(level, type, x, y, triggerKind = 'move') {
     const kind = TRIGGER_KINDS.includes(triggerKind) ? triggerKind : 'move';
     const target = level.objects.find(o => o.type === 'goal') || level.objects[0];
     const targetGroup = Number.isInteger(target?.number) ? target.number : 0;
-    const action = kind === 'forever' ? 'activate' :
-      kind === 'rotate' ? 'rotate' :
-      kind === 'invisibility' ? 'invisible' :
-      kind === 'no-collision' ? 'no-collision' : 'move';
+    const action = TRIGGER_ACTIONS[kind];
     object.trigger = {kind, event: 'touch', action,
       targetId: target?.id || 0, groupId: targetGroup,
       valueX: kind === 'move' ? 1 : 0, valueY: 0,
@@ -375,7 +394,7 @@ export function createPreviewState(level) {
   return {objects: copy(level.objects), x: player.x * TILE_W, y: player.y * TILE_H,
     vx: 0, vy: 0, grounded: false, time: 0, coins: 0, won: false,
     collected: [], triggerFired: [], triggerActive: [], triggerTimers: Object.create(null),
-    noCollision: [], groupRotations: [],
+    invisible: [], noCollision: [], groupRotations: [],
     spawn: {x: player.x * TILE_W, y: player.y * TILE_H}};
 }
 function playerObjectContact(px, py, pw, ph, object, vx = 0, vy = 0) {
@@ -463,7 +482,8 @@ function executeTrigger(state, trigger) {
     object.type !== 'trigger' && object.number === t.groupId) :
     state.objects.filter(object => object.id === t.targetId);
   if (kind === 'invisibility') {
-    for (const target of targets) target.visible = false;
+    for (const target of targets)
+      if (!state.invisible.includes(target.id)) state.invisible.push(target.id);
     return;
   }
   if (kind === 'no-collision') {
@@ -699,7 +719,8 @@ export function drawPreviewCanvas(canvas, state, control = 'keyboard', art = {})
     if (grassY >= 64) {ctx.fillStyle = '#222';ctx.fillRect(0, grassY, canvas.width, 3);}
   }
   for (const o of state.objects) {
-    if (!o.visible || o.type === 'player' || o.type === 'trigger') continue;
+    if (!o.visible || state.invisible?.includes(o.id) ||
+        o.type === 'player' || o.type === 'trigger') continue;
     const x = o.x * TILE_W - cameraX, y = o.y * TILE_H - cameraY;
     const w = o.w * TILE_W, h = o.h * TILE_H;
     ctx.fillStyle = o.color || DEFAULT_COLORS[o.type];
@@ -719,7 +740,7 @@ export function drawPreviewCanvas(canvas, state, control = 'keyboard', art = {})
       ctx.strokeStyle = '#fff';ctx.lineWidth = 3;ctx.strokeRect(x + 2, y + 2, w - 4, h - 4);
     } else ctx.fillRect(x, y, w, h);
   }
-  if (player && player.visible !== false) {
+  if (player && player.visible !== false && !state.invisible?.includes(player.id)) {
     const x = state.x - cameraX, y = state.y - cameraY;
     const w = playerW, h = playerH;
     if (!drawWorkshopObject(ctx, art, player, x, y, w, h)) {

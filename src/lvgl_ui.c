@@ -129,6 +129,7 @@ typedef struct {
     int trigger_event, trigger_action, trigger_group_id;
     int trigger_x, trigger_y, trigger_duration;
 } WorkshopObject;
+static void workshop_set_trigger_kind(WorkshopObject *object, int kind);
 #define WS_OBJECT_MIN_SIZE .1f
 #define WS_OBJECT_MAX_WIDTH 64.0f
 #define WS_OBJECT_MAX_HEIGHT 40.0f
@@ -978,18 +979,10 @@ static void workshop_place_object(int type, int col, int row) {
     o->z_order = workshop_z_order;
     o->color_set = workshop_color_set;
     o->color_index = workshop_color_index;
-    o->trigger_kind = workshop_trigger_kind;
     o->trigger_event = ON_TRIGGER_TOUCH;
-    o->trigger_action = workshop_trigger_kind == ON_TRIGGER_KIND_FOREVER ?
-                        ON_TRIGGER_ACTIVATE :
-                        workshop_trigger_kind == ON_TRIGGER_KIND_ROTATE ?
-                        ON_TRIGGER_ROTATE :
-                        workshop_trigger_kind == ON_TRIGGER_KIND_INVISIBILITY ?
-                        ON_TRIGGER_INVISIBLE :
-                        workshop_trigger_kind == ON_TRIGGER_KIND_NO_COLLISION ?
-                        ON_TRIGGER_NO_COLLISION : ON_TRIGGER_MOVE;
     o->trigger_group_id = 2; /* goal group */
     o->trigger_x = 1;o->trigger_y = 0;o->trigger_duration = 3;
+    workshop_set_trigger_kind(o, workshop_trigger_kind);
     workshop_object_count++;
     workshop_select_only(index);
     workshop_load_selected_properties(index);
@@ -1224,6 +1217,21 @@ static const char *workshop_trigger_name(int kind) {
            kind == ON_TRIGGER_KIND_FOREVER ? "Вечно" :
            kind == ON_TRIGGER_KIND_INVISIBILITY ? "Невидимость" :
            kind == ON_TRIGGER_KIND_NO_COLLISION ? "Нет столкновения" : "Движение";
+}
+static int workshop_trigger_action_for_kind(int kind) {
+    return kind == ON_TRIGGER_KIND_ROTATE ? ON_TRIGGER_ROTATE :
+           kind == ON_TRIGGER_KIND_FOREVER ? ON_TRIGGER_ACTIVATE :
+           kind == ON_TRIGGER_KIND_INVISIBILITY ? ON_TRIGGER_INVISIBLE :
+           kind == ON_TRIGGER_KIND_NO_COLLISION ? ON_TRIGGER_NO_COLLISION :
+           ON_TRIGGER_MOVE;
+}
+static void workshop_set_trigger_kind(WorkshopObject *object, int kind) {
+    if (!object || kind < ON_TRIGGER_KIND_MOVE ||
+        kind > ON_TRIGGER_KIND_NO_COLLISION) return;
+    object->trigger_kind = kind;
+    object->trigger_action = workshop_trigger_action_for_kind(kind);
+    if (kind == ON_TRIGGER_KIND_ROTATE && object->trigger_duration < 1)
+        object->trigger_duration = 3;
 }
 
 static int workshop_object_art(int type, int trigger_kind) {
@@ -1894,11 +1902,21 @@ static void workshop_draw_trigger_dialog(lv_obj_t *root) {
               1, WS_CREAM, LV_TEXT_ALIGN_CENTER);
     } else {
         const char *description = o->trigger_kind == ON_TRIGGER_KIND_INVISIBILITY ?
-            "После события все объекты целевой группы исчезнут." :
+            "Объекты исчезнут с экрана, но сохранят столкновения." :
             "После события у объектов группы отключится столкновение.";
         label(root, 158, 354, 950, 76, description, 2,
               WS_CREAM, LV_TEXT_ALIGN_CENTER);
     }
+    label(root, 158, 480, 260, 26, "Вид триггера", 0,
+          WS_YELLOW, LV_TEXT_ALIGN_LEFT);
+    static const char *const trigger_names[] = {
+        "Движение", "Разворот", "Вечно", "Невидимость", "Нет столкновения"
+    };
+    static const int trigger_x[] = {158, 364, 570, 776, 982};
+    for (int i = 0; i < 5; ++i)
+        workshop_button(root, trigger_x[i], 508, 190, 40, trigger_names[i], 0,
+                        U_WORKSHOP_TRIGGER_BASE + i,
+                        o->trigger_kind == i ? WS_CYAN : BUTTON_GRAY);
     workshop_button(root, 500, 596, 280, 64, "ОК", 3,
                     U_WORKSHOP_DIALOG_OK, WS_GREEN);
 }
@@ -2140,30 +2158,35 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
                     U_WORKSHOP_GROUP_PANEL, BUTTON_GRAY);
     workshop_button(root, 1068, 336, 154, 50, "Цвет", 0,
                     U_WORKSHOP_COLOR_PANEL, BUTTON_GRAY);
-    label(root, 769, 394, 448, 27, "ВАРИАНТЫ ТРИГГЕРА", 0,
-          WS_YELLOW, LV_TEXT_ALIGN_LEFT);
-    static const char *const trigger_names[] = {
-        "Движение", "Разворот", "Вечно", "Невидимость", "Нет столкновения"
-    };
-    static const int trigger_x[] = {760, 916, 1072, 760, 998};
-    static const int trigger_y[] = {420, 420, 420, 461, 461};
-    static const int trigger_w[] = {148, 148, 148, 222, 222};
-    for (int i = 0; i < 5; ++i)
-        workshop_button(root, trigger_x[i], trigger_y[i], trigger_w[i], 38,
-                        trigger_names[i], 0, U_WORKSHOP_TRIGGER_BASE + i,
-                        workshop_trigger_kind == i ? WS_CYAN : BUTTON_GRAY);
+    int show_trigger_variants = workshop_palette_type == ON_LEVEL_TRIGGER &&
+                                workshop_tool == WS_TOOL_BUILD;
+    if (show_trigger_variants) {
+        label(root, 769, 394, 448, 27, "ВАРИАНТЫ ТРИГГЕРА", 0,
+              WS_YELLOW, LV_TEXT_ALIGN_LEFT);
+        static const char *const trigger_names[] = {
+            "Движение", "Разворот", "Вечно", "Невидимость", "Нет столкновения"
+        };
+        static const int trigger_x[] = {760, 916, 1072, 760, 998};
+        static const int trigger_y[] = {420, 420, 420, 461, 461};
+        static const int trigger_w[] = {148, 148, 148, 222, 222};
+        for (int i = 0; i < 5; ++i)
+            workshop_button(root, trigger_x[i], trigger_y[i], trigger_w[i], 38,
+                            trigger_names[i], 0, U_WORKSHOP_TRIGGER_BASE + i,
+                            workshop_trigger_kind == i ? WS_CYAN : BUTTON_GRAY);
+    }
     char camera_label[48];
     snprintf(camera_label, sizeof camera_label, "Карта X %d  Y %d",
              workshop_camera_x, workshop_camera_y);
-    label(root, 768, 507, 214, 38, camera_label, 0,
+    int camera_y = show_trigger_variants ? 507 : 414;
+    label(root, 768, camera_y, 214, 38, camera_label, 0,
           WS_CREAM, LV_TEXT_ALIGN_LEFT);
-    workshop_arrow_button(root, 984, 504, 52, 45,
+    workshop_arrow_button(root, 984, camera_y - 3, 52, 45,
                           U_WORKSHOP_PAN_BASE, WS_CYAN, -1);
-    workshop_arrow_button(root, 1040, 504, 52, 45,
+    workshop_arrow_button(root, 1040, camera_y - 3, 52, 45,
                           U_WORKSHOP_PAN_BASE + 1, WS_CYAN, 0);
-    workshop_arrow_button(root, 1096, 504, 52, 45,
+    workshop_arrow_button(root, 1096, camera_y - 3, 52, 45,
                           U_WORKSHOP_PAN_BASE + 2, WS_CYAN, 2);
-    workshop_arrow_button(root, 1152, 504, 52, 45,
+    workshop_arrow_button(root, 1152, camera_y - 3, 52, 45,
                           U_WORKSHOP_PAN_BASE + 3, WS_CYAN, 1);
 
     const int palette_types[] = {ON_LEVEL_BLOCK, ON_LEVEL_GROUND,
@@ -2894,6 +2917,11 @@ static void pressed(lv_event_t *ev) {
     }
     if (code >= U_WORKSHOP_TRIGGER_BASE && code < U_WORKSHOP_TRIGGER_BASE + 5) {
         workshop_trigger_kind = code - U_WORKSHOP_TRIGGER_BASE;
+        if (workshop_dialog == WS_DIALOG_TRIGGER && workshop_selected >= 0 &&
+            workshop_selected < workshop_object_count &&
+            workshop_objects[workshop_selected].type == ON_LEVEL_TRIGGER)
+            workshop_set_trigger_kind(&workshop_objects[workshop_selected],
+                                      workshop_trigger_kind);
         dirty = 1;return;
     }
     if (code >= U_WORKSHOP_NUDGE_BASE && code < U_WORKSHOP_NUDGE_BASE + 4) {

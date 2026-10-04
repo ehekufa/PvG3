@@ -395,7 +395,7 @@ static void native_trigger_runtime_regression(void) {
            first.angle > 35.9f && first.angle < 36.1f);
     game_custom_level_exit();
 
-    /* The new visibility trigger hides its whole target group. */
+    /* The invisibility trigger hides its target group visually, not physically. */
     level.object_count = 5;
     level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
         .x=0,.y=20,.w=16,.h=1,.visible=1,.number=3};
@@ -412,7 +412,11 @@ static void native_trigger_runtime_regression(void) {
         .trigger_group_id=42,.trigger_has_group=1};
     assert(game_workshop_preview(&level));
     game_custom_control(0, 0, 1);game_tick(.05f, NULL);game_custom_control(0, 0, 0);
-    assert(game_debug_custom_object(4, &first) && !first.visible);
+    assert(game_debug_custom_object(4, &first) && first.visible &&
+           game_debug_custom_object_invisible(4));
+    for (int i = 0; i < 20; ++i) game_tick(.05f, NULL);
+    assert(game_debug_custom_player_y() > 7 * 72 &&
+           game_debug_custom_player_y() < 8 * 72);
     game_custom_level_exit();
 
     /* The collision trigger leaves its block visible but lets the player fall through. */
@@ -611,10 +615,23 @@ static int run_lvgl_test(void) {
     assert(editor_probe.objects[editor_probe.object_count - 1].trigger_kind ==
            ON_TRIGGER_KIND_NO_COLLISION);
 #endif
+    ui_tap(472, 330); /* select the newly placed no-collision trigger */
+    ui_tap(835, 361); /* open trigger settings */
+    ui_tap(870, 528); /* switch the selected trigger to invisibility */
+    ui_tap(1108, 528); /* and back to no-collision */
+    ui_tap(640, 628); /* close trigger settings */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[editor_probe.object_count - 1].trigger_kind ==
+           ON_TRIGGER_KIND_NO_COLLISION);
+#endif
     ui_tap(1178, 526); /* scroll the infinite workshop map */
     ui_tap(80, 596); /* block category */
     ui_tap(422, 205); /* now maps to world X=10 */
     ui_snapshot("workshop_trigger_variants_and_pan");
+#ifdef PVG3_LVGL_TEST
+    assert(ui_pixels[480 * GAME_W + 800] == ui_pixels[480 * GAME_W + 1100]);
+#endif
     ui_tap(929, 209); /* select the earlier block for the edit dialogs */
     ui_tap(149, 195);
     ui_tap(836, 377);ui_snapshot("workshop_move_dialog");

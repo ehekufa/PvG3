@@ -4,7 +4,7 @@ import {LEVEL_TYPES, TRIGGER_KINDS, WORLD_LIMIT, MAX_LEVEL_OBJECTS,
         MAX_OBJECT_WIDTH, MAX_OBJECT_HEIGHT, newDraft, addObject, findObjectAt,
         moveObjects, resizeObjects, rotateObjects, panCamera, copyObjects, pasteObjects, validateDraft,
         publishedRecord, isPublishedRecord, draftFromPublished, resolveControlMode,
-        createTouchButtonState, createPreviewState, stepPreview,
+        setTriggerKind, createTouchButtonState, createPreviewState, stepPreview,
         drawEditorCanvas, drawPreviewCanvas} from '../workshop.js';
 
 function recordingCanvas() {
@@ -176,8 +176,43 @@ test('invisibility and no-collision variants round-trip and change grouped targe
   const state = createPreviewState(restored);
   stepPreview(state, {trigger: true}, 1 / 60);
   assert.deepEqual(state.objects.filter(object => object.id === first.id ||
-    object.id === second.id).map(object => object.visible), [false, false]);
+    object.id === second.id).map(object => object.visible), [true, true]);
+  assert.deepEqual(state.invisible, [first.id, second.id]);
   assert.deepEqual(state.noCollision, [first.id, second.id]);
+
+  const reconfigured = structuredClone(restored);
+  assert.equal(setTriggerKind(reconfigured, invisible.id, 'rotate'), true);
+  const reconfiguredTrigger = reconfigured.objects.find(object => object.id === invisible.id).trigger;
+  assert.equal(reconfiguredTrigger.kind, 'rotate');
+  assert.equal(reconfiguredTrigger.action, 'rotate');
+  assert.equal(reconfiguredTrigger.duration, 3);
+  assert.equal(setTriggerKind(reconfigured, invisible.id, 'invisibility'), true);
+  assert.equal(reconfigured.objects.find(object => object.id === invisible.id).trigger.action,
+    'invisible');
+  assert.equal(setTriggerKind(reconfigured, invisible.id, 'not-a-trigger'), false);
+
+  const invisibleFloorLevel = newDraft('invisible-floor');
+  const invisibleFloor = invisibleFloorLevel.objects.find(object => object.type === 'ground');
+  invisibleFloor.y = 20;invisibleFloor.h = 1;
+  const invisibleBlock = addObject(invisibleFloorLevel, 'block', 1, 8);
+  invisibleBlock.number = 55;
+  const hideBlock = addObject(invisibleFloorLevel, 'trigger', 1, 7, 'invisibility');
+  hideBlock.trigger = {kind: 'invisibility', event: 'manual', action: 'invisible',
+    targetId: invisibleBlock.id, groupId: 55, color: '#ffc54e'};
+  const standing = createPreviewState(invisibleFloorLevel);
+  stepPreview(standing, {trigger: true}, .05);
+  for (let i = 0; i < 20; i++) stepPreview(standing, {}, .05);
+  assert(standing.invisible.includes(invisibleBlock.id));
+  assert.equal(standing.objects.find(object => object.id === invisibleBlock.id).visible, true);
+  assert.equal(standing.grounded, true);
+  assert(Math.abs(standing.y - (8 * 72 - .85 * 72)) < 2,
+    'the player can stand on a visually hidden block');
+  const preview = recordingCanvas();
+  drawPreviewCanvas(preview.canvas, standing, 'keyboard', {
+    block: {type: 'block', naturalWidth: 100},
+  });
+  assert(!preview.images.some(call => call.image.type === 'block'),
+    'the hidden block is not drawn even though it remains solid');
 
   const fallLevel = newDraft('no-collision-fall');
   const floor = fallLevel.objects.find(object => object.type === 'ground');

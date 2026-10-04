@@ -6,7 +6,7 @@ import {DATABASE, validId, randomPlayerId, listRooms, getRoom, createRoom,
 import {preloadArtwork, drawGame} from './draw.js';
 import {LEVEL_WIDTH, LEVEL_HEIGHT, MAX_LEVEL_OBJECTS, WORLD_LIMIT,
         MIN_OBJECT_SIZE, MAX_OBJECT_WIDTH, MAX_OBJECT_HEIGHT, TYPE_LABELS,
-        TRIGGER_LABELS, newDraft,
+        TRIGGER_KINDS, TRIGGER_LABELS, newDraft, setTriggerKind,
         addObject, findObjectAt, validateDraft, draftFromPublished,
         moveObjects, resizeObjects, rotateObjects, panCamera, copyObjects, pasteObjects,
         createPreviewState, stepPreview, drawEditorCanvas, drawPreviewCanvas,
@@ -245,7 +245,8 @@ function renderSelectedObject() {
   triggerFields.classList.toggle('hidden', object.type !== 'trigger');
   if (object.type !== 'trigger') return;
   const t = object.trigger || {};
-  const kind = t.kind || 'move';
+  const kind = TRIGGER_KINDS.includes(t.kind) ? t.kind : 'move';
+  $('ws-trigger-kind').value = kind;
   const forever = kind === 'forever';
   const rotate = kind === 'rotate';
   const moving = kind === 'move';
@@ -452,7 +453,9 @@ function updateSelectedTrigger(property, value) {
   const object = wsObject(wsSelectedId);
   if (!object || object.type !== 'trigger') return;
   const t = object.trigger ||= {kind: 'move', event: 'touch', action: 'move'};
-  if (property === 'event') {
+  if (property === 'kind') {
+    if (!setTriggerKind(wsDraft, object.id, value)) return;
+  } else if (property === 'event') {
     t.event = value;
   } else if (property === 'groupId') {
     const n = Number(value);if (!Number.isFinite(n)) return;
@@ -925,6 +928,7 @@ $('ws-object-height').addEventListener('change', e => updateSelectedProperty('he
 $('ws-object-angle').addEventListener('change', e => updateSelectedProperty('angle', e.target.value));
 $('ws-object-number').addEventListener('change', e => updateSelectedProperty('number', e.target.value));
 $('ws-object-color').addEventListener('input', e => updateSelectedProperty('color', e.target.value));
+$('ws-trigger-kind').addEventListener('change', e => updateSelectedTrigger('kind', e.target.value));
 $('ws-trigger-event').addEventListener('change', e => updateSelectedTrigger('event', e.target.value));
 $('ws-trigger-group').addEventListener('change', e => updateSelectedTrigger('groupId', e.target.value));
 $('ws-trigger-forever-group').addEventListener('change', e => updateSelectedTrigger('groupId', e.target.value));

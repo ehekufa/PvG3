@@ -427,6 +427,7 @@ static uint8_t custom_trigger_fired[ON_LEVEL_OBJECT_CAP];
 static uint8_t custom_trigger_active[ON_LEVEL_OBJECT_CAP];
 static float custom_trigger_timers[ON_LEVEL_OBJECT_CAP];
 static uint8_t custom_collision_disabled[ON_LEVEL_OBJECT_CAP];
+static uint8_t custom_invisible[ON_LEVEL_OBJECT_CAP];
 static int custom_player_collision_enabled;
 /* A timed rotation completes one full turn per second. */
 #define CUSTOM_GROUP_ROTATION_DEGREES_PER_SECOND 360.0f
@@ -2234,18 +2235,28 @@ static float custom_world_clamp(float value, float size) {
     return value;
 }
 typedef struct {float x, y, depth;} CustomContact;
-static int custom_object_collision_disabled(const OnLevelObject *object) {
+static int custom_object_runtime_index(const OnLevelObject *object) {
     for (int i = 0; i < custom_object_count; ++i)
-        if (&custom_objects[i] == object) return custom_collision_disabled[i] != 0;
-    return 0;
+        if (&custom_objects[i] == object) return i;
+    return -1;
+}
+static int custom_object_collision_disabled(const OnLevelObject *object) {
+    int index = custom_object_runtime_index(object);
+    return index >= 0 && custom_collision_disabled[index] != 0;
+}
+static int custom_object_is_invisible(const OnLevelObject *object) {
+    int index = custom_object_runtime_index(object);
+    return index >= 0 && custom_invisible[index] != 0;
+}
+static void custom_hide_object(OnLevelObject *object) {
+    int index = custom_object_runtime_index(object);
+    if (index >= 0) custom_invisible[index] = 1;
 }
 static void custom_disable_object_collision(OnLevelObject *object) {
-    for (int i = 0; i < custom_object_count; ++i) {
-        if (&custom_objects[i] != object) continue;
-        custom_collision_disabled[i] = 1;
-        if (object->type == ON_LEVEL_PLAYER) custom_player_collision_enabled = 0;
-        return;
-    }
+    int index = custom_object_runtime_index(object);
+    if (index < 0) return;
+    custom_collision_disabled[index] = 1;
+    if (object->type == ON_LEVEL_PLAYER) custom_player_collision_enabled = 0;
 }
 static int custom_player_object_contact(float px, float py, float pw, float ph,
                                         const OnLevelObject *object,
@@ -2319,6 +2330,7 @@ static int custom_platformer_start(const OnPublishedLevel *source) {
     memset(custom_trigger_active, 0, sizeof custom_trigger_active);
     memset(custom_trigger_timers, 0, sizeof custom_trigger_timers);
     memset(custom_collision_disabled, 0, sizeof custom_collision_disabled);
+    memset(custom_invisible, 0, sizeof custom_invisible);
     custom_player_collision_enabled = 1;
     custom_group_rotation_count = 0;
     custom_camera_x = custom_camera_y = 0;
@@ -2349,7 +2361,7 @@ static void custom_apply_trigger_to_object(const OnLevelObject *trigger,
                  ON_TRIGGER_ROTATE : trigger->trigger_action;
     switch (action) {
     case ON_TRIGGER_TOGGLE: target->visible = !target->visible;break;
-    case ON_TRIGGER_INVISIBLE: target->visible = 0;break;
+    case ON_TRIGGER_INVISIBLE: custom_hide_object(target);break;
     case ON_TRIGGER_NO_COLLISION: custom_disable_object_collision(target);break;
     case ON_TRIGGER_MOVE:
         target->x = custom_world_clamp(target->x + trigger->trigger_value, target->w);
@@ -2638,14 +2650,16 @@ static void custom_platformer_draw(void) {
             rect(x, grass_y, x + 54, grass_y + 3, COL(190, 221, 124));
     }
     for (int i = 0; i < custom_object_count; i++)
-        if (custom_objects[i].visible && custom_objects[i].type != ON_LEVEL_PLAYER &&
+        if (custom_objects[i].visible && !custom_object_is_invisible(&custom_objects[i]) &&
+            custom_objects[i].type != ON_LEVEL_PLAYER &&
             custom_objects[i].type != ON_LEVEL_TRIGGER)
             custom_draw_object(&custom_objects[i]);
     int player_visible = 1;
     float player_angle = 0;
     for (int i = 0; i < custom_object_count; ++i)
         if (custom_objects[i].type == ON_LEVEL_PLAYER) {
-            player_visible = custom_objects[i].visible;
+            player_visible = custom_objects[i].visible &&
+                             !custom_object_is_invisible(&custom_objects[i]);
             player_angle = custom_objects[i].angle;
             break;
         }
@@ -3248,6 +3262,10 @@ int game_debug_custom_object(int id, OnLevelObject *out) {
     OnLevelObject *object = custom_find_id(id);
     if (!object) return 0;
     *out = *object;return 1;
+}
+int game_debug_custom_object_invisible(int id) {
+    OnLevelObject *object = custom_find_id(id);
+    return object ? custom_object_is_invisible(object) : 0;
 }
 int game_debug_garden_plant_type(int row, int col) {
     if ((unsigned)row >= ROWS || (unsigned)col >= COLS) return PT_NONE;
