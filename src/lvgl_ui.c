@@ -100,7 +100,7 @@ static int active_phase = -1, page = 0, chosen_map = 1, search_open;
 static int custom_level_page;
 static int pointer_down, captured, touch_x, touch_y, dirty;
 #define CUSTOM_TOUCH_MAX 10
-typedef struct {int id, active, axis, jump, trigger, orb_tap;} CustomTouch;
+typedef struct {int id, active, axis, jump, trigger;} CustomTouch;
 static CustomTouch custom_touches[CUSTOM_TOUCH_MAX];
 /* A packet is dragged over the author's board. LVGL draws the packet and its
  * ghost; game.c still validates the drop, so invalid water/occupied cells and
@@ -2861,7 +2861,7 @@ static void custom_platformer_screen(lv_obj_t *root) {
     label(root, 27, 18, 750, 66, title, 2, INK, LV_TEXT_ALIGN_LEFT);
     label(root, 790, 18, 228, 34, "Кнопки · мультитач", 1, MUTED,
           LV_TEXT_ALIGN_CENTER);
-    label(root, 790, 52, 228, 32, "Орб · двойное нажатие", 0, MUTED,
+    label(root, 790, 52, 228, 32, "Орб · прыжок в зоне", 0, MUTED,
           LV_TEXT_ALIGN_CENTER);
     button(root, 1033, 21, 215, 62, "К уровням", 2,
            U_CUSTOM_BACK);
@@ -3836,18 +3836,20 @@ int lvgl_ui_touch_pointer(int pointer_id, int x, int y, int down) {
     }
     CustomTouch *touch = custom_touch_find(pointer_id);
     if (!down) {
-        if (touch && touch->orb_tap) game_custom_orb_tap_release(pointer_id);
         if (touch) memset(touch, 0, sizeof *touch);
-    } else if (!touch) {
-        touch = custom_touch_allocate(pointer_id);
-        if (touch && game_custom_orb_tap_screen(pointer_id, x, y))
-            touch->orb_tap = 1;
-    }
-    if (touch && down && !touch->orb_tap) {
-        touch->axis = y >= 525 && y < 695 && x >= 58 && x < 158 ? -1 :
-                      y >= 525 && y < 695 && x >= 178 && x < 278 ? 1 : 0;
-        touch->jump = x >= 1081 && x < 1250 && y >= 525 && y < 695;
-        touch->trigger = x >= 910 && x < 1038 && y >= 567 && y < 666;
+    } else {
+        int new_press = !touch;
+        if (!touch) touch = custom_touch_allocate(pointer_id);
+        if (touch) {
+            int left_button = y >= 525 && y < 695 && x >= 58 && x < 158;
+            int right_button = y >= 525 && y < 695 && x >= 178 && x < 278;
+            int jump_button = x >= 1081 && x < 1250 && y >= 525 && y < 695;
+            int trigger_button = x >= 910 && x < 1038 && y >= 567 && y < 666;
+            touch->axis = left_button ? -1 : right_button ? 1 : 0;
+            touch->jump = jump_button ||
+                          (new_press && !left_button && !right_button && !trigger_button);
+            touch->trigger = trigger_button;
+        }
     }
     custom_controls_sync();
     return 1;
@@ -3928,12 +3930,8 @@ int lvgl_ui_move(int x, int y) {
 
 int lvgl_ui_cancel(void) {
     int handled = captured;
-    if (game_phase() == GAME_CUSTOM_PLAY) {
-        for (int i = 0; i < CUSTOM_TOUCH_MAX; ++i)
-            if (custom_touches[i].active && custom_touches[i].orb_tap)
-                game_custom_orb_tap_release(custom_touches[i].id);
-        custom_controls_clear();
-    } else memset(custom_touches, 0, sizeof custom_touches);
+    if (game_phase() == GAME_CUSTOM_PLAY) custom_controls_clear();
+    else memset(custom_touches, 0, sizeof custom_touches);
     if (pointer_down && pointer) lv_indev_wait_release(pointer);
     pointer_down = captured = 0;
     touch_x = touch_y = 0;

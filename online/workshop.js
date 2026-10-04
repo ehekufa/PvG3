@@ -71,7 +71,6 @@ const FOREVER_ACTIONS = new Set(['activate', 'unactivate']);
 const GROUP_ID_MAX = 9999;
 const ROTATION_DURATION_MAX = 9999;
 const ROTATION_DEGREES_PER_SECOND = 360;
-const ORB_DOUBLE_TAP_SECONDS = .45;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const worldClamp = (value, size = 0) => clamp(value, -WORLD_LIMIT, WORLD_LIMIT - size);
@@ -485,8 +484,8 @@ export function createPreviewState(level) {
   const state = {objects: copy(level.objects), x: player.x * TILE_W, y: player.y * TILE_H,
     vx: 0, vy: 0, gravity: 1450, grounded: false, time: 0, coins: 0, won: false,
     collected: [], triggerFired: [], triggerActive: [], triggerTimers: Object.create(null),
-    invisible: [], noCollision: [], groupRotations: [], orbContacts: new Set(),
-    orbLastTap: null, spawn: {x: player.x * TILE_W, y: player.y * TILE_H}};
+    invisible: [], noCollision: [], groupRotations: [], jumpHeld: false,
+    orbActivated: false, spawn: {x: player.x * TILE_W, y: player.y * TILE_H}};
   runTriggers(state, 'start');
   return state;
 }
@@ -551,22 +550,15 @@ function playerTriangleContact(px, py, pw, ph, object, vx, vy, silhouette,
   return {x: normalX, y: normalY, depth: smallestDepth};
 }
 
-function playerOrbContact(px, py, pw, ph, object) {
+function playerInsideOrbRange(px, py, pw, ph, object) {
   const centerX = (object.x + object.w / 2) * TILE_W;
   const centerY = (object.y + object.h / 2) * TILE_H;
   const radius = Math.min(object.w * TILE_W, object.h * TILE_H) * .46;
   const closestX = clamp(centerX, px, px + pw);
   const closestY = clamp(centerY, py, py + ph);
-  const dx = closestX - centerX, dy = closestY - centerY;
-  const distance = Math.hypot(dx, dy);
-  if (distance > radius + .1) return null;
-  return distance > 1e-8 ?
-    {x: dx / distance, y: dy / distance, depth: Math.max(0, radius - distance)} :
-    {x: 0, y: -1, depth: radius};
+  return Math.hypot(closestX - centerX, closestY - centerY) <= radius + .1;
 }
 function playerObjectContact(px, py, pw, ph, object, vx = 0, vy = 0) {
-  if (object.type === 'orb-yellow' || object.type === 'orb-orange')
-    return playerOrbContact(px, py, pw, ph, object);
   if (object.type === 'slope')
     return playerTriangleContact(px, py, pw, ph, object, vx, vy,
                                  SLOPE_VERTICES, true);
@@ -607,39 +599,18 @@ function playerObjectContact(px, py, pw, ph, object, vx = 0, vy = 0) {
   }
   return {x: normalX, y: normalY, depth: smallestOverlap};
 }
-function orbUnderPoint(object, worldX, worldY) {
-  const centerX = object.x + object.w / 2;
-  const centerY = object.y + object.h / 2;
-  const radius = Math.min(object.w, object.h) * .46;
-  return (worldX - centerX) ** 2 + (worldY - centerY) ** 2 <= radius ** 2;
-}
-export function tapPreviewOrb(state, worldX, worldY, pointerId = 0) {
-  if (!state || state.won) return null;
+function activatePreviewOrb(state, player) {
+  if (!player || state.noCollision.includes(player.id)) return null;
+  const box = playerVisibleHitbox(state, player);
   const orb = [...state.objects].reverse().find(object =>
     (object.type === 'orb-yellow' || object.type === 'orb-orange') &&
-    object.visible !== false && orbUnderPoint(object, worldX, worldY));
-  if (!orb) {state.orbLastTap = null;return null;}
-  const player = state.objects.find(object => object.type === 'player');
-  const playerCanTouch = player && !state.noCollision?.includes(player.id) &&
-    !state.noCollision?.includes(orb.id);
-  const box = player ? playerVisibleHitbox(state, player) : null;
-  if (!playerCanTouch || !playerObjectContact(box.x, box.y, box.w, box.h, orb,
-                                               state.vx, state.vy)) {
-    state.orbLastTap = null;
-    return 'not-touching';
-  }
-  const previous = state.orbLastTap;
-  if (previous?.id === orb.id && previous.released &&
-      state.time - previous.time <= ORB_DOUBLE_TAP_SECONDS) {
-    state.vy = orb.type === 'orb-orange' ? -1050 : -650;
-    state.grounded = false;state.orbLastTap = null;
-    return 'bounced';
-  }
-  state.orbLastTap = {id: orb.id, time: state.time, pointerId, released: false};
-  return 'armed';
-}
-export function releasePreviewOrbTap(state, pointerId = 0) {
-  if (state?.orbLastTap?.pointerId === pointerId) state.orbLastTap.released = true;
+    object.visible !== false && !state.noCollision.includes(object.id) &&
+    playerInsideOrbRange(box.x, box.y, box.w, box.h, object));
+  if (!orb) return null;
+  state.vy = orb.type === 'orb-orange' ? -1050 : -650;
+  state.grounded = false;
+  state.orbActivated = true;
+  return orb;
 }
 function resolvePreviewPlayer(state, player, solids) {
   let grounded = false;
@@ -785,15 +756,20 @@ export function stepPreview(state, input = {}, dt = 1 / 60) {
   if (!state || state.won) return state;
   dt = clamp(Number(dt) || 0, 0, .05);
   state.time += dt;
+  state.orbActivated = false;
   const player = state.objects.find(o => o.type === 'player');
   if (!player) return state;
   const pw = player.w * TILE_W;
   const playerCollisionEnabled = !state.noCollision.includes(player.id);
   const solids = playerCollisionEnabled ? state.objects.filter(o =>
     o.visible && !state.noCollision.includes(o.id) &&
-    ['block', 'ground', 'slope', 'orb-yellow', 'orb-orange'].includes(o.type)) : [];
+    ['block', 'ground', 'slope'].includes(o.type)) : [];
   state.vx = (input.axis || 0) * 250;
-  if (input.jump && state.grounded) {state.vy = -570;state.grounded = false;}
+  const jumpPressed = !!input.jump && !state.jumpHeld;
+  state.jumpHeld = !!input.jump;
+  if (jumpPressed && !activatePreviewOrb(state, player) && state.grounded) {
+    state.vy = -570;state.grounded = false;
+  }
   const gravity = Number.isFinite(state.gravity) ? state.gravity : 1450;
   const predictedVy = Math.min(780, state.vy + gravity * dt);
   const displacement = Math.max(Math.abs(state.vx * dt), Math.abs(predictedVy * dt));
@@ -809,26 +785,21 @@ export function stepPreview(state, input = {}, dt = 1 / 60) {
   }
   if (state.y > WORLD_LIMIT * TILE_H) {
     state.x = state.spawn.x;state.y = state.spawn.y;state.vx = state.vy = 0;
-    state.grounded = false;state.orbContacts.clear();
+    state.grounded = false;
   }
-  const currentOrbContacts = new Set();
   if (playerCollisionEnabled) for (const o of state.objects) {
     if (!o.visible || o.type === 'player' || o.type === 'trigger' ||
+        o.type === 'orb-yellow' || o.type === 'orb-orange' ||
         state.noCollision.includes(o.id)) continue;
     const box = playerVisibleHitbox(state, player);
     if (!playerObjectContact(box.x, box.y, box.w, box.h, o, state.vx, state.vy)) continue;
-    if (o.type === 'orb-yellow' || o.type === 'orb-orange') {
-      currentOrbContacts.add(o.id);
-    } else if (o.type === 'coin' && !state.collected.includes(o.id)) {
+    if (o.type === 'coin' && !state.collected.includes(o.id)) {
       state.collected.push(o.id);state.coins++;o.visible = false;runTriggers(state, 'coin');
     } else if (o.type === 'hazard' || o.type === 'enemy') {
       state.x = state.spawn.x;state.y = state.spawn.y;state.vx = state.vy = 0;
-      state.grounded = false;state.orbContacts.clear();
+      state.grounded = false;
     } else if (o.type === 'goal') state.won = true;
   }
-  state.orbContacts = currentOrbContacts;
-  if (state.orbLastTap && !currentOrbContacts.has(state.orbLastTap.id))
-    state.orbLastTap = null;
   runTriggers(state, 'touch');
   if (input.trigger) runTriggers(state, 'manual');
   runForeverTriggers(state, dt);

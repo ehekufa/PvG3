@@ -5,7 +5,7 @@ import {LEVEL_TYPES, TRIGGER_KINDS, WORLD_LIMIT, MAX_LEVEL_OBJECTS,
         moveObjects, resizeObjects, rotateObjects, flipObjects, panCamera, copyObjects, pasteObjects, validateDraft,
         publishedRecord, isPublishedRecord, draftFromPublished, resolveControlMode,
         setTriggerKind, createTouchButtonState, createPreviewState, stepPreview,
-        tapPreviewOrb, releasePreviewOrbTap, drawEditorCanvas, drawPreviewCanvas} from '../workshop.js';
+        drawEditorCanvas, drawPreviewCanvas} from '../workshop.js';
 
 function recordingCanvas() {
   const images = [];
@@ -152,29 +152,42 @@ test('gravity triggers round-trip a signed level setting and change preview acce
     'positive slider values accelerate downward more strongly than negative values');
 });
 
-test('orbs only bounce on a direct double tap while touched; orange is stronger and neither changes gravity', () => {
+test('orbs have no solid body and one jump press in range activates them; orange is stronger', () => {
   const launch = type => {
     const level = newDraft(`orb-${type}`);
     level.objects.find(object => object.type === 'ground').y = 30;
     const player = level.objects.find(object => object.type === 'player');
     player.x = 3;player.y = 4;
-    const orb = addObject(level, type, 3, 4);
+    addObject(level, type, 3, 4);
     assert.equal(validateDraft(level).ok, true);
     const state = createPreviewState(level);
     const gravity = state.gravity;
+    const spawnY = state.y;
+
+    const outside = createPreviewState(level);
+    outside.x += 500;outside.y += 500;
+    stepPreview(outside, {jump:true}, 0);
+    assert.equal(outside.orbActivated, false,
+      'a jump press outside the orb activation circle has no orb effect');
+    assert.equal(outside.vy, 0);
+
     stepPreview(state, {}, .05);
-    const preTapY = state.y;
-    assert.equal(state.vy, 0, 'landing on the orb is stable but does not launch the player');
-    assert.equal(state.grounded, true);
-    assert(state.orbContacts.has(orb.id));
-    assert.equal(tapPreviewOrb(state, 3.35, 4.35, 7), 'armed');
-    assert.equal(state.vy, 0, 'the first tap only arms the orb');
-    releasePreviewOrbTap(state, 7);
-    assert.equal(tapPreviewOrb(state, 3.35, 4.35, 7), 'bounced');
+    assert(state.y > spawnY && state.vy > 0,
+      'the player falls through the orb without a press; the orb is not solid');
+    assert.equal(state.grounded, false);
+    assert.equal(state.orbActivated, false);
+
+    stepPreview(state, {jump:true}, 0);
     const launchSpeed = state.vy;
+    assert.equal(launchSpeed, type === 'orb-orange' ? -1050 : -650,
+      'a single jump press activates the orb while the player is in its circle');
+    assert.equal(state.orbActivated, true);
     assert.equal(state.gravity, gravity, 'an orb must not modify the gravity setting');
-    stepPreview(state, {}, .05);
-    assert(state.y < preTapY, 'the second direct tap launches the player upward');
+    const launchY = state.y;
+    stepPreview(state, {jump:true}, .05);
+    assert(state.vy > launchSpeed && state.vy < 0,
+      'holding the jump button does not repeatedly activate the orb');
+    assert(state.y < launchY, 'the orb impulse launches the player upward');
     return {state, launchSpeed};
   };
   const yellow = launch('orb-yellow');

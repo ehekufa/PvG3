@@ -9,7 +9,7 @@ import {LEVEL_WIDTH, LEVEL_HEIGHT, MAX_LEVEL_OBJECTS, WORLD_LIMIT,
         TYPE_LABELS, TRIGGER_KINDS, TRIGGER_LABELS, newDraft, setTriggerKind,
         addObject, findObjectAt, validateDraft, draftFromPublished,
         moveObjects, resizeObjects, rotateObjects, flipObjects, panCamera, copyObjects, pasteObjects,
-        createPreviewState, stepPreview, tapPreviewOrb, releasePreviewOrbTap,
+        createPreviewState, stepPreview,
         drawEditorCanvas, drawPreviewCanvas,
         resolveControlMode, createTouchButtonState} from './workshop.js';
 
@@ -668,34 +668,10 @@ function startWorkshopPreview(level, title, returnPage) {
 function drawCurrentPreview() {
   if (wsPreviewState) drawPreviewCanvas($('ws-preview-canvas'), wsPreviewState, wsControlMode, wsArt);
 }
-function previewOrbPointerDown(event) {
+function previewJumpPointerDown(event) {
   if (screen !== 'workshop' || wsPage !== 'preview' || !wsPreviewState) return;
-  const canvas = $('ws-preview-canvas');
-  const rect = canvas.getBoundingClientRect();
-  if (!rect.width || !rect.height) return;
-  const x = (event.clientX - rect.left) * canvas.width / rect.width;
-  const y = (event.clientY - rect.top) * canvas.height / rect.height;
-  const player = wsPreviewState.objects.find(object => object.type === 'player');
-  const playerW = (player?.w || .65) * TILE_W;
-  const playerH = (player?.h || .85) * TILE_H;
-  const cameraX = wsPreviewState.x + playerW / 2 - canvas.width * .4;
-  const cameraY = wsPreviewState.y + playerH / 2 - (canvas.height + 64) * .52;
-  const result = y < 64 ? tapPreviewOrb(wsPreviewState, NaN, NaN, event.pointerId) :
-    tapPreviewOrb(wsPreviewState, (x + cameraX) / TILE_W,
-                  (y + cameraY) / TILE_H, event.pointerId);
-  if (!result) return;
-  event.preventDefault();canvas.setPointerCapture?.(event.pointerId);
-  if (result === 'armed')
-    $('ws-preview-status').textContent = 'Нажми на орб ещё раз за 0,45 с, пока игрок касается его.';
-  else if (result === 'bounced')
-    $('ws-preview-status').textContent = 'Орб подбросил игрока!';
-  else if (result === 'not-touching')
-    $('ws-preview-status').textContent = 'Сначала коснись орба игроком, затем нажми на него дважды.';
-  drawCurrentPreview();
-}
-function previewOrbPointerUp(event) {
-  if (screen === 'workshop' && wsPage === 'preview' && wsPreviewState)
-    releasePreviewOrbTap(wsPreviewState, event.pointerId);
+  event.preventDefault();
+  wsJumpQueued = true;
 }
 function applyWorkshopControl(preference) {
   wsControlPreference = ['auto', 'buttons', 'keyboard'].includes(preference) ? preference : 'auto';
@@ -705,8 +681,8 @@ function applyWorkshopControl(preference) {
   $('ws-control-select').value = wsControlPreference;
   $('ws-buttons-controls').classList.toggle('hidden', wsControlMode !== 'buttons');
   $('ws-control-help').textContent = wsControlMode === 'keyboard' ?
-    'Клавиши A / D для движения, пробел или W для прыжка, E для действия. Чтобы отскочить от орба, нажми на него дважды, пока игрок касается его.' :
-    'Удерживай «Назад» или «Вперёд». Одновременно нажми «Прыжок»; «Действие» запускает ручные триггеры. Орб срабатывает от двойного нажатия, когда игрок касается его.';
+    'A / D — движение, пробел или W — прыжок, E — действие. Нажатие прыжка или клик по полю активирует орб в зоне.' :
+    'Удерживай «Назад» или «Вперёд» и нажимай «Прыжок»; «Действие» запускает триггеры. Клик/тап в зоне активирует орб.';
   clearWorkshopInput();drawCurrentPreview();
 }
 function clearWorkshopInput() {
@@ -728,6 +704,8 @@ function workshopFrame(dt) {
   const trigger = wsTriggerQueued || (wsControlMode === 'keyboard' && wsKeys.has('e'));
   wsJumpQueued = false;wsTriggerQueued = false;
   stepPreview(wsPreviewState, {axis, jump, trigger}, dt);
+  if (wsPreviewState.orbActivated)
+    $('ws-preview-status').textContent = 'Орб активирован!';
   drawCurrentPreview();
   if (wsPreviewState.won && !wsWinAnnounced) {
     wsWinAnnounced = true;$('ws-preview-status').textContent = `Уровень пройден! Собрано монет: ${wsPreviewState.coins}.`;
@@ -1055,10 +1033,7 @@ for (const button of document.querySelectorAll('[data-ws-type]')) button.addEven
   wsPaletteSelected = false;wsTool = 'build';
   renderWorkshopEditor();
 });
-$('ws-preview-canvas').addEventListener('pointerdown', previewOrbPointerDown);
-$('ws-preview-canvas').addEventListener('pointerup', previewOrbPointerUp);
-$('ws-preview-canvas').addEventListener('pointercancel', previewOrbPointerUp);
-$('ws-preview-canvas').addEventListener('lostpointercapture', previewOrbPointerUp);
+$('ws-preview-canvas').addEventListener('pointerdown', previewJumpPointerDown);
 $('ws-editor-canvas').addEventListener('pointerdown', wsPointerDown);
 $('ws-editor-canvas').addEventListener('pointermove', wsPointerMove);
 $('ws-editor-canvas').addEventListener('pointerup', wsPointerUp);

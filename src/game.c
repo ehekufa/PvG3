@@ -443,10 +443,6 @@ static int custom_id_map[CUSTOM_ID_MAP_CAP];
 static float custom_player_x, custom_player_y, custom_player_w, custom_player_h;
 static float custom_player_vx, custom_player_vy;
 static float custom_gravity = 1450.0f;
-static float custom_elapsed_time, custom_orb_last_tap_time;
-static int custom_orb_last_tap_id, custom_orb_last_tap_pointer;
-static int custom_orb_last_tap_released;
-#define CUSTOM_ORB_DOUBLE_TAP_SECONDS .45f
 static int custom_player_grounded, custom_control_axis, custom_jump_request;
 static int custom_jump_held, custom_trigger_request, custom_trigger_held;
 static uint8_t custom_trigger_fired[ON_LEVEL_OBJECT_CAP];
@@ -454,7 +450,6 @@ static uint8_t custom_trigger_active[ON_LEVEL_OBJECT_CAP];
 static float custom_trigger_timers[ON_LEVEL_OBJECT_CAP];
 static uint8_t custom_collision_disabled[ON_LEVEL_OBJECT_CAP];
 static uint8_t custom_invisible[ON_LEVEL_OBJECT_CAP];
-static uint8_t custom_orb_touching[ON_LEVEL_OBJECT_CAP];
 static int custom_player_collision_enabled;
 /* A timed rotation completes one full turn per second. */
 #define CUSTOM_GROUP_ROTATION_DEGREES_PER_SECOND 360.0f
@@ -2449,9 +2444,8 @@ static void custom_player_visible_hitbox(float *x, float *y,
     *w = custom_player_w * (right - left);
     *h = custom_player_h * (bottom - top);
 }
-static int custom_player_orb_contact(float px, float py, float pw, float ph,
-                                      const OnLevelObject *object,
-                                      CustomContact *contact) {
+static int custom_player_in_orb_range(float px, float py, float pw, float ph,
+                                        const OnLevelObject *object) {
     float center_x = (object->x + object->w * .5f) * CUSTOM_TILE_W;
     float center_y = (object->y + object->h * .5f) * CUSTOM_TILE_H;
     float radius = fminf(object->w * CUSTOM_TILE_W,
@@ -2459,21 +2453,29 @@ static int custom_player_orb_contact(float px, float py, float pw, float ph,
     float closest_x = fmaxf(px, fminf(center_x, px + pw));
     float closest_y = fmaxf(py, fminf(center_y, py + ph));
     float dx = closest_x - center_x, dy = closest_y - center_y;
-    float distance_squared = dx * dx + dy * dy;
-    float distance = sqrtf(distance_squared);
-    if (distance > radius + .1f) return 0;
-    if (contact) {
-        *contact = distance > 1e-6f ?
-            (CustomContact){dx / distance, dy / distance, fmaxf(0.0f, radius - distance)} :
-            (CustomContact){0.0f, -1.0f, radius};
+    float range = radius + .1f;
+    return dx * dx + dy * dy <= range * range;
+}
+static int custom_activate_orb(void) {
+    if (!custom_player_collision_enabled || custom_player_index < 0) return 0;
+    float player_x, player_y, player_w, player_h;
+    custom_player_visible_hitbox(&player_x, &player_y, &player_w, &player_h);
+    for (int i = custom_object_count - 1; i >= 0; --i) {
+        OnLevelObject *object = &custom_level.objects[i];
+        if ((object->type != ON_LEVEL_ORB_YELLOW &&
+             object->type != ON_LEVEL_ORB_ORANGE) || !object->visible ||
+            custom_object_collision_disabled(object) ||
+            !custom_player_in_orb_range(player_x, player_y, player_w, player_h,
+                                        object)) continue;
+        custom_player_vy = object->type == ON_LEVEL_ORB_ORANGE ? -1050.0f : -650.0f;
+        custom_player_grounded = 0;
+        return 1;
     }
-    return 1;
+    return 0;
 }
 static int custom_player_object_contact(float px, float py, float pw, float ph,
                                         const OnLevelObject *object,
                                         float vx, float vy, CustomContact *contact) {
-    if (object->type == ON_LEVEL_ORB_YELLOW || object->type == ON_LEVEL_ORB_ORANGE)
-        return custom_player_orb_contact(px, py, pw, ph, object, contact);
     float center_x = (object->x + object->w * .5f) * CUSTOM_TILE_W;
     float center_y = (object->y + object->h * .5f) * CUSTOM_TILE_H;
     float conservative_radius =
@@ -2528,65 +2530,10 @@ static int custom_player_object_contact(float px, float py, float pw, float ph,
     return 1;
 }
 
-int game_custom_orb_tap_screen(int pointer_id, int x, int y) {
-    if (phase != PH_CUSTOM_PLAY || !custom_level_active || custom_level_won ||
-        custom_player_index < 0 || x < 0 || x >= GAME_W || y < 103 || y >= GAME_H) {
-        custom_orb_last_tap_id = 0;
-        return 0;
-    }
-    for (int i = custom_object_count - 1; i >= 0; --i) {
-        OnLevelObject *object = &custom_level.objects[i];
-        if ((object->type != ON_LEVEL_ORB_YELLOW &&
-             object->type != ON_LEVEL_ORB_ORANGE) || !object->visible ||
-            custom_object_collision_disabled(object)) continue;
-        float center_x = object->x * CUSTOM_TILE_W + object->w * CUSTOM_TILE_W * .5f -
-                         custom_camera_x;
-        float center_y = object->y * CUSTOM_TILE_H + object->h * CUSTOM_TILE_H * .5f -
-                         custom_camera_y;
-        float radius = fminf(object->w * CUSTOM_TILE_W,
-                             object->h * CUSTOM_TILE_H) * .46f;
-        float dx = (float)x - center_x, dy = (float)y - center_y;
-        if (dx * dx + dy * dy > radius * radius) continue;
-        if (!custom_player_collision_enabled) {
-            custom_orb_last_tap_id = 0;
-            return 1;
-        }
-        float player_x, player_y, player_w, player_h;
-        custom_player_visible_hitbox(&player_x, &player_y, &player_w, &player_h);
-        if (!custom_player_object_contact(player_x, player_y, player_w, player_h,
-                object, custom_player_vx, custom_player_vy, NULL)) {
-            custom_orb_last_tap_id = 0;
-            return 1;
-        }
-        float since_last_tap = custom_elapsed_time - custom_orb_last_tap_time;
-        if (custom_orb_last_tap_id == object->id && custom_orb_last_tap_released &&
-            since_last_tap >= 0.0f && since_last_tap <= CUSTOM_ORB_DOUBLE_TAP_SECONDS) {
-            custom_player_vy = object->type == ON_LEVEL_ORB_ORANGE ? -1050.0f : -650.0f;
-            custom_player_grounded = 0;
-            custom_orb_last_tap_id = 0;
-            custom_orb_last_tap_released = 0;
-        } else {
-            custom_orb_last_tap_id = object->id;
-            custom_orb_last_tap_pointer = pointer_id;
-            custom_orb_last_tap_time = custom_elapsed_time;
-            custom_orb_last_tap_released = 0;
-        }
-        return 1;
-    }
-    custom_orb_last_tap_id = 0;
-    return 0;
-}
-
-void game_custom_orb_tap_release(int pointer_id) {
-    if (custom_orb_last_tap_id && custom_orb_last_tap_pointer == pointer_id)
-        custom_orb_last_tap_released = 1;
-}
-
 static int custom_solid(const OnLevelObject *o) {
     return o->visible && !custom_object_collision_disabled(o) &&
            (o->type == ON_LEVEL_BLOCK || o->type == ON_LEVEL_GROUND ||
-            o->type == ON_LEVEL_SLOPE || o->type == ON_LEVEL_ORB_YELLOW ||
-            o->type == ON_LEVEL_ORB_ORANGE);
+            o->type == ON_LEVEL_SLOPE);
 }
 static OnLevelObject *custom_find_id(int id) {
     int index = custom_id_lookup(id);
@@ -2599,8 +2546,6 @@ static void custom_player_reset(void) {
     custom_player_y = player->y * CUSTOM_TILE_H;
     custom_player_vx = custom_player_vy = 0;
     custom_player_grounded = 0;
-    custom_orb_last_tap_id = custom_orb_last_tap_released = 0;
-    memset(custom_orb_touching, 0, sizeof custom_orb_touching);
 }
 static int custom_platformer_start(const OnPublishedLevel *source) {
     if (!source || source->object_count < 1 ||
@@ -2624,10 +2569,6 @@ static int custom_platformer_start(const OnPublishedLevel *source) {
     memset(custom_trigger_timers, 0, sizeof custom_trigger_timers);
     memset(custom_collision_disabled, 0, sizeof custom_collision_disabled);
     memset(custom_invisible, 0, sizeof custom_invisible);
-    memset(custom_orb_touching, 0, sizeof custom_orb_touching);
-    custom_elapsed_time = custom_orb_last_tap_time = 0.0f;
-    custom_orb_last_tap_id = custom_orb_last_tap_pointer = 0;
-    custom_orb_last_tap_released = 0;
     custom_gravity = 1450.0f;
     custom_player_collision_enabled = 1;
     custom_group_rotation_count = 0;
@@ -2645,10 +2586,6 @@ static int custom_platformer_start(const OnPublishedLevel *source) {
 static void custom_platformer_stop(void) {
     custom_level_active = 0;custom_level_won = 0;custom_object_count = 0;
     custom_gravity = 1450.0f;
-    custom_elapsed_time = custom_orb_last_tap_time = 0.0f;
-    custom_orb_last_tap_id = custom_orb_last_tap_pointer = 0;
-    custom_orb_last_tap_released = 0;
-    memset(custom_orb_touching, 0, sizeof custom_orb_touching);
     custom_group_rotation_count = 0;
     custom_control_axis = custom_jump_request = custom_jump_held = 0;
     custom_trigger_request = custom_trigger_held = 0;
@@ -2848,9 +2785,8 @@ static void custom_platformer_update(float dt) {
     if (!custom_level_active || custom_level_won) return;
     if (dt < 0) dt = 0;
     if (dt > .05f) dt = .05f;
-    custom_elapsed_time += dt;
     custom_player_vx = (float)custom_control_axis * 250.0f;
-    if (custom_jump_request && custom_player_grounded) {
+    if (custom_jump_request && !custom_activate_orb() && custom_player_grounded) {
         custom_player_vy = -570.0f;custom_player_grounded = 0;
     }
     custom_jump_request = 0;
@@ -2880,21 +2816,10 @@ static void custom_platformer_update(float dt) {
         custom_player_visible_hitbox(&player_x, &player_y, &player_w, &player_h);
         for (int i = 0; i < custom_object_count; ++i) {
             OnLevelObject *object = &custom_level.objects[i];
-            int orb = object->type == ON_LEVEL_ORB_YELLOW ||
-                      object->type == ON_LEVEL_ORB_ORANGE;
-            if (orb) {
-                if (!object->visible || custom_object_collision_disabled(object) ||
-                    !custom_player_object_contact(player_x, player_y,
-                        player_w, player_h, object, custom_player_vx,
-                        custom_player_vy, NULL)) {
-                    custom_orb_touching[i] = 0;
-                    continue;
-                }
-                custom_orb_touching[i] = 1;
-                continue;
-            }
             if (!object->visible || object->type == ON_LEVEL_PLAYER ||
                 object->type == ON_LEVEL_TRIGGER ||
+                object->type == ON_LEVEL_ORB_YELLOW ||
+                object->type == ON_LEVEL_ORB_ORANGE ||
                 custom_object_collision_disabled(object) ||
                 !custom_player_object_contact(player_x, player_y,
                     player_w, player_h, object, custom_player_vx,
@@ -2907,15 +2832,6 @@ static void custom_platformer_update(float dt) {
             } else if (object->type == ON_LEVEL_GOAL) {
                 custom_level_won = 1;
             }
-        }
-    } else {
-        memset(custom_orb_touching, 0, sizeof custom_orb_touching);
-    }
-    if (custom_orb_last_tap_id) {
-        int orb_index = custom_id_lookup(custom_orb_last_tap_id);
-        if (orb_index < 0 || !custom_orb_touching[orb_index]) {
-            custom_orb_last_tap_id = 0;
-            custom_orb_last_tap_released = 0;
         }
     }
     custom_fire_triggers(ON_TRIGGER_TOUCH);
