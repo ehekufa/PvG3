@@ -849,16 +849,34 @@ static int workshop_point_in_object(float px, float py, float x, float y,
     float local_x = cosf(radians) * dx + sinf(radians) * dy;
     float local_y = -sinf(radians) * dx + cosf(radians) * dy;
     if (fabsf(local_x) > w * .5f || fabsf(local_y) > h * .5f) return 0;
-    if (type != ON_LEVEL_SLOPE) return 1;
     float nx = local_x / w + .5f, ny = local_y / h + .5f;
-    const float ax = 0.0f, ay = 1.0f, bx = 1.0f, by = 0.0f;
-    const float cx = 1.0f, cy = 1.0f;
-    float d1 = (nx - bx) * (ay - by) - (ax - bx) * (ny - by);
-    float d2 = (nx - cx) * (by - cy) - (bx - cx) * (ny - cy);
-    float d3 = (nx - ax) * (cy - ay) - (cx - ax) * (ny - ay);
-    int has_negative = d1 < -1e-6f || d2 < -1e-6f || d3 < -1e-6f;
-    int has_positive = d1 > 1e-6f || d2 > 1e-6f || d3 > 1e-6f;
-    return !(has_negative && has_positive);
+    if (type == ON_LEVEL_SLOPE || type == ON_LEVEL_HAZARD) {
+        float ax, ay, bx, by, cx, cy;
+        if (type == ON_LEVEL_SLOPE) {
+            ax = 0.0f;ay = 1.0f;bx = 1.0f;by = 0.0f;cx = 1.0f;cy = 1.0f;
+        } else {
+            ax = .5f;ay = .03f;bx = 1.0f;by = 1.0f;cx = 0.0f;cy = 1.0f;
+        }
+        float d1 = (nx - bx) * (ay - by) - (ax - bx) * (ny - by);
+        float d2 = (nx - cx) * (by - cy) - (bx - cx) * (ny - cy);
+        float d3 = (nx - ax) * (cy - ay) - (cx - ax) * (ny - ay);
+        int has_negative = d1 < -1e-6f || d2 < -1e-6f || d3 < -1e-6f;
+        int has_positive = d1 > 1e-6f || d2 > 1e-6f || d3 > 1e-6f;
+        return !(has_negative && has_positive);
+    }
+    float left = 0.0f, top = 0.0f, right = 1.0f, bottom = 1.0f;
+    switch (type) {
+    case ON_LEVEL_PLAYER:
+        left = .21f;top = .02f;right = .80f;bottom = .96f;break;
+    case ON_LEVEL_ENEMY:
+        left = .20f;top = .21f;right = .99f;bottom = .99f;break;
+    case ON_LEVEL_COIN:
+        left = .05f;top = .03f;right = .96f;bottom = .97f;break;
+    case ON_LEVEL_GOAL:
+        left = .04f;top = .03f;break;
+    default: break;
+    }
+    return nx >= left && nx <= right && ny >= top && ny <= bottom;
 }
 static int workshop_find_cell(int col, int row) {
     float px = col + .5f, py = row + .5f;
@@ -2022,6 +2040,8 @@ static void workshop_draw_world_object(lv_obj_t *root, int gx, int gy, int cell,
     if (type != ON_LEVEL_SLOPE) {
         lv_obj_t *shape = box(root, left, top, shape_w, shape_h, 4, color, 0);
         lv_obj_set_style_transform_rotation(shape, rotation, 0);
+        lv_obj_set_style_transform_pivot_x(shape, LV_PCT(50), 0);
+        lv_obj_set_style_transform_pivot_y(shape, LV_PCT(50), 0);
     }
     if (art_id >= 0 && art_id < PV_ART_COUNT && pictures[art_id].data) {
         if (type == ON_LEVEL_GROUND && fabsf(angle) < .01f && w >= 2.0f) {
@@ -2059,12 +2079,66 @@ static void workshop_draw_world_object(lv_obj_t *root, int gx, int gy, int cell,
         }
     }
     if (selected) {
-        lv_obj_t *outline = box(root, left, top, shape_w, shape_h, 0, color, 0);
-        lv_obj_set_style_bg_opa(outline, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_color(outline, WS_CYAN, 0);
-        lv_obj_set_style_border_width(outline, 4, 0);
-        lv_obj_set_style_radius(outline, 0, 0);
-        lv_obj_set_style_transform_rotation(outline, rotation, 0);
+        if (type == ON_LEVEL_SLOPE || type == ON_LEVEL_HAZARD) {
+            static const float slope_u[] = {0.0f, 1.0f, 1.0f};
+            static const float slope_v[] = {1.0f, 0.0f, 1.0f};
+            static const float spike_u[] = {.5f, 1.0f, 0.0f};
+            static const float spike_v[] = {.03f, 1.0f, 1.0f};
+            const float *u = type == ON_LEVEL_SLOPE ? slope_u : spike_u;
+            const float *v = type == ON_LEVEL_SLOPE ? slope_v : spike_v;
+            for (int i = 0; i < 3; ++i) {
+                int next = (i + 1) % 3;
+                float ax = (u[i] - .5f) * w, ay = (v[i] - .5f) * h;
+                float bx = (u[next] - .5f) * w, by = (v[next] - .5f) * h;
+                float x0 = cx + (ax * cosf(radians) - ay * sinf(radians)) * cell;
+                float y0 = cy + (ax * sinf(radians) + ay * cosf(radians)) * cell;
+                float x1 = cx + (bx * cosf(radians) - by * sinf(radians)) * cell;
+                float y1 = cy + (bx * sinf(radians) + by * cosf(radians)) * cell;
+                float length = hypotf(x1 - x0, y1 - y0);
+                float edge_angle = atan2f(y1 - y0, x1 - x0) *
+                                   1800.0f / 3.14159265358979323846f;
+                int line_w = (int)lroundf(length);
+                if (line_w < 1) line_w = 1;
+                lv_obj_t *line = box(root, (int)lroundf((x0 + x1) * .5f - line_w * .5f),
+                    (int)lroundf((y0 + y1) * .5f - 2), line_w, 4, 0, WS_CYAN, 0);
+                lv_obj_set_style_transform_rotation(line, (int)lroundf(edge_angle), 0);
+                lv_obj_set_style_transform_pivot_x(line, LV_PCT(50), 0);
+                lv_obj_set_style_transform_pivot_y(line, LV_PCT(50), 0);
+            }
+        } else {
+            float alpha_left = 0.0f, alpha_top = 0.0f;
+            float alpha_right = 1.0f, alpha_bottom = 1.0f;
+            switch (type) {
+            case ON_LEVEL_PLAYER:
+                alpha_left = .21f;alpha_top = .02f;alpha_right = .80f;alpha_bottom = .96f;break;
+            case ON_LEVEL_ENEMY:
+                alpha_left = .20f;alpha_top = .21f;alpha_right = .99f;alpha_bottom = .99f;break;
+            case ON_LEVEL_COIN:
+                alpha_left = .05f;alpha_top = .03f;alpha_right = .96f;alpha_bottom = .97f;break;
+            case ON_LEVEL_GOAL:
+                alpha_left = .04f;alpha_top = .03f;break;
+            default: break;
+            }
+            float local_x = ((alpha_left + alpha_right) * .5f - .5f) * w;
+            float local_y = ((alpha_top + alpha_bottom) * .5f - .5f) * h;
+            float outline_cx = cx + (local_x * cosf(radians) - local_y * sinf(radians)) * cell;
+            float outline_cy = cy + (local_x * sinf(radians) + local_y * cosf(radians)) * cell;
+            int outline_w = (int)lroundf(w * (alpha_right - alpha_left) * cell);
+            int outline_h = (int)lroundf(h * (alpha_bottom - alpha_top) * cell);
+            if (outline_w < 1) outline_w = 1;
+            if (outline_h < 1) outline_h = 1;
+            int outline_left = (int)lroundf(outline_cx - outline_w * .5f);
+            int outline_top = (int)lroundf(outline_cy - outline_h * .5f);
+            lv_obj_t *outline = box(root, outline_left, outline_top,
+                                    outline_w, outline_h, 0, color, 0);
+            lv_obj_set_style_bg_opa(outline, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_border_color(outline, WS_CYAN, 0);
+            lv_obj_set_style_border_width(outline, 4, 0);
+            lv_obj_set_style_radius(outline, 0, 0);
+            lv_obj_set_style_transform_rotation(outline, rotation, 0);
+            lv_obj_set_style_transform_pivot_x(outline, LV_PCT(50), 0);
+            lv_obj_set_style_transform_pivot_y(outline, LV_PCT(50), 0);
+        }
     }
 }
 

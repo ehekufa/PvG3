@@ -2260,12 +2260,12 @@ static void custom_disable_object_collision(OnLevelObject *object) {
     custom_collision_disabled[index] = 1;
     if (object->type == ON_LEVEL_PLAYER) custom_player_collision_enabled = 0;
 }
-/* Match the uploaded right-triangle slope image and resolve it as a safe ramp. */
-static int custom_player_slope_contact(float px, float py, float pw, float ph,
-                                        const OnLevelObject *object,
-                                        float vx, float vy, CustomContact *contact) {
-    static const float u[3] = {0.0f, 1.0f, 1.0f};
-    static const float v[3] = {1.0f, 0.0f, 1.0f};
+/* Collide with the artwork silhouette; slopes additionally supply an uphill response. */
+static int custom_player_triangle_contact(float px, float py, float pw, float ph,
+                                           const OnLevelObject *object,
+                                           const float u[3], const float v[3],
+                                           int climbable, float vx, float vy,
+                                           CustomContact *contact) {
     float radians = object->angle * 0.01745329251994329577f;
     float c = cosf(radians), s = sinf(radians);
     float object_x = (object->x + object->w * .5f) * CUSTOM_TILE_W;
@@ -2326,24 +2326,72 @@ static int custom_player_slope_contact(float px, float py, float pw, float ph,
             climb_depth = depth;climb_x = candidate_x;climb_y = candidate_y;
         }
     }
-    if (climb_depth < INFINITY) {
+    if (climbable && climb_depth < INFINITY) {
         if (contact) *contact = (CustomContact){climb_x, climb_y, climb_depth};
     } else if (contact) {
         *contact = (CustomContact){normal_x, normal_y, smallest_depth};
     }
     return 1;
 }
+static int custom_player_slope_contact(float px, float py, float pw, float ph,
+                                        const OnLevelObject *object,
+                                        float vx, float vy, CustomContact *contact) {
+    static const float u[3] = {0.0f, 1.0f, 1.0f};
+    static const float v[3] = {1.0f, 0.0f, 1.0f};
+    return custom_player_triangle_contact(px, py, pw, ph, object,
+                                          u, v, 1, vx, vy, contact);
+}
+static int custom_player_hazard_contact(float px, float py, float pw, float ph,
+                                         const OnLevelObject *object,
+                                         float vx, float vy, CustomContact *contact) {
+    static const float u[3] = {.5f, 1.0f, 0.0f};
+    static const float v[3] = {.03f, 1.0f, 1.0f};
+    return custom_player_triangle_contact(px, py, pw, ph, object,
+                                          u, v, 0, vx, vy, contact);
+}
+static void custom_art_alpha_bounds(int type, float *left, float *top,
+                                    float *right, float *bottom) {
+    *left = *top = 0.0f;*right = *bottom = 1.0f;
+    switch (type) {
+    case ON_LEVEL_PLAYER:
+        *left = .21f;*top = .02f;*right = .80f;*bottom = .96f;break;
+    case ON_LEVEL_ENEMY:
+        *left = .20f;*top = .21f;*right = .99f;*bottom = .99f;break;
+    case ON_LEVEL_COIN:
+        *left = .05f;*top = .03f;*right = .96f;*bottom = .97f;break;
+    case ON_LEVEL_GOAL:
+        *left = .04f;*top = .03f;break;
+    default: break;
+    }
+}
+static void custom_player_visible_hitbox(float *x, float *y,
+                                         float *w, float *h) {
+    *x = custom_player_x + custom_player_w * .21f;
+    *y = custom_player_y + custom_player_h * .02f;
+    *w = custom_player_w * (.80f - .21f);
+    *h = custom_player_h * (.96f - .02f);
+}
 static int custom_player_object_contact(float px, float py, float pw, float ph,
                                         const OnLevelObject *object,
                                         float vx, float vy, CustomContact *contact) {
     if (object->type == ON_LEVEL_SLOPE)
         return custom_player_slope_contact(px, py, pw, ph, object, vx, vy, contact);
+    if (object->type == ON_LEVEL_HAZARD)
+        return custom_player_hazard_contact(px, py, pw, ph, object, vx, vy, contact);
+    float left, top, right, bottom;
+    custom_art_alpha_bounds(object->type, &left, &top, &right, &bottom);
     float radians = object->angle * 0.01745329251994329577f;
     float c = cosf(radians), s = sinf(radians);
-    float object_x = (object->x + object->w * .5f) * CUSTOM_TILE_W;
-    float object_y = (object->y + object->h * .5f) * CUSTOM_TILE_H;
-    float half_object_w = object->w * CUSTOM_TILE_W * .5f;
-    float half_object_h = object->h * CUSTOM_TILE_H * .5f;
+    float frame_w = object->w * CUSTOM_TILE_W;
+    float frame_h = object->h * CUSTOM_TILE_H;
+    float offset_x = ((left + right) * .5f - .5f) * frame_w;
+    float offset_y = ((top + bottom) * .5f - .5f) * frame_h;
+    float object_x = (object->x + object->w * .5f) * CUSTOM_TILE_W +
+                     offset_x * c - offset_y * s;
+    float object_y = (object->y + object->h * .5f) * CUSTOM_TILE_H +
+                     offset_x * s + offset_y * c;
+    float half_object_w = frame_w * (right - left) * .5f;
+    float half_object_h = frame_h * (bottom - top) * .5f;
     float half_player_w = pw * .5f, half_player_h = ph * .5f;
     float dx = px + half_player_w - object_x;
     float dy = py + half_player_h - object_y;
@@ -2541,10 +2589,11 @@ static void custom_fire_triggers(int event) {
         int legacy_loop = trigger->trigger_kind == ON_TRIGGER_KIND_FOREVER &&
                           !trigger->trigger_has_group;
         if (legacy_loop ? custom_trigger_active[i] : custom_trigger_fired[i]) continue;
+        float player_x, player_y, player_w, player_h;
+        custom_player_visible_hitbox(&player_x, &player_y, &player_w, &player_h);
         if (event == ON_TRIGGER_TOUCH &&
-            !custom_player_object_contact(custom_player_x, custom_player_y,
-                custom_player_w, custom_player_h, trigger,
-                custom_player_vx, custom_player_vy, NULL)) continue;
+            !custom_player_object_contact(player_x, player_y, player_w, player_h,
+                trigger, custom_player_vx, custom_player_vy, NULL)) continue;
         if (legacy_loop) {
             custom_trigger_active[i] = 1;
             custom_trigger_timers[i] = 0;
@@ -2580,10 +2629,12 @@ static int custom_resolve_player_solids(void) {
         for (int i = 0; i < custom_object_count; ++i) {
             OnLevelObject *object = &custom_objects[i];
             if (!custom_solid(object)) continue;
+            float player_x, player_y, player_w, player_h;
+            custom_player_visible_hitbox(&player_x, &player_y, &player_w, &player_h);
             CustomContact contact;
-            if (!custom_player_object_contact(custom_player_x, custom_player_y,
-                    custom_player_w, custom_player_h, object,
-                    custom_player_vx, custom_player_vy, &contact)) continue;
+            if (!custom_player_object_contact(player_x, player_y,
+                    player_w, player_h, object, custom_player_vx,
+                    custom_player_vy, &contact)) continue;
             custom_player_x += contact.x * contact.depth;
             custom_player_y += contact.y * contact.depth;
             float inward_velocity = custom_player_vx * contact.x +
@@ -2636,9 +2687,11 @@ static void custom_platformer_update(float dt) {
             if (!object->visible || object->type == ON_LEVEL_PLAYER ||
                 object->type == ON_LEVEL_TRIGGER ||
                 custom_object_collision_disabled(object)) continue;
-            if (!custom_player_object_contact(custom_player_x, custom_player_y,
-                    custom_player_w, custom_player_h, object,
-                    custom_player_vx, custom_player_vy, NULL)) continue;
+            float player_x, player_y, player_w, player_h;
+            custom_player_visible_hitbox(&player_x, &player_y, &player_w, &player_h);
+            if (!custom_player_object_contact(player_x, player_y,
+                    player_w, player_h, object, custom_player_vx,
+                    custom_player_vy, NULL)) continue;
             if (object->type == ON_LEVEL_HAZARD || object->type == ON_LEVEL_ENEMY) {
                 custom_player_reset();
             } else if (object->type == ON_LEVEL_COIN) {

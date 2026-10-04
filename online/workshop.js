@@ -45,8 +45,17 @@ const TYPE_TO_ID = Object.freeze({
 const TYPE_NAMES = Object.freeze([
   'block', 'ground', 'hazard', 'coin', 'enemy', 'player', 'goal', 'trigger', 'slope',
 ]);
-// Normalized right-triangle silhouette of the existing Склон.png artwork.
+// Normalized opaque artwork bounds, measured from alpha in the supplied PNGs.
+const ART_ALPHA_BOUNDS = Object.freeze({
+  player: Object.freeze([.21, .02, .80, .96]),
+  enemy: Object.freeze([.20, .21, .99, .99]),
+  coin: Object.freeze([.05, .03, .96, .97]),
+  goal: Object.freeze([.04, .03, 1, 1]),
+});
+const FULL_ART_BOUNDS = Object.freeze([0, 0, 1, 1]);
+// Silhouettes of Склон.png and Шип.png; transparent canvas corners are not solid.
 const SLOPE_VERTICES = Object.freeze([[0, 1], [1, 0], [1, 1]]);
+const SPIKE_VERTICES = Object.freeze([[.5, .03], [1, 1], [0, 1]]);
 const EVENTS = new Set(['touch', 'coin', 'manual', 'start']);
 const ACTIONS = new Set([
   'toggle', 'move', 'recolor', 'number', 'rotate', 'invisible', 'no-collision',
@@ -141,6 +150,15 @@ function pointInTriangle(x, y, vertices) {
   const hasPositive = d1 > 1e-9 || d2 > 1e-9 || d3 > 1e-9;
   return !(hasNegative && hasPositive);
 }
+function artBounds(type) {
+  return ART_ALPHA_BOUNDS[type] || FULL_ART_BOUNDS;
+}
+function playerVisibleHitbox(state, player) {
+  const fullW = player.w * TILE_W, fullH = player.h * TILE_H;
+  const [left, top, right, bottom] = ART_ALPHA_BOUNDS.player;
+  return {x: state.x + fullW * left, y: state.y + fullH * top,
+    w: fullW * (right - left), h: fullH * (bottom - top)};
+}
 
 export function findObjectAt(level, x, y) {
   return level.objects
@@ -151,9 +169,11 @@ export function findObjectAt(level, x, y) {
       const localX = Math.cos(angle) * dx + Math.sin(angle) * dy;
       const localY = -Math.sin(angle) * dx + Math.cos(angle) * dy;
       if (Math.abs(localX) > o.w / 2 || Math.abs(localY) > o.h / 2) return false;
-      if (o.type === 'slope')
-        return pointInTriangle(localX / o.w + .5, localY / o.h + .5, SLOPE_VERTICES);
-      return true;
+      const u = localX / o.w + .5, v = localY / o.h + .5;
+      if (o.type === 'slope') return pointInTriangle(u, v, SLOPE_VERTICES);
+      if (o.type === 'hazard') return pointInTriangle(u, v, SPIKE_VERTICES);
+      const [left, top, right, bottom] = artBounds(o.type);
+      return u >= left && u <= right && v >= top && v <= bottom;
     })
     .sort((a, b) => (b.layer || 0) - (a.layer || 0) ||
                     (b.zOrder || 0) - (a.zOrder || 0))
@@ -416,12 +436,13 @@ export function createPreviewState(level) {
   runTriggers(state, 'start');
   return state;
 }
-function playerSlopeContact(px, py, pw, ph, object, vx, vy) {
+function playerTriangleContact(px, py, pw, ph, object, vx, vy, silhouette,
+                                climbable = false) {
   const angle = (Number(object.angle) || 0) * Math.PI / 180;
   const c = Math.cos(angle), s = Math.sin(angle);
   const objectX = (object.x + object.w / 2) * TILE_W;
   const objectY = (object.y + object.h / 2) * TILE_H;
-  const vertices = SLOPE_VERTICES.map(([u, v]) => {
+  const vertices = silhouette.map(([u, v]) => {
     const localX = (u - .5) * object.w * TILE_W;
     const localY = (v - .5) * object.h * TILE_H;
     return [objectX + localX * c - localY * s,
@@ -468,18 +489,30 @@ function playerSlopeContact(px, py, pw, ph, object, vx, vy) {
       climbDepth = depth;climbX = candidateX;climbY = candidateY;
     }
   }
-  if (climbDepth < Infinity) return {x: climbX, y: climbY, depth: climbDepth};
+  if (climbable && climbDepth < Infinity)
+    return {x: climbX, y: climbY, depth: climbDepth};
   return {x: normalX, y: normalY, depth: smallestDepth};
 }
 
 function playerObjectContact(px, py, pw, ph, object, vx = 0, vy = 0) {
-  if (object.type === 'slope') return playerSlopeContact(px, py, pw, ph, object, vx, vy);
+  if (object.type === 'slope')
+    return playerTriangleContact(px, py, pw, ph, object, vx, vy,
+                                 SLOPE_VERTICES, true);
+  if (object.type === 'hazard')
+    return playerTriangleContact(px, py, pw, ph, object, vx, vy,
+                                 SPIKE_VERTICES, false);
+  const [left, top, right, bottom] = artBounds(object.type);
+  const frameW = object.w * TILE_W, frameH = object.h * TILE_H;
+  const localOffsetX = ((left + right) / 2 - .5) * frameW;
+  const localOffsetY = ((top + bottom) / 2 - .5) * frameH;
   const angle = (Number(object.angle) || 0) * Math.PI / 180;
   const c = Math.cos(angle), s = Math.sin(angle);
-  const objectX = (object.x + object.w / 2) * TILE_W;
-  const objectY = (object.y + object.h / 2) * TILE_H;
-  const halfObjectW = object.w * TILE_W / 2;
-  const halfObjectH = object.h * TILE_H / 2;
+  const objectX = (object.x + object.w / 2) * TILE_W +
+    localOffsetX * c - localOffsetY * s;
+  const objectY = (object.y + object.h / 2) * TILE_H +
+    localOffsetX * s + localOffsetY * c;
+  const halfObjectW = frameW * (right - left) / 2;
+  const halfObjectH = frameH * (bottom - top) / 2;
   const halfPlayerW = pw / 2, halfPlayerH = ph / 2;
   const dx = px + halfPlayerW - objectX;
   const dy = py + halfPlayerH - objectY;
@@ -501,12 +534,13 @@ function playerObjectContact(px, py, pw, ph, object, vx = 0, vy = 0) {
   }
   return {x: normalX, y: normalY, depth: smallestOverlap};
 }
-function resolvePreviewPlayer(state, pw, ph, solids) {
+function resolvePreviewPlayer(state, player, solids) {
   let grounded = false;
   for (let iteration = 0; iteration < 4; iteration++) {
     let collided = false;
     for (const object of solids) {
-      const contact = playerObjectContact(state.x, state.y, pw, ph, object,
+      const box = playerVisibleHitbox(state, player);
+      const contact = playerObjectContact(box.x, box.y, box.w, box.h, object,
                                            state.vx, state.vy);
       if (!contact) continue;
       state.x += contact.x * contact.depth;
@@ -606,10 +640,9 @@ function runTriggers(state, event) {
     const active = state.triggerActive.includes(trigger.id);
     if (legacyLoop ? active : completed) continue;
     const player = state.objects.find(o => o.type === 'player');
-    const px = state.x, py = state.y, pw = (player?.w || .65) * TILE_W,
-      ph = (player?.h || .85) * TILE_H;
-    if (event === 'touch' &&
-        !playerObjectContact(px, py, pw, ph, trigger, state.vx, state.vy)) continue;
+    const box = player ? playerVisibleHitbox(state, player) : null;
+    if (event === 'touch' && (!box ||
+        !playerObjectContact(box.x, box.y, box.w, box.h, trigger, state.vx, state.vy))) continue;
     if (legacyLoop) {
       state.triggerActive.push(trigger.id);
       state.triggerTimers[trigger.id] = 0;
@@ -642,7 +675,7 @@ export function stepPreview(state, input = {}, dt = 1 / 60) {
   state.time += dt;
   const player = state.objects.find(o => o.type === 'player');
   if (!player) return state;
-  const pw = player.w * TILE_W, ph = player.h * TILE_H;
+  const pw = player.w * TILE_W;
   const playerCollisionEnabled = !state.noCollision.includes(player.id);
   const solids = playerCollisionEnabled ? state.objects.filter(o =>
     o.visible && !state.noCollision.includes(o.id) &&
@@ -659,7 +692,7 @@ export function stepPreview(state, input = {}, dt = 1 / 60) {
     state.x = clamp(state.x + state.vx * subDt,
       -WORLD_LIMIT * TILE_W, WORLD_LIMIT * TILE_W - pw);
     state.y += state.vy * subDt;
-    if (playerCollisionEnabled) resolvePreviewPlayer(state, pw, ph, solids);
+    if (playerCollisionEnabled) resolvePreviewPlayer(state, player, solids);
   }
   if (state.y > WORLD_LIMIT * TILE_H) {
     state.x = state.spawn.x;state.y = state.spawn.y;state.vx = state.vy = 0;
@@ -668,7 +701,8 @@ export function stepPreview(state, input = {}, dt = 1 / 60) {
   if (playerCollisionEnabled) for (const o of state.objects) {
     if (!o.visible || o.type === 'player' || o.type === 'trigger' ||
         state.noCollision.includes(o.id)) continue;
-    if (!playerObjectContact(state.x, state.y, pw, ph, o, state.vx, state.vy)) continue;
+    const box = playerVisibleHitbox(state, player);
+    if (!playerObjectContact(box.x, box.y, box.w, box.h, o, state.vx, state.vy)) continue;
     if (o.type === 'coin' && !state.collected.includes(o.id)) {
       state.collected.push(o.id);state.coins++;o.visible = false;runTriggers(state, 'coin');
     } else if (o.type === 'hazard' || o.type === 'enemy') {
@@ -759,9 +793,23 @@ export function drawEditorCanvas(canvas, level, selectedId = 0, tool = 'build', 
     }
     if (selected.has(o.id)) {
       const angle = ((o.angle || 0) % 360) * Math.PI / 180;
+      const silhouette = o.type === 'slope' ? SLOPE_VERTICES :
+        o.type === 'hazard' ? SPIKE_VERTICES : null;
       ctx.save();ctx.translate(x + w / 2, y + h / 2);ctx.rotate(angle);
       ctx.strokeStyle = '#27d2d6';ctx.lineWidth = 4;
-      ctx.strokeRect(-w / 2 - 1, -h / 2 - 1, w + 2, h + 2);ctx.restore();
+      if (silhouette) {
+        ctx.beginPath();
+        silhouette.forEach(([u, v], index) => {
+          const px = (u - .5) * w, py = (v - .5) * h;
+          if (index) ctx.lineTo(px, py);else ctx.moveTo(px, py);
+        });
+        ctx.closePath();ctx.stroke();
+      } else {
+        const [left, top, right, bottom] = artBounds(o.type);
+        ctx.strokeRect(-w / 2 + left * w - 1, -h / 2 + top * h - 1,
+          (right - left) * w + 2, (bottom - top) * h + 2);
+      }
+      ctx.restore();
     }
     ctx.fillStyle = '#10131d';ctx.font = '14px PTSans, sans-serif';ctx.fillText(String(o.number || ''), x + 4, y + 17);
   }

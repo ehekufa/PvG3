@@ -39,6 +39,21 @@ for name, filename in EXPECTED.items():
     w, h, pixels = png_pixels(ROOT / filename)
     assert w > 0 and h > 0 and any(p >> 24 for p in pixels), (name, filename)
 
+# These hitbox rectangles are the exact non-transparent bounds used by the
+# browser and native preview. Keep them synchronized with the source artwork.
+EXPECTED_ALPHA_BOUNDS = {
+    "KHLEBUSHEK": (21, 2, 80, 96),
+    "DUCK": (20, 21, 99, 99),
+    "COIN": (5, 3, 96, 97),
+    "LEVEL_FLAG": (2, 3, 50, 100),
+}
+for name, expected in EXPECTED_ALPHA_BOUNDS.items():
+    w, h, pixels = png_pixels(ROOT / EXPECTED[name])
+    opaque = [(i % w, i // w) for i, pixel in enumerate(pixels) if pixel >> 24]
+    bounds = (min(x for x, _ in opaque), min(y for _, y in opaque),
+              max(x for x, _ in opaque) + 1, max(y for _, y in opaque) + 1)
+    assert bounds == expected, (name, bounds, expected)
+
 # Author drawings and all trigger icons remain transparent at the corners, so
 # they can be composited over the map and UI without a black box.
 for name in ("DUCK_CONE", "DUCK_BUCKET", "COIN", "LEVEL_TRIGGER",

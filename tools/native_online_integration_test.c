@@ -481,6 +481,40 @@ static void native_trigger_runtime_regression(void) {
     assert(game_debug_custom_player_x() > 240 && highest_y < spawn_y - 35);
     game_custom_level_exit();
 
+    /* The bread's collider starts/ends at its visible alpha bounds, not its PNG canvas. */
+    level.object_count = 4;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+        .x=0,.y=8,.w=16,.h=2,.visible=1,.number=3};
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
+        .x=1,.y=7,.w=.65f,.h=.85f,.visible=1,.number=1};
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_BLOCK,
+        .x=2,.y=7,.w=1,.h=1,.visible=1,.number=4};
+    assert(game_workshop_preview(&level));
+    game_custom_control(1, 0, 0);
+    for (int i = 0; i < 3; ++i) game_tick(.05f, NULL);
+    game_custom_control(0, 0, 0);
+    assert(game_debug_custom_player_x() > 112);
+    screenshot("alpha_player_wall");
+    game_custom_level_exit();
+
+    /* A transparent upper corner of the spike art is not a lethal contact. */
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+        .x=0,.y=20,.w=16,.h=1,.visible=1,.number=3};
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
+        .x=2.53f,.y=4.033f,.w=.65f,.h=.85f,.visible=1,.number=1};
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_HAZARD,
+        .x=3,.y=4,.w=1,.h=1,.visible=1,.number=4};
+    assert(game_workshop_preview(&level));
+    float spike_graze_spawn = game_debug_custom_player_x();
+    game_custom_control(1, 0, 0);game_tick(.001f, NULL);game_custom_control(0, 0, 0);
+    assert(game_debug_custom_player_x() > spike_graze_spawn + .1f);
+    screenshot("alpha_spike_graze");
+    game_custom_level_exit();
+
     /* Trigger PNGs are for the editor only and never appear in a play preview. */
     static uint32_t with_trigger[GAME_W * GAME_H];
     static uint32_t without_trigger[GAME_W * GAME_H];

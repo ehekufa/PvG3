@@ -10,9 +10,13 @@ import {LEVEL_TYPES, TRIGGER_KINDS, WORLD_LIMIT, MAX_LEVEL_OBJECTS,
 function recordingCanvas() {
   const images = [];
   const outlines = [];
+  let pathPoints = 0;
   const context = {
-    clearRect() {}, fillRect() {}, beginPath() {}, moveTo() {}, lineTo() {},
-    closePath() {}, fill() {}, stroke() {}, arc() {}, ellipse() {},
+    clearRect() {}, fillRect() {}, beginPath() {pathPoints = 0;},
+    moveTo() {pathPoints++;}, lineTo() {pathPoints++;},
+    closePath() {pathPoints++;}, fill() {},
+    stroke() {if (pathPoints >= 4) outlines.push({type: 'polygon'});},
+    arc() {}, ellipse() {},
     save() {}, restore() {}, translate() {}, rotate() {},
     strokeRect(...bounds) {outlines.push(bounds);}, fillText() {},
     drawImage(image, ...bounds) {images.push({image, bounds});},
@@ -211,8 +215,9 @@ test('invisibility and no-collision variants round-trip and change grouped targe
   assert(standing.invisible.includes(invisibleBlock.id));
   assert.equal(standing.objects.find(object => object.id === invisibleBlock.id).visible, true);
   assert.equal(standing.grounded, true);
-  assert(Math.abs(standing.y - (8 * 72 - .85 * 72)) < 2,
-    'the player can stand on a visually hidden block');
+  const standingPlayer = standing.objects.find(object => object.type === 'player');
+  assert(Math.abs(standing.y + standingPlayer.h * 72 * .96 - 8 * 72) < 2,
+    'the visible bottom of the player can stand on a visually hidden block');
   const preview = recordingCanvas();
   drawPreviewCanvas(preview.canvas, standing, 'keyboard', {
     block: {type: 'block', naturalWidth: 100},
@@ -273,6 +278,39 @@ test('start and action events do not need contact, while touch events do', () =>
   stepPreview(touched, {}, .01);
   assert(touched.invisible.includes(touchBlock.id),
     'the touch trigger fires once the player contacts it');
+});
+
+test('character and spike hitboxes follow opaque artwork instead of transparent canvas corners', () => {
+  const level = newDraft('alpha-hitbox');
+  const player = level.objects.find(object => object.type === 'player');
+  assert.equal(findObjectAt(level, player.x + player.w * .1,
+    player.y + player.h * .5), null,
+  'transparent sides of the character PNG are not selectable');
+  assert.equal(findObjectAt(level, player.x + player.w * .5,
+    player.y + player.h * .5)?.id, player.id);
+
+  const hazard = addObject(level, 'hazard', 4, 4);
+  assert.equal(findObjectAt(level, 4.05, 4.10), null,
+    'transparent corners around the spike triangle are not selectable');
+  assert.equal(findObjectAt(level, 4.5, 4.5)?.id, hazard.id);
+
+  const wallLevel = newDraft('alpha-player-wall');
+  const wallPlayer = wallLevel.objects.find(object => object.type === 'player');
+  wallPlayer.x = 1;wallPlayer.y = 7;
+  addObject(wallLevel, 'block', 2, 7);
+  const state = createPreviewState(wallLevel);
+  for (let i = 0; i < 3; i++) stepPreview(state, {axis: 1}, .05);
+  assert(state.x > 112,
+    'the player reaches the wall only when the visible character reaches it');
+
+  const spikeLevel = newDraft('alpha-spike-graze');
+  const grazer = spikeLevel.objects.find(object => object.type === 'player');
+  grazer.x = 2.53;grazer.y = 4.033;
+  addObject(spikeLevel, 'hazard', 3, 4);
+  const graze = createPreviewState(spikeLevel);
+  stepPreview(graze, {axis: 1}, .001);
+  assert(graze.x > graze.spawn.x + .1,
+    'transparent top-left area around the spike does not reset the player');
 });
 
 test('the safe triangular slope matches its artwork and can be climbed', () => {
