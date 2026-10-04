@@ -82,7 +82,7 @@ int on_http_request(const char *path, const char *method, const char *body,
         used_header += (size_t)written;
     }
     size_t body_len = body && !strcmp(method, "PUT") ? strlen(body) : 0;
-    if (body_len > 65536 || body_len > UINT32_MAX) return -1;
+    if (body_len >= ON_LEVEL_JSON_CAP || body_len > UINT32_MAX) return -1;
     if (body_len) {
         written = swprintf(headers + used_header,
             sizeof headers / sizeof headers[0] - used_header,
@@ -96,7 +96,9 @@ int on_http_request(const char *path, const char *method, const char *body,
         WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME,
         WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) return -1;
-    WinHttpSetTimeouts(session, 7500, 7500, 7500, 7500);
+    int level_transfer = !strncmp(path, "levels/", 7);
+    int timeout_ms = level_transfer ? 60000 : 7500;
+    WinHttpSetTimeouts(session, 7500, 7500, timeout_ms, timeout_ms);
     HINTERNET connection = WinHttpConnect(session, FIREBASE_HOST,
                                            INTERNET_DEFAULT_HTTPS_PORT, 0);
     if (!connection) {
@@ -132,28 +134,32 @@ int on_http_request(const char *path, const char *method, const char *body,
                 WINHTTP_HEADER_NAME_BY_INDEX, &status, &status_size,
                 WINHTTP_NO_HEADER_INDEX)) {
             result = (int)status;
-            size_t used = 0;
-            for (;;) {
-                DWORD available = 0;
-                if (!WinHttpQueryDataAvailable(request, &available)) {
-                    result = -1;
-                    break;
+            /* Firebase echoes successful PUT values. The level publisher only
+             * needs the status, so do not copy a large level back into memory. */
+            if (!(level_transfer && !strcmp(method, "PUT") && result < 400)) {
+                size_t used = 0;
+                for (;;) {
+                    DWORD available = 0;
+                    if (!WinHttpQueryDataAvailable(request, &available)) {
+                        result = -1;
+                        break;
+                    }
+                    if (!available) break;
+                    if ((size_t)available >= response_cap - used) {
+                        result = -2;
+                        break;
+                    }
+                    DWORD received = 0;
+                    if (!WinHttpReadData(request, response + used, available,
+                                         &received)) {
+                        result = -1;
+                        break;
+                    }
+                    if (!received) break;
+                    used += received;
                 }
-                if (!available) break;
-                if ((size_t)available >= response_cap - used) {
-                    result = -2;
-                    break;
-                }
-                DWORD received = 0;
-                if (!WinHttpReadData(request, response + used, available,
-                                     &received)) {
-                    result = -1;
-                    break;
-                }
-                if (!received) break;
-                used += received;
+                response[used] = 0;
             }
-            response[used] = 0;
         }
     }
 

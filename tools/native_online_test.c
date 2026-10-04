@@ -92,7 +92,8 @@ static void rooms_and_commands(void) {
     assert(on_protocol_rooms("null", items, ON_ROOM_LIST_CAP, 1780000000100LL) == 0);
 }
 static void published_level_writer(void) {
-    OnPublishedLevel level = {0}, decoded = {0};
+    static OnPublishedLevel level, decoded;
+    memset(&level, 0, sizeof level);memset(&decoded, 0, sizeof decoded);
     snprintf(level.id, sizeof level.id, "%s", "23817");
     snprintf(level.title, sizeof level.title, "%s", "Проверка \"уровня\"");
     snprintf(level.description, sizeof level.description, "%s", "Маршрут и триггер.");
@@ -176,7 +177,7 @@ static void published_level_writer(void) {
         "%.*s\"degrees\":270.0000,\"value\":270.0000%s",
         (int)(duration_field - body), body, duration_field + duration_len);
     assert(legacy_size > 0 && (size_t)legacy_size < sizeof legacy_body);
-    OnPublishedLevel legacy_level;
+    static OnPublishedLevel legacy_level;
     assert(on_protocol_published_level(legacy_body, "23817", &legacy_level));
     assert(legacy_level.objects[4].trigger_kind == ON_TRIGGER_KIND_ROTATE &&
            !legacy_level.objects[4].trigger_has_duration &&
@@ -213,14 +214,15 @@ static void published_level_writer(void) {
         "{\"id\":2,\"type\":\"goal\",\"name\":\"Финиш\",\"x\":14,\"y\":6,"
         "\"w\":1,\"h\":2,\"angle\":0,\"color\":\"#69d16c\","
         "\"number\":2,\"visible\":true}]}}";
-    OnPublishedLevel old_record;
+    static OnPublishedLevel old_record;
     assert(on_protocol_published_level(legacy_without_flips, "23817", &old_record));
     assert(old_record.object_count == 2 && !old_record.objects[0].flip_x &&
            !old_record.objects[0].flip_y && !old_record.objects[1].flip_x &&
            !old_record.objects[1].flip_y);
     assert(on_protocol_level_summary_json(&level, index, sizeof index, 1234));
     assert(strstr(index, "\"updatedAt\":1234") && strstr(index, "23817"));
-    OnPublishedLevel scaled = level;
+    static OnPublishedLevel scaled;
+    scaled = level;
     scaled.objects[0].y = 0;scaled.objects[0].w = 64;scaled.objects[0].h = 40;
     assert(on_protocol_published_level_json(&scaled, body, sizeof body));
     assert(on_protocol_published_level(body, "23817", &decoded));
@@ -238,6 +240,63 @@ static void published_level_writer(void) {
     level.title[0] = (char)0xff;level.title[1] = 0;
     assert(!on_protocol_published_level_json(&level, body, sizeof body));
 }
+static void published_level_object_limit(void) {
+    static OnPublishedLevel level, decoded;
+    memset(&level, 0, sizeof level);
+    snprintf(level.id, sizeof level.id, "%s", "654321");
+    snprintf(level.title, sizeof level.title, "%s", "20 000 объектов");
+    snprintf(level.description, sizeof level.description, "%s", "Общий лимит всех типов.");
+    level.width = 16;level.height = 10;level.object_count = ON_LEVEL_OBJECT_CAP;
+    for (int i = 0; i < ON_LEVEL_OBJECT_CAP; ++i) {
+        int type = i == 0 ? ON_LEVEL_PLAYER : i == 1 ? ON_LEVEL_GOAL :
+                   i == 2 ? ON_LEVEL_GROUND : i == 3 ? ON_LEVEL_BLOCK :
+                   i == 4 ? ON_LEVEL_HAZARD : i == 5 ? ON_LEVEL_COIN :
+                   i == 6 ? ON_LEVEL_ENEMY : i == 7 ? ON_LEVEL_SLOPE : ON_LEVEL_TRIGGER;
+        OnLevelObject *object = &level.objects[i];
+        *object = (OnLevelObject){.id=i + 1,.type=type,
+            .x=(float)(i % 16),.y=(float)((i / 16) % 10),.w=1,.h=1,
+            .color=0x55c8eau,.number=i % 10000,.visible=1};
+        if (type == ON_LEVEL_TRIGGER) {
+            object->trigger_kind = ON_TRIGGER_KIND_MOVE;
+            object->trigger_event = ON_TRIGGER_TOUCH;
+            object->trigger_action = ON_TRIGGER_MOVE;
+            object->target_id = 2;
+            object->trigger_value = 1;
+            object->trigger_color = 0xffc54eu;
+        }
+    }
+    char *body = (char *)malloc(ON_LEVEL_JSON_CAP);
+    assert(body);
+    size_t measured = on_protocol_published_level_json(&level, NULL, 0);
+    size_t size = on_protocol_published_level_json(&level, body, ON_LEVEL_JSON_CAP);
+    assert(measured == size && size > 1024u * 1024u && size < ON_LEVEL_JSON_CAP);
+    assert(on_protocol_published_level(body, level.id, &decoded));
+    assert(decoded.object_count == ON_LEVEL_OBJECT_CAP);
+    assert(decoded.objects[0].type == ON_LEVEL_PLAYER &&
+           decoded.objects[1].type == ON_LEVEL_GOAL &&
+           decoded.objects[7].type == ON_LEVEL_SLOPE &&
+           decoded.objects[8].type == ON_LEVEL_TRIGGER &&
+           decoded.objects[ON_LEVEL_OBJECT_CAP - 1].id == ON_LEVEL_OBJECT_CAP);
+    free(body);
+
+    const char header[] =
+        "{\"format\":\"PVG3-PUBLISHED-LEVEL\",\"version\":1,\"id\":\"1\","
+        "\"title\":\"x\",\"project\":{\"format\":\"PVG3-MAKER\",\"version\":1,"
+        "\"width\":16,\"height\":10,\"objects\":[";
+    const char footer[] = "]}}";
+    size_t over_cap = sizeof header + (size_t)(ON_LEVEL_OBJECT_CAP + 1) * 5 + sizeof footer;
+    char *too_many = (char *)malloc(over_cap);
+    assert(too_many);
+    size_t at = sizeof header - 1;
+    memcpy(too_many, header, at);
+    for (int i = 0; i <= ON_LEVEL_OBJECT_CAP; ++i) {
+        if (i) too_many[at++] = ',';
+        memcpy(too_many + at, "null", 4);at += 4;
+    }
+    memcpy(too_many + at, footer, sizeof footer);
+    assert(!on_protocol_published_level(too_many, "1", &decoded));
+    free(too_many);
+}
 static void web_fixture(const char *path) {
     FILE *file = fopen(path, "rb");assert(file);
     char wire[ON_STATE_JSON_CAP];
@@ -254,6 +313,7 @@ int main(int argc, char **argv) {
     match_codec();
     rooms_and_commands();
     published_level_writer();
+    published_level_object_limit();
     if (argc == 2) web_fixture(argv[1]);
     puts("Native online match, JSON protocol and optional browser fixture passed");
     return 0;

@@ -10,8 +10,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define JSON_MAX_BYTES (1024u * 1024u)
-#define JSON_MAX_TOKENS 32768
+/* A 20,000-object level can require several megabytes of JSON and roughly
+ * 1.1 million parser tokens. Grow the bounded token table as needed so
+ * ordinary room traffic keeps its small memory footprint. */
+#define JSON_MAX_BYTES (ON_LEVEL_JSON_CAP - 1u)
+#define JSON_INITIAL_TOKENS 256
+#define JSON_MAX_TOKENS 1300000
 #define JSON_MAX_DEPTH 32
 
 typedef struct { char type; int start, end, after, count; } JT;
@@ -22,7 +26,13 @@ static void ws(JD *d) {
                              d->s[d->at] == '\n' || d->s[d->at] == '\r')) d->at++;
 }
 static int token(JD *d, char type, int start) {
-    if (d->used >= d->cap) { d->bad = 1; return -1; }
+    if (d->used >= d->cap) {
+        if (d->cap >= JSON_MAX_TOKENS) { d->bad = 1; return -1; }
+        int next = d->cap > JSON_MAX_TOKENS / 2 ? JSON_MAX_TOKENS : d->cap * 2;
+        JT *grown = (JT *)realloc(d->t, (size_t)next * sizeof *grown);
+        if (!grown) { d->bad = 1; return -1; }
+        d->t = grown;d->cap = next;
+    }
     int at = d->used++;
     d->t[at] = (JT){type, start, 0, 0, 0};
     return at;
@@ -131,9 +141,9 @@ static int doc_open(JD *d, const char *s) {
     size_t n = strlen(s);
     if (n > JSON_MAX_BYTES) return 0;
     memset(d, 0, sizeof(*d));
-    d->t = (JT *)calloc(JSON_MAX_TOKENS, sizeof(JT));
+    d->t = (JT *)calloc(JSON_INITIAL_TOKENS, sizeof(JT));
     if (!d->t) return 0;
-    d->s = s;d->n = n;d->cap = JSON_MAX_TOKENS;
+    d->s = s;d->n = n;d->cap = JSON_INITIAL_TOKENS;
     int root = parse_value(d, 0);
     ws(d);
     if (root != 0 || d->bad || d->at != n) {
@@ -312,6 +322,18 @@ int on_protocol_valid_level_id(const char *id) {
     char *end = NULL;long value = strtol(id, &end, 10);
     return end && !*end && value > 0 && value <= 999999;
 }
+
+#define LEVEL_OBJECT_ID_MAX 1000000
+#define LEVEL_OBJECT_ID_BITMAP_BYTES ((LEVEL_OBJECT_ID_MAX + 7u) / 8u)
+static int mark_level_object_id(uint8_t *seen, int id) {
+    if (!seen || id < 1 || id > LEVEL_OBJECT_ID_MAX) return 0;
+    size_t bit = (size_t)(id - 1);
+    uint8_t mask = (uint8_t)(1u << (bit & 7u));
+    uint8_t *byte = &seen[bit >> 3];
+    if (*byte & mask) return 0;
+    *byte |= mask;
+    return 1;
+}
 int on_protocol_level_index(const char *json, OnPublishedLevelSummary *out, int cap) {
     if (!json || cap < 0 || (cap && !out)) return -1;
     JD d;if (!doc_open(&d, json)) return -1;
@@ -446,45 +468,46 @@ int on_protocol_published_level(const char *json, const char *expected_id,
                                 OnPublishedLevel *out) {
     if (!json || !out || !on_protocol_valid_level_id(expected_id)) return 0;
     JD d;if (!doc_open(&d, json)) return 0;
-    int project = field(&d, 0, "project");
-    OnPublishedLevel value = {0};int version = 0;
+    OnPublishedLevel *value = (OnPublishedLevel *)calloc(1, sizeof(*value));
+    if (!value) {free(d.t);return 0;}
+    int project = field(&d, 0, "project"), version = 0;
     int ok = eq(&d, field(&d, 0, "format"), "PVG3-PUBLISHED-LEVEL") &&
              int_field(&d, 0, "version", &version) && version == 1 &&
-             str(&d, field(&d, 0, "id"), value.id, sizeof value.id) &&
-             !strcmp(value.id, expected_id) &&
-             text_string(&d, field(&d, 0, "title"), value.title, sizeof value.title) &&
-             value.title[0] && project >= 0 && d.t[project].type == 'o' &&
+             str(&d, field(&d, 0, "id"), value->id, sizeof value->id) &&
+             !strcmp(value->id, expected_id) &&
+             text_string(&d, field(&d, 0, "title"), value->title, sizeof value->title) &&
+             value->title[0] && project >= 0 && d.t[project].type == 'o' &&
              eq(&d, field(&d, project, "format"), "PVG3-MAKER") &&
              int_field(&d, project, "version", &version) && version == 1 &&
-             int_field(&d, project, "width", &value.width) && value.width == 16 &&
-             int_field(&d, project, "height", &value.height) && value.height == 10;
+             int_field(&d, project, "width", &value->width) && value->width == 16 &&
+             int_field(&d, project, "height", &value->height) && value->height == 10;
     int description_token = field(&d, 0, "description");
     if (ok && description_token >= 0 &&
-        !text_string(&d, description_token, value.description, sizeof value.description)) ok = 0;
+        !text_string(&d, description_token, value->description, sizeof value->description)) ok = 0;
     if (ok && description_token < 0) {
         description_token = field(&d, project, "description");
         if (description_token >= 0 &&
-            !text_string(&d, description_token, value.description, sizeof value.description)) ok = 0;
+            !text_string(&d, description_token, value->description, sizeof value->description)) ok = 0;
     }
     int objects = field(&d, project, "objects");
     if (ok && (objects < 0 || d.t[objects].type != 'a' ||
                d.t[objects].count < 1 || d.t[objects].count > ON_LEVEL_OBJECT_CAP)) ok = 0;
+    uint8_t *seen = ok ? (uint8_t *)calloc(LEVEL_OBJECT_ID_BITMAP_BYTES, 1) : NULL;
+    if (ok && !seen) ok = 0;
     int has_player = 0, has_goal = 0;
     if (ok) {
         for (int token = objects + 1; token < d.t[objects].after; token = d.t[token].after) {
-            OnLevelObject *item = &value.objects[value.object_count];
-            if (!parse_level_object(&d, token, item)) {ok = 0;break;}
-            for (int i = 0; i < value.object_count; i++)
-                if (value.objects[i].id == item->id) {ok = 0;break;}
-            if (!ok) break;
+            OnLevelObject *item = &value->objects[value->object_count];
+            if (!parse_level_object(&d, token, item) ||
+                !mark_level_object_id(seen, item->id)) {ok = 0;break;}
             has_player |= item->type == ON_LEVEL_PLAYER;
             has_goal |= item->type == ON_LEVEL_GOAL;
-            value.object_count++;
+            value->object_count++;
         }
     }
     if (ok && (!has_player || !has_goal)) ok = 0;
-    if (ok) *out = value;
-    free(d.t);return ok;
+    if (ok) *out = *value;
+    free(seen);free(value);free(d.t);return ok;
 }
 int on_protocol_valid_room_id(const char *id) {
     if (!id || strlen(id) != 6) return 0;
@@ -731,11 +754,12 @@ int on_protocol_rooms(const char *json, OnRoomSummary *out, int cap, int64_t now
 
 typedef struct { char *out; size_t cap, at; int bad; } JW;
 static void put(JW *w, const char *fmt, ...) {
-    if (w->bad) return;
-    if (w->at >= w->cap) {w->bad = 1;return;}
+    if (w->bad || w->at >= w->cap) {w->bad = 1;return;}
     va_list args;
     va_start(args, fmt);
-    int n = vsnprintf(w->out + w->at, w->cap - w->at, fmt, args);
+    int n = w->out ?
+        vsnprintf(w->out + w->at, w->cap - w->at, fmt, args) :
+        vsnprintf(NULL, 0, fmt, args);
     va_end(args);
     if (n < 0 || (size_t)n >= w->cap - w->at) {w->bad = 1;return;}
     w->at += (size_t)n;
@@ -909,10 +933,12 @@ static int published_level_valid(const OnPublishedLevel *level) {
         !utf8_units(level->description, sizeof level->description, 160) ||
         !level->width || !level->height || level->width != 16 || level->height != 10 ||
         level->object_count < 1 || level->object_count > ON_LEVEL_OBJECT_CAP) return 0;
-    int has_player = 0, has_goal = 0;
+    uint8_t *seen = (uint8_t *)calloc(LEVEL_OBJECT_ID_BITMAP_BYTES, 1);
+    if (!seen) return 0;
+    int has_player = 0, has_goal = 0, valid = 1;
     for (int i = 0; i < level->object_count; ++i) {
         const OnLevelObject *o = &level->objects[i];
-        if (o->id < 1 || o->id > 1000000 || o->type < ON_LEVEL_BLOCK ||
+        if (!mark_level_object_id(seen, o->id) || o->type < ON_LEVEL_BLOCK ||
             o->type > ON_LEVEL_SLOPE || !memchr(o->name, 0, sizeof o->name) ||
             !utf8_units(o->name, sizeof o->name, 48) || !isfinite(o->x) || !isfinite(o->y) || !isfinite(o->w) ||
             !isfinite(o->h) || !isfinite(o->angle) ||
@@ -923,19 +949,24 @@ static int published_level_valid(const OnPublishedLevel *level) {
             o->angle < 0 || o->angle >= 360 || o->color > 0xffffffu ||
             (o->flip_x != 0 && o->flip_x != 1) ||
             (o->flip_y != 0 && o->flip_y != 1) ||
-            o->number < 0 || o->number > 9999 || (o->visible != 0 && o->visible != 1)) return 0;
-        for (int j = 0; j < i; ++j)
-            if (level->objects[j].id == o->id) return 0;
+            o->number < 0 || o->number > 9999 || (o->visible != 0 && o->visible != 1)) {
+            valid = 0;break;
+        }
         has_player |= o->type == ON_LEVEL_PLAYER;
         has_goal |= o->type == ON_LEVEL_GOAL;
-        if (o->type == ON_LEVEL_TRIGGER && !published_trigger_valid(o)) return 0;
+        if (o->type == ON_LEVEL_TRIGGER && !published_trigger_valid(o)) {
+            valid = 0;break;
+        }
     }
-    return has_player && has_goal;
+    free(seen);
+    return valid && has_player && has_goal;
 }
 
 size_t on_protocol_published_level_json(const OnPublishedLevel *level,
                                         char *out, size_t cap) {
-    if (!out || !cap || !published_level_valid(level)) return 0;
+    int measure_only = !out && !cap;
+    if ((!out && !measure_only) || (out && !cap) ||
+        !published_level_valid(level)) return 0;
     static const char *const types[] = {
         "block", "ground", "hazard", "coin", "enemy", "player", "goal", "trigger", "slope"
     };
@@ -950,7 +981,7 @@ size_t on_protocol_published_level_json(const OnPublishedLevel *level,
     static const char *const names[] = {
         "Блок", "Платформа", "Шипы", "Монета", "Гусь", "Игрок", "Финиш", "Триггер", "Склон"
     };
-    JW w = {out, cap, 0, 0};
+    JW w = {out, measure_only ? SIZE_MAX : cap, 0, 0};
     put(&w, "{\"format\":\"PVG3-PUBLISHED-LEVEL\",\"version\":1,\"id\":");
     put_json_string(&w, level->id);
     put(&w, ",\"title\":");put_json_string(&w, level->title);
@@ -996,7 +1027,7 @@ size_t on_protocol_published_level_json(const OnPublishedLevel *level,
         put(&w, "}");
     }
     put(&w, "]}}");
-    if (w.bad) {out[0] = 0;return 0;}
+    if (w.bad) {if (out) out[0] = 0;return 0;}
     return w.at;
 }
 size_t on_protocol_level_summary_json(const OnPublishedLevel *level,

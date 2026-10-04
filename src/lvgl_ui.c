@@ -140,6 +140,8 @@ static void workshop_set_trigger_kind(WorkshopObject *object, int kind);
 static WorkshopObject workshop_objects[WS_OBJECT_CAP];
 static WorkshopObject workshop_clipboard[WS_OBJECT_CAP];
 static uint8_t workshop_selected_flags[WS_OBJECT_CAP];
+/* Shared scratch avoids a multi-megabyte OnPublishedLevel on the UI stack. */
+static OnPublishedLevel workshop_preview_level;
 static int workshop_object_count, workshop_selected = -1;
 static int workshop_clipboard_count;
 static int workshop_player_selected, workshop_goal_selected, workshop_ground_selected;
@@ -1053,7 +1055,11 @@ static void workshop_place_object(int type, int col, int row) {
         workshop_load_selected_properties(found);
         return;
     }
-    if (workshop_object_count >= WS_OBJECT_CAP) return;
+    if (workshop_object_count >= WS_OBJECT_CAP) {
+        snprintf(workshop_notice, sizeof workshop_notice,
+                 "Достигнут общий лимит %d объектов.", ON_LEVEL_OBJECT_CAP);
+        return;
+    }
     int index = workshop_object_count;
     WorkshopObject *o = &workshop_objects[index];
     *o = (WorkshopObject){0};
@@ -2255,6 +2261,11 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
     box(root, 0, 0, GAME_W, 102, 0, WS_BROWN_DARK, 0);
     label(root, 182, 17, 560, 60, workshop_name, 3, WS_CREAM,
           LV_TEXT_ALIGN_LEFT);
+    char object_count_text[64];
+    snprintf(object_count_text, sizeof object_count_text, "Объектов: %d / %d",
+             3 + workshop_object_count, ON_LEVEL_OBJECT_CAP);
+    label(root, 184, 74, 360, 24, object_count_text, 0, WS_YELLOW,
+          LV_TEXT_ALIGN_LEFT);
     button(root, 22, 20, 138, 60, "Назад", 2, U_WORKSHOP_BACK);
     workshop_button(root, 747, 20, 144, 60, "Публиковать", 1,
                     U_WORKSHOP_PUBLISH, WS_GREEN);
@@ -2480,9 +2491,8 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
 }
 
 static void workshop_preview(void) {
-    OnPublishedLevel level;
-    workshop_build_preview(&level);
-    (void)game_workshop_preview(&level);
+    workshop_build_preview(&workshop_preview_level);
+    (void)game_workshop_preview(&workshop_preview_level);
 }
 
 /* Direction and jump symbols are vector geometry, not image assets: each
@@ -2779,8 +2789,8 @@ static void custom_platformer_screen(lv_obj_t *root) {
     OnNetView view;
     on_net_view(&view);
     snprintf(title, sizeof title, "ID %s  ·  %s",
-             view.loaded_level.id[0] ? view.loaded_level.id : "—",
-             view.loaded_level.title[0] ? view.loaded_level.title : "Уровень");
+             view.loaded_level_id[0] ? view.loaded_level_id : "—",
+             view.loaded_level_title[0] ? view.loaded_level_title : "Уровень");
     label(root, 27, 18, 750, 66, title, 2, INK, LV_TEXT_ALIGN_LEFT);
     label(root, 790, 24, 228, 56, "Кнопки · мультитач", 1, MUTED,
           LV_TEXT_ALIGN_CENTER);
@@ -3004,8 +3014,8 @@ static uint32_t state_signature(int phase, const OnNetView *v) {
         h = mix(h, &v->levels_busy, sizeof v->levels_busy);
         h = mix(h, v->levels_notice, strlen(v->levels_notice));
     } else if (phase == GAME_CUSTOM_PLAY) {
-        h = mix(h, v->loaded_level.id, strlen(v->loaded_level.id));
-        h = mix(h, v->loaded_level.title, strlen(v->loaded_level.title));
+        h = mix(h, v->loaded_level_id, strlen(v->loaded_level_id));
+        h = mix(h, v->loaded_level_title, strlen(v->loaded_level_title));
     } else if (phase == GAME_ONLINE_MATCH) {
         OnMatch s;
         int role, selected;float secs;
@@ -3381,9 +3391,9 @@ static void pressed(lv_event_t *ev) {
         workshop_draft_exists = 1;game_workshop_back();break;
     case U_WORKSHOP_PLAY: workshop_preview();break;
     case U_WORKSHOP_PUBLISH: {
-        OnPublishedLevel level;workshop_build_preview(&level);
+        workshop_build_preview(&workshop_preview_level);
         workshop_draft_exists = 1;
-        if (!on_net_level_publish(&level)) dirty = 1;
+        if (!on_net_level_publish(&workshop_preview_level)) dirty = 1;
         break;
     }
     case U_WORKSHOP_BUILD:

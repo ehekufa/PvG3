@@ -41,6 +41,29 @@ test('new drafts are valid and object placement keeps player and finish unique',
   for (const type of LEVEL_TYPES) assert(LEVEL_TYPES.includes(type));
 });
 
+test('the 20,000-object ceiling is combined across blocks, triggers, coins and every other type', () => {
+  const level = newDraft('draft-limit');
+  const additionalTypes = ['block', 'ground', 'hazard', 'coin', 'enemy', 'trigger', 'slope'];
+  level.objects = Array.from({length:MAX_LEVEL_OBJECTS}, (_, index) => {
+    const type = index === 0 ? 'player' : index === 1 ? 'goal' : index === 2 ? 'ground' :
+      additionalTypes[(index - 3) % additionalTypes.length];
+    const object = {id:index + 1, type, name:'Объект', x:index % 100, y:Math.floor(index / 100) / 100,
+      w:1, h:1, angle:0, flipX:false, flipY:false, color:'#55c8ea',
+      number:index % 10000, visible:true};
+    if (type === 'trigger') object.trigger = {kind:'move', event:'touch', action:'move',
+      targetId:2, valueX:0, valueY:0, value:0, color:'#ffc54e'};
+    return object;
+  });
+  assert.equal(level.objects.length, 20_000);
+  assert.equal(validateDraft(level).ok, true);
+  const wireRecord = publishedRecord('654321', level);
+  assert.equal(wireRecord.project.objects.length, 20_000);
+  assert.equal(isPublishedRecord(wireRecord, '654321'), true);
+  assert.equal(addObject(level, 'coin', 1, 1), null);
+  level.objects.push({...level.objects[3], id:20_001});
+  assert.equal(validateDraft(level).ok, false);
+});
+
 test('validation rejects missing required objects, out-of-bounds geometry and malformed triggers', () => {
   const level = newDraft();
   const noGoal = structuredClone(level);noGoal.objects = noGoal.objects.filter(o => o.type !== 'goal');

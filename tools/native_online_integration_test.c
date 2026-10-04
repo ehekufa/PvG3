@@ -24,7 +24,8 @@ static struct {
     char state[ON_STATE_JSON_CAP], command[256];
 } db;
 static char uploaded_level_id[ON_LEVEL_ID_SIZE];
-static char uploaded_level_body[ON_STATE_JSON_CAP];
+static char uploaded_level_body[ON_LEVEL_JSON_CAP];
+static OnPublishedLevel fake_level_record;
 static char uploaded_index_body[1024];
 static const char *FAKE_GUEST = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 static const char *FAKE_HOST = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -118,12 +119,13 @@ int on_http_request(const char *path, const char *method, const char *body,
             if (if_match && !strcmp(if_match, "null_etag") &&
                 (!strcmp(level_id, "104") || !strcmp(level_id, uploaded_level_id)))
                 return answer(response, cap, "null", 412);
-            OnPublishedLevel level;
-            if (!body || !on_protocol_published_level(body, level_id, &level))
+            if (!body || !on_protocol_published_level(body, level_id, &fake_level_record))
                 return answer(response, cap, "null", 400);
             if (strlen(body) >= sizeof uploaded_level_body) return -2;
             strcpy(uploaded_level_id, level_id);strcpy(uploaded_level_body, body);
-            return answer(response, cap, body, 200);
+            /* The native HTTP adapters deliberately discard Firebase's
+             * successful echo of a large PUT body. */
+            return answer(response, cap, "null", 200);
         }
     }
     if (level_child_id(path, "levels-index", level_id)) {
@@ -234,22 +236,48 @@ static void expect_state(OnMatch *out) {
     assert(db.state[0]);
     assert(on_protocol_match(db.state, out));
 }
-static OnPublishedLevel sample_level(void) {
-    OnPublishedLevel level = {0};
-    snprintf(level.id, sizeof level.id, "%s", "1");
-    snprintf(level.title, sizeof level.title, "%s", "Нативная публикация");
-    snprintf(level.description, sizeof level.description, "%s", "Проверка каталога.");
-    level.width = 16;level.height = 10;level.object_count = 3;
-    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+static void sample_level(OnPublishedLevel *level) {
+    memset(level, 0, sizeof *level);
+    snprintf(level->id, sizeof level->id, "%s", "1");
+    snprintf(level->title, sizeof level->title, "%s", "Нативная публикация");
+    snprintf(level->description, sizeof level->description, "%s", "Проверка каталога.");
+    level->width = 16;level->height = 10;level->object_count = 3;
+    level->objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
         .x=0,.y=8,.w=16,.h=2,.color=0x65a845u,.visible=1};
-    snprintf(level.objects[0].name, sizeof level.objects[0].name, "%s", "Платформа");
-    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
+    snprintf(level->objects[0].name, sizeof level->objects[0].name, "%s", "Платформа");
+    level->objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
         .x=1,.y=7,.w=.65f,.h=.85f,.color=0x5ab7e8u,.visible=1};
-    snprintf(level.objects[1].name, sizeof level.objects[1].name, "%s", "Игрок");
-    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
+    snprintf(level->objects[1].name, sizeof level->objects[1].name, "%s", "Игрок");
+    level->objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
         .x=14,.y=6,.w=1,.h=2,.color=0x69d16cu,.visible=1};
-    snprintf(level.objects[2].name, sizeof level.objects[2].name, "%s", "Финиш");
-    return level;
+    snprintf(level->objects[2].name, sizeof level->objects[2].name, "%s", "Финиш");
+}
+static void large_level_transport_round_trip(void) {
+    static OnPublishedLevel source, loaded;
+    memset(&source, 0, sizeof source);
+    snprintf(source.id, sizeof source.id, "%s", "1");
+    snprintf(source.title, sizeof source.title, "%s", "Предел публикации");
+    snprintf(source.description, sizeof source.description, "%s", "20 000 объектов всех типов.");
+    source.width = 16;source.height = 10;source.object_count = ON_LEVEL_OBJECT_CAP;
+    for (int i = 0; i < ON_LEVEL_OBJECT_CAP; ++i) {
+        int type = i == 0 ? ON_LEVEL_PLAYER : i == 1 ? ON_LEVEL_GOAL :
+                   i == 2 ? ON_LEVEL_GROUND : i == 3 ? ON_LEVEL_COIN : ON_LEVEL_BLOCK;
+        source.objects[i] = (OnLevelObject){.id=i + 1,.type=type,
+            .x=(float)(i % 16),.y=(float)((i / 16) % 10),.w=1,.h=1,
+            .color=0x55c8eau,.number=i % 10000,.visible=1};
+    }
+    assert(on_net_level_publish(&source));
+    tick_pump(1);
+    OnNetView published = view();
+    assert(!published.level_publish_busy && published.level_publish_id[0] &&
+           strlen(uploaded_level_body) > 1024u * 1024u);
+    on_net_level_fetch(uploaded_level_id);
+    tick_pump(1);
+    OnNetView fetched = view();
+    assert(fetched.level_loaded && !strcmp(fetched.loaded_level_id, uploaded_level_id));
+    assert(on_net_take_loaded_level(&loaded));
+    assert(loaded.object_count == ON_LEVEL_OBJECT_CAP &&
+           loaded.objects[ON_LEVEL_OBJECT_CAP - 1].id == ON_LEVEL_OBJECT_CAP);
 }
 static void isolate_saves(uint8_t *before, uint8_t *after, size_t size) {
     assert(game_save_export(after, size) && !memcmp(before, after, size));
@@ -334,7 +362,8 @@ static void ui_drag(int x0, int y0, int x1, int y1,
     assert(lvgl_ui_pointer(x1, y1, 0));ui_snapshot("drag_drop");
 }
 static void native_trigger_runtime_regression(void) {
-    OnPublishedLevel level = {0};
+    static OnPublishedLevel level;
+    memset(&level, 0, sizeof level);
     snprintf(level.id, sizeof level.id, "%s", "1");
     snprintf(level.title, sizeof level.title, "%s", "Trigger runtime test");
     level.width = 16;level.height = 10;level.object_count = 8;
@@ -625,7 +654,7 @@ static int run_lvgl_test(void) {
     ui_tap(317, 247); /* add the adjacent block to the selection */
     ui_snapshot("workshop_multi_selected");
 #ifdef PVG3_LVGL_TEST
-    OnPublishedLevel editor_probe;
+    static OnPublishedLevel editor_probe;
     assert(lvgl_ui_test_workshop_level(&editor_probe));
     assert(editor_probe.object_count == 6 &&
            editor_probe.objects[4].x == 5 && editor_probe.objects[5].x == 6);
@@ -1047,13 +1076,13 @@ int main(void) {
     static uint8_t before[20000], after[20000];
     size_t size = game_save_size();assert(size <= sizeof before);
     game_init();assert(game_save_export(before, size));
-    OnPublishedLevel draft = sample_level();
+    static OnPublishedLevel draft, decoded;
+    sample_level(&draft);
     assert(on_net_level_publish(&draft));tick_pump(1);
     OnNetView published = view();
     assert(!published.level_publish_busy && published.level_publish_id[0] &&
            strstr(published.level_publish_notice, "ОПУБЛИКОВАН") &&
            uploaded_level_body[0] && uploaded_index_body[0]);
-    OnPublishedLevel decoded;
     assert(on_protocol_published_level(uploaded_level_body,
                                        uploaded_level_id, &decoded));
     assert(!strcmp(decoded.title, draft.title));
@@ -1180,6 +1209,7 @@ int main(void) {
                        v.state.coin_count == 0);
     game_input_press(1151, 49);tick_pump(2);
     game_input_press(1140, 50);isolate_saves(before, after, size);
+    large_level_transport_round_trip();
     on_net_shutdown();
     puts("Native Firebase REST host/guest, both roles, coins, ACK and offline saves passed");
     return 0;

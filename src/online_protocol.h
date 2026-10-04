@@ -11,6 +11,9 @@
 #define ON_PLAYER_ID_SIZE 33
 #define ON_ROOM_LIST_CAP 24
 #define ON_STATE_JSON_CAP 65536
+/* Enough for 20,000 serialized objects plus the enclosing published-level
+ * record and its strings. Includes one byte for the terminating NUL. */
+#define ON_LEVEL_JSON_CAP (16u * 1024u * 1024u + 1u)
 
 typedef struct {
     char id[ON_ROOM_ID_SIZE];
@@ -44,7 +47,8 @@ int on_protocol_match(const char *json, OnMatch *out);
 size_t on_protocol_match_json(const OnMatch *s, char *out, size_t cap);
 size_t on_protocol_command_json(const OnCommand *c, const char *player_id,
                                 char *out, size_t cap);
-/* Serialize a bounded PVG3-PUBLISHED-LEVEL record for native workshop upload. */
+/* Serialize a bounded PVG3-PUBLISHED-LEVEL record for native workshop upload.
+ * Passing out == NULL and cap == 0 measures the required JSON byte count. */
 size_t on_protocol_published_level_json(const OnPublishedLevel *level,
                                         char *out, size_t cap);
 size_t on_protocol_level_summary_json(const OnPublishedLevel *level,

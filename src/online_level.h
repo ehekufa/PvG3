@@ -11,7 +11,9 @@
 #define ON_LEVEL_DESCRIPTION_SIZE 481 /* 160 UTF-16 code units, worst-case UTF-8 */
 #define ON_LEVEL_OBJECT_NAME_SIZE 145 /* 48 UTF-16 code units, worst-case UTF-8 */
 #define ON_LEVEL_LIST_CAP 24
-#define ON_LEVEL_OBJECT_CAP 120
+/* This is a total-per-level ceiling across every object type, not a per-type
+ * allowance. Keep the wire and both workshops aligned with this value. */
+#define ON_LEVEL_OBJECT_CAP 20000
 #define ON_LEVEL_WORLD_LIMIT 100000
 
 enum {

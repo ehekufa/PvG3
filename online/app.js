@@ -23,9 +23,17 @@ let lastFrame = performance.now(), lastPing = 0, generation = 0;
 let toastTimer;
 const WS_DRAFT_KEY = 'pvg3-workshop-draft-v1';
 const WS_CONTROL_KEY = 'pvg3-workshop-control-v1';
+const WS_DB_NAME = 'pvg3-workshop';
+const WS_DB_STORE = 'drafts';
+const WS_LOCAL_FALLBACK_MAX = 1024 * 1024;
+let wsDbPromise = null;
+let wsDraftSaveTimer = 0;
+let wsDraftSaveMessage = 'Черновик сохранён на этом устройстве.';
 const wsPages = {home: $('ws-home-page'), editor: $('ws-editor-page'),
   preview: $('ws-preview-page'), catalog: $('ws-catalog-page')};
+let wsDraftFromLocalStorage = false;
 let wsPage = 'home', wsDraft = loadWorkshopDraft(), wsTool = 'build', wsType = 'block';
+let wsDraftReady = Promise.resolve();
 let wsTriggerKind = 'move', wsBlockType = 'block', wsPaletteSelected = true;
 let wsSelectedId = 0, wsSelectedIds = new Set(), wsClipboard = [];
 let wsDrag = null, wsPanDrag = null, wsCatalogGeneration = 0, wsCatalog = [];
@@ -73,36 +81,84 @@ function localSetting(key, fallback) {
   try {return localStorage.getItem(key) ?? fallback;}
   catch {return fallback;}
 }
+function normalizeWorkshopDraft(saved) {
+  const validShape = saved && saved.width === LEVEL_WIDTH && saved.height === LEVEL_HEIGHT &&
+    typeof saved.title === 'string' && saved.title.length <= 80 &&
+    typeof saved.description === 'string' && saved.description.length <= 160 &&
+    Array.isArray(saved.objects) && saved.objects.length <= MAX_LEVEL_OBJECTS &&
+    saved.objects.every(o => o && Object.hasOwn(TYPE_LABELS, o.type) && Number.isInteger(o.id) &&
+      Number.isFinite(o.x) && Number.isFinite(o.y) && Number.isFinite(o.w) && Number.isFinite(o.h) &&
+      typeof o.color === 'string' && /^#[0-9a-f]{6}$/i.test(o.color));
+  if (!validShape) return null;
+  for (const object of saved.objects) {
+    object.flipX = object.flipX === true;object.flipY = object.flipY === true;
+    if (object.type !== 'trigger') continue;
+    object.trigger ||= {event: 'touch', action: 'move', targetId: 0, value: 1, color: '#ffc54e'};
+    object.trigger.kind ||= 'move';
+    if (object.trigger.kind === 'rotate' && object.trigger.duration === undefined) {
+      const target = saved.objects.find(candidate => candidate.id === object.trigger.targetId);
+      if (!Number.isInteger(object.trigger.groupId))
+        object.trigger.groupId = Number.isInteger(target?.number) ? target.number : 0;
+      object.trigger.duration = 3;
+      object.trigger.action = 'rotate';
+      delete object.trigger.degrees;delete object.trigger.value;
+    }
+  }
+  return saved;
+}
 function loadWorkshopDraft() {
   try {
-    const saved = JSON.parse(localStorage.getItem(WS_DRAFT_KEY) || 'null');
-    const validShape = saved && saved.width === LEVEL_WIDTH && saved.height === LEVEL_HEIGHT &&
-      typeof saved.title === 'string' && saved.title.length <= 80 &&
-      typeof saved.description === 'string' && saved.description.length <= 160 &&
-      Array.isArray(saved.objects) && saved.objects.length <= MAX_LEVEL_OBJECTS &&
-      saved.objects.every(o => o && Object.hasOwn(TYPE_LABELS, o.type) && Number.isInteger(o.id) &&
-        Number.isFinite(o.x) && Number.isFinite(o.y) && Number.isFinite(o.w) && Number.isFinite(o.h) &&
-        typeof o.color === 'string' && /^#[0-9a-f]{6}$/i.test(o.color));
-    if (validShape) {
-      for (const object of saved.objects) {
-        object.flipX = object.flipX === true;object.flipY = object.flipY === true;
-        if (object.type !== 'trigger') continue;
-        object.trigger ||= {event: 'touch', action: 'move', targetId: 0, value: 1, color: '#ffc54e'};
-        object.trigger.kind ||= 'move';
-        if (object.trigger.kind === 'rotate' && object.trigger.duration === undefined) {
-          const target = saved.objects.find(candidate => candidate.id === object.trigger.targetId);
-          if (!Number.isInteger(object.trigger.groupId))
-            object.trigger.groupId = Number.isInteger(target?.number) ? target.number : 0;
-          object.trigger.duration = 3;
-          object.trigger.action = 'rotate';
-          delete object.trigger.degrees;delete object.trigger.value;
-        }
-      }
-      return saved;
-    }
+    const saved = normalizeWorkshopDraft(JSON.parse(localStorage.getItem(WS_DRAFT_KEY) || 'null'));
+    if (saved) {wsDraftFromLocalStorage = true;return saved;}
   } catch {}
   return newDraft();
 }
+function openWorkshopDb() {
+  if (!globalThis.indexedDB) return Promise.reject(new Error('IndexedDB недоступна'));
+  if (!wsDbPromise) {
+    wsDbPromise = new Promise((resolve, reject) => {
+      const request = indexedDB.open(WS_DB_NAME, 1);
+      request.onupgradeneeded = () => {
+        if (!request.result.objectStoreNames.contains(WS_DB_STORE))
+          request.result.createObjectStore(WS_DB_STORE);
+      };
+      request.onsuccess = () => {
+        const db = request.result;
+        db.onversionchange = () => {db.close();wsDbPromise = null;};
+        resolve(db);
+      };
+      request.onerror = () => reject(request.error || new Error('Не удалось открыть хранилище'));
+      request.onblocked = () => reject(new Error('Хранилище черновика занято другой вкладкой'));
+    }).catch(error => {wsDbPromise = null;throw error;});
+  }
+  return wsDbPromise;
+}
+function readWorkshopDraftFromDb() {
+  return openWorkshopDb().then(db => new Promise((resolve, reject) => {
+    const request = db.transaction(WS_DB_STORE, 'readonly').objectStore(WS_DB_STORE).get(WS_DRAFT_KEY);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('Не удалось прочитать черновик'));
+  }));
+}
+function writeWorkshopDraftToDb(serialized) {
+  return openWorkshopDb().then(db => new Promise((resolve, reject) => {
+    const transaction = db.transaction(WS_DB_STORE, 'readwrite');
+    transaction.objectStore(WS_DB_STORE).put(serialized, WS_DRAFT_KEY);
+    transaction.oncomplete = resolve;
+    transaction.onerror = () => reject(transaction.error || new Error('Не удалось сохранить черновик'));
+    transaction.onabort = () => reject(transaction.error || new Error('Сохранение черновика отменено'));
+  }));
+}
+async function loadWorkshopDraftFromDb() {
+  if (wsDraftFromLocalStorage) return; // recent small drafts already live in the sync fallback
+  try {
+    const serialized = await readWorkshopDraftFromDb();
+    if (typeof serialized !== 'string') return;
+    const saved = normalizeWorkshopDraft(JSON.parse(serialized));
+    if (saved) wsDraft = saved;
+  } catch {}
+}
+wsDraftReady = loadWorkshopDraftFromDb();
 function setWorkshopPage(page) {
   if (!wsPages[page]) return;
   wsPage = page;
@@ -122,15 +178,43 @@ function renderWorkshopHome() {
     `Последняя публикация: ID ${wsDraft.publishedId}. Повторная публикация создаст новую запись.` :
     'Черновик хранится только в этом браузере.';
 }
-function saveWorkshopDraft(message = 'Черновик сохранён на этом устройстве.') {
+async function persistWorkshopDraft(message) {
+  let serialized, localSaved = false;
+  try {serialized = JSON.stringify(wsDraft);}
+  catch {
+    $('ws-autosave-status').textContent = 'Не удалось подготовить черновик к сохранению.';
+    return;
+  }
+  if (serialized.length <= WS_LOCAL_FALLBACK_MAX) {
+    try {localStorage.setItem(WS_DRAFT_KEY, serialized);localSaved = true;} catch {}
+  }
   try {
-    localStorage.setItem(WS_DRAFT_KEY, JSON.stringify(wsDraft));
+    await writeWorkshopDraftToDb(serialized);
+    if (!localSaved) {
+      try {localStorage.removeItem(WS_DRAFT_KEY);} catch {}
+    }
     $('ws-autosave-status').textContent = message;
   } catch {
-    $('ws-autosave-status').textContent = 'Не удалось сохранить черновик в браузере.';
+    $('ws-autosave-status').textContent = localSaved ?
+      'Черновик сохранён в localStorage (резервная копия). Для больших черновиков нужна IndexedDB.' :
+      'Не удалось сохранить черновик. Проверь свободное место в хранилище браузера.';
   }
+}
+function saveWorkshopDraft(message = 'Черновик сохранён на этом устройстве.') {
+  wsDraftSaveMessage = message;
+  clearTimeout(wsDraftSaveTimer);
+  $('ws-autosave-status').textContent = 'Сохранение черновика…';
+  wsDraftSaveTimer = setTimeout(() => {
+    wsDraftSaveTimer = 0;
+    void persistWorkshopDraft(wsDraftSaveMessage);
+  }, 250);
   $('ws-object-count').textContent = `${wsDraft.objects.length} / ${MAX_LEVEL_OBJECTS} объектов`;
   renderWorkshopHome();
+}
+function flushWorkshopDraft() {
+  if (!wsDraftSaveTimer) return;
+  clearTimeout(wsDraftSaveTimer);wsDraftSaveTimer = 0;
+  void persistWorkshopDraft(wsDraftSaveMessage);
 }
 function showWorkshopMessage(message = '') {
   const node = $('ws-editor-message');
@@ -310,7 +394,7 @@ function wsPointerDown(event) {
     const objectType = wsType === 'block' ? wsBlockType : wsType;
     const placed = addObject(wsDraft, objectType, Math.floor(point.x), Math.floor(point.y), wsTriggerKind);
     if (!placed) {
-      showWorkshopMessage('Достигнут лимит 120 объектов. Удали лишние объекты перед добавлением новых.');return;
+      showWorkshopMessage(`Достигнут общий лимит ${MAX_LEVEL_OBJECTS} объектов. Удали лишние объекты перед добавлением новых.`);return;
     }
     // Player and finish are singletons: addObject moves the existing object.
     setWorkshopSelection([placed.id], placed.id);
@@ -618,7 +702,10 @@ async function publishWorkshopDraft() {
     showWorkshopMessage(message);
   } finally {button.disabled = false;}
 }
-function openWorkshop() {setWorkshopPage('home');}
+async function openWorkshop() {
+  await wsDraftReady;
+  setWorkshopPage('home');
+}
 async function refreshRooms() {
   const list = $('room-list');
   if (screen !== 'rooms') return;
@@ -1017,6 +1104,7 @@ $('finish-wave').addEventListener('click', () => {
   if (room?.[slot]?.role === 'zombies') send({kind:'finish'});
 });
 $('book').addEventListener('click', () => $('book-dialog').showModal());
+window.addEventListener('pagehide', flushWorkshopDraft);
 $('music').addEventListener('click', async () => {
   const audio = $('soundtrack');
   if (audio.paused) {

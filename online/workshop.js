@@ -7,7 +7,8 @@ export const LEVEL_HEIGHT = 10;
 export const WORLD_LIMIT = 100_000;
 export const TILE_W = 80;
 export const TILE_H = 72;
-export const MAX_LEVEL_OBJECTS = 120;
+// Shared ceiling for all object types combined; matches ON_LEVEL_OBJECT_CAP.
+export const MAX_LEVEL_OBJECTS = 20_000;
 export const MIN_OBJECT_SIZE = .1;
 export const MAX_OBJECT_WIDTH = LEVEL_WIDTH * 4;
 export const MAX_OBJECT_HEIGHT = LEVEL_HEIGHT * 4;
@@ -283,7 +284,7 @@ export function validateDraft(level) {
   if (level.width !== LEVEL_WIDTH || level.height !== LEVEL_HEIGHT ||
       !Array.isArray(level.objects) || level.objects.length < 1 ||
       level.objects.length > MAX_LEVEL_OBJECTS)
-    return fail('Нужен уровень с окном просмотра 16×10 и 1–120 объектами.');
+    return fail(`Нужен уровень с окном просмотра 16×10 и 1–${MAX_LEVEL_OBJECTS} объектами.`);
   const ids = new Set();
   let hasPlayer = false, hasGoal = false;
   for (const object of level.objects) {

@@ -433,8 +433,10 @@ static int book_enemy_tab;              /* the five plants or illustrated foes *
 static OnMatch online_match;
 static OnNetView online_view;
 static OnPublishedLevel custom_level;
-static OnLevelObject custom_objects[ON_LEVEL_OBJECT_CAP];
 static int custom_object_count, custom_level_active, custom_level_won, custom_level_coins;
+static int custom_player_index = -1;
+#define CUSTOM_ID_MAP_CAP 65536
+static int custom_id_map[CUSTOM_ID_MAP_CAP];
 static float custom_player_x, custom_player_y, custom_player_w, custom_player_h;
 static float custom_player_vx, custom_player_vy;
 static int custom_player_grounded, custom_control_axis, custom_jump_request;
@@ -447,8 +449,9 @@ static uint8_t custom_invisible[ON_LEVEL_OBJECT_CAP];
 static int custom_player_collision_enabled;
 /* A timed rotation completes one full turn per second. */
 #define CUSTOM_GROUP_ROTATION_DEGREES_PER_SECOND 360.0f
-typedef struct {int group_id;float remaining;} CustomGroupRotation;
+typedef struct {int group_id;float remaining, frame_step;} CustomGroupRotation;
 static CustomGroupRotation custom_group_rotations[ON_LEVEL_OBJECT_CAP];
+static int custom_group_rotation_slots[10000];
 static int custom_group_rotation_count;
 static float custom_camera_x, custom_camera_y;
 static int online_has_match;
@@ -785,7 +788,6 @@ void game_init(void) {
     on_net_shutdown(); /* safe even when no room was ever opened */
     custom_platformer_stop();
     memset(&custom_level, 0, sizeof custom_level);
-    memset(&custom_objects, 0, sizeof custom_objects);
     custom_object_count = custom_level_won = custom_level_coins = 0;
     memset(&online_match, 0, sizeof(online_match));
     memset(&online_view, 0, sizeof(online_view));
@@ -2253,8 +2255,41 @@ static float custom_world_clamp(float value, float size) {
 }
 typedef struct {float x, y, depth;} CustomContact;
 static int custom_object_runtime_index(const OnLevelObject *object) {
-    for (int i = 0; i < custom_object_count; ++i)
-        if (&custom_objects[i] == object) return i;
+    if (!object || custom_object_count <= 0) return -1;
+    uintptr_t base = (uintptr_t)&custom_level.objects[0];
+    uintptr_t address = (uintptr_t)object;
+    if (address < base) return -1;
+    uintptr_t offset = address - base;
+    size_t bytes = (size_t)custom_object_count * sizeof custom_level.objects[0];
+    if (offset >= bytes || offset % sizeof custom_level.objects[0]) return -1;
+    return (int)(offset / sizeof custom_level.objects[0]);
+}
+static unsigned custom_id_hash(int id) {
+    return ((uint32_t)id * 2654435761u) & (CUSTOM_ID_MAP_CAP - 1u);
+}
+static void custom_build_id_map(void) {
+    memset(custom_id_map, 0, sizeof custom_id_map);
+    for (int index = 0; index < custom_object_count; ++index) {
+        int id = custom_level.objects[index].id;
+        if (id <= 0 || id > 1000000) continue;
+        unsigned slot = custom_id_hash(id);
+        while (custom_id_map[slot] &&
+               custom_level.objects[custom_id_map[slot] - 1].id != id)
+            slot = (slot + 1u) & (CUSTOM_ID_MAP_CAP - 1u);
+        if (!custom_id_map[slot]) custom_id_map[slot] = index + 1;
+    }
+}
+static int custom_id_lookup(int id) {
+    if (id <= 0 || id > 1000000) return -1;
+    unsigned slot = custom_id_hash(id);
+    for (unsigned probes = 0; probes < CUSTOM_ID_MAP_CAP; ++probes) {
+        int stored = custom_id_map[slot];
+        if (!stored) return -1;
+        int index = stored - 1;
+        if (index >= 0 && index < custom_object_count &&
+            custom_level.objects[index].id == id) return index;
+        slot = (slot + 1u) & (CUSTOM_ID_MAP_CAP - 1u);
+    }
     return -1;
 }
 static int custom_object_collision_disabled(const OnLevelObject *object) {
@@ -2392,11 +2427,9 @@ static void custom_art_alpha_bounds(int type, int flip_x, int flip_y,
 }
 static void custom_player_visible_hitbox(float *x, float *y,
                                          float *w, float *h) {
-    const OnLevelObject *player = NULL;
-    for (int i = 0; i < custom_object_count; ++i)
-        if (custom_objects[i].type == ON_LEVEL_PLAYER) {
-            player = &custom_objects[i];break;
-        }
+    const OnLevelObject *player = custom_player_index >= 0 &&
+                                  custom_player_index < custom_object_count ?
+                                  &custom_level.objects[custom_player_index] : NULL;
     float left, top, right, bottom;
     custom_art_alpha_bounds(ON_LEVEL_PLAYER,
                             player ? player->flip_x : 0,
@@ -2410,6 +2443,13 @@ static void custom_player_visible_hitbox(float *x, float *y,
 static int custom_player_object_contact(float px, float py, float pw, float ph,
                                         const OnLevelObject *object,
                                         float vx, float vy, CustomContact *contact) {
+    float center_x = (object->x + object->w * .5f) * CUSTOM_TILE_W;
+    float center_y = (object->y + object->h * .5f) * CUSTOM_TILE_H;
+    float conservative_radius =
+        (object->w * CUSTOM_TILE_W + object->h * CUSTOM_TILE_H) * .5f;
+    if (fabsf(px + pw * .5f - center_x) > conservative_radius + pw * .5f ||
+        fabsf(py + ph * .5f - center_y) > conservative_radius + ph * .5f)
+        return 0;
     if (object->type == ON_LEVEL_SLOPE)
         return custom_player_slope_contact(px, py, pw, ph, object, vx, vy, contact);
     if (object->type == ON_LEVEL_HAZARD)
@@ -2462,31 +2502,31 @@ static int custom_solid(const OnLevelObject *o) {
             o->type == ON_LEVEL_SLOPE);
 }
 static OnLevelObject *custom_find_id(int id) {
-    for (int i = 0; i < custom_object_count; i++)
-        if (custom_objects[i].id == id) return &custom_objects[i];
-    return NULL;
+    int index = custom_id_lookup(id);
+    return index >= 0 ? &custom_level.objects[index] : NULL;
 }
 static void custom_player_reset(void) {
-    for (int i = 0; i < custom_object_count; i++)
-        if (custom_objects[i].type == ON_LEVEL_PLAYER) {
-            custom_player_x = custom_objects[i].x * CUSTOM_TILE_W;
-            custom_player_y = custom_objects[i].y * CUSTOM_TILE_H;
-            custom_player_vx = custom_player_vy = 0;
-            custom_player_grounded = 0;
-            return;
-        }
+    if (custom_player_index < 0 || custom_player_index >= custom_object_count) return;
+    OnLevelObject *player = &custom_level.objects[custom_player_index];
+    custom_player_x = player->x * CUSTOM_TILE_W;
+    custom_player_y = player->y * CUSTOM_TILE_H;
+    custom_player_vx = custom_player_vy = 0;
+    custom_player_grounded = 0;
 }
 static int custom_platformer_start(const OnPublishedLevel *source) {
     if (!source || source->object_count < 1 ||
         source->object_count > ON_LEVEL_OBJECT_CAP) return 0;
-    custom_level = *source;
-    custom_object_count = source->object_count;
-    memcpy(custom_objects, source->objects,
-           (size_t)custom_object_count * sizeof custom_objects[0]);
+    if (source != &custom_level) custom_level = *source;
+    custom_object_count = custom_level.object_count;
+    custom_player_index = -1;
+    custom_build_id_map();
     int has_player = 0, has_goal = 0;
     for (int i = 0; i < custom_object_count; i++) {
-        OnLevelObject *o = &custom_objects[i];
-        has_player |= o->type == ON_LEVEL_PLAYER;
+        OnLevelObject *o = &custom_level.objects[i];
+        if (o->type == ON_LEVEL_PLAYER) {
+            has_player = 1;
+            custom_player_index = i;
+        }
         has_goal |= o->type == ON_LEVEL_GOAL;
     }
     if (!has_player || !has_goal) return 0;
@@ -2497,6 +2537,7 @@ static int custom_platformer_start(const OnPublishedLevel *source) {
     memset(custom_invisible, 0, sizeof custom_invisible);
     custom_player_collision_enabled = 1;
     custom_group_rotation_count = 0;
+    memset(custom_group_rotation_slots, 0, sizeof custom_group_rotation_slots);
     custom_camera_x = custom_camera_y = 0;
     custom_player_w = CUSTOM_TILE_W * 0.65f;
     custom_player_h = CUSTOM_TILE_H * 0.85f;
@@ -2544,35 +2585,44 @@ static void custom_apply_trigger_to_object(const OnLevelObject *trigger,
 }
 static void custom_start_group_rotation(int group_id, int duration) {
     if (group_id < 0 || group_id > 9999 || duration < 1 || duration > 9999) return;
-    for (int i = 0; i < custom_group_rotation_count; ++i) {
-        if (custom_group_rotations[i].group_id == group_id) {
-            custom_group_rotations[i].remaining = (float)duration;
-            return;
-        }
+    int slot = custom_group_rotation_slots[group_id] - 1;
+    if (slot >= 0 && slot < custom_group_rotation_count) {
+        custom_group_rotations[slot].remaining = (float)duration;
+        return;
     }
     if (custom_group_rotation_count >= ON_LEVEL_OBJECT_CAP) return;
-    custom_group_rotations[custom_group_rotation_count++] =
-        (CustomGroupRotation){group_id, (float)duration};
+    slot = custom_group_rotation_count++;
+    custom_group_rotations[slot] = (CustomGroupRotation){group_id, (float)duration, 0};
+    custom_group_rotation_slots[group_id] = slot + 1;
 }
 static void custom_update_group_rotations(float dt) {
-    for (int i = 0; i < custom_group_rotation_count;) {
+    if (!custom_group_rotation_count) return;
+    for (int i = 0; i < custom_group_rotation_count; ++i) {
         CustomGroupRotation *rotation = &custom_group_rotations[i];
-        float step = fminf(dt, rotation->remaining);
-        if (step > 0) {
-            for (int j = 0; j < custom_object_count; ++j) {
-                OnLevelObject *object = &custom_objects[j];
-                if (object->type == ON_LEVEL_TRIGGER ||
-                    object->number != rotation->group_id) continue;
-                object->angle = fmodf(object->angle +
-                                      CUSTOM_GROUP_ROTATION_DEGREES_PER_SECOND * step,
-                                      360.0f);
-            }
-            rotation->remaining -= step;
+        rotation->frame_step = fminf(dt, rotation->remaining);
+        rotation->remaining -= rotation->frame_step;
+    }
+    for (int i = 0; i < custom_object_count; ++i) {
+        OnLevelObject *object = &custom_level.objects[i];
+        if (object->type == ON_LEVEL_TRIGGER || object->number < 0 ||
+            object->number > 9999) continue;
+        int slot = custom_group_rotation_slots[object->number] - 1;
+        if (slot < 0 || slot >= custom_group_rotation_count) continue;
+        object->angle = fmodf(object->angle +
+            CUSTOM_GROUP_ROTATION_DEGREES_PER_SECOND *
+            custom_group_rotations[slot].frame_step, 360.0f);
+    }
+    for (int i = 0; i < custom_group_rotation_count;) {
+        if (custom_group_rotations[i].remaining > .00001f) {
+            ++i;
+            continue;
         }
-        if (rotation->remaining <= .00001f) {
-            custom_group_rotations[i] =
-                custom_group_rotations[--custom_group_rotation_count];
-        } else ++i;
+        custom_group_rotation_slots[custom_group_rotations[i].group_id] = 0;
+        int last = --custom_group_rotation_count;
+        if (i != last) {
+            custom_group_rotations[i] = custom_group_rotations[last];
+            custom_group_rotation_slots[custom_group_rotations[i].group_id] = i + 1;
+        }
     }
 }
 static void custom_execute_trigger(OnLevelObject *trigger) {
@@ -2581,7 +2631,7 @@ static void custom_execute_trigger(OnLevelObject *trigger) {
         if (trigger->trigger_has_group) {
             int activate = trigger->trigger_action == ON_TRIGGER_ACTIVATE;
             for (int i = 0; i < custom_object_count; ++i) {
-                OnLevelObject *object = &custom_objects[i];
+                OnLevelObject *object = &custom_level.objects[i];
                 if (object != trigger && object->type != ON_LEVEL_TRIGGER &&
                     object->number == trigger->trigger_group_id)
                     object->visible = activate;
@@ -2589,7 +2639,7 @@ static void custom_execute_trigger(OnLevelObject *trigger) {
         } else {
             /* Continue to read older records whose forever kind was a timer loop. */
             for (int i = 0; i < custom_object_count; ++i) {
-                OnLevelObject *first = &custom_objects[i];
+                OnLevelObject *first = &custom_level.objects[i];
                 if (first != trigger && first->visible &&
                     first->type == ON_LEVEL_TRIGGER &&
                     first->trigger_kind != ON_TRIGGER_KIND_FOREVER) {
@@ -2609,7 +2659,7 @@ static void custom_execute_trigger(OnLevelObject *trigger) {
     }
     if (trigger->trigger_has_group) {
         for (int i = 0; i < custom_object_count; ++i) {
-            OnLevelObject *target = &custom_objects[i];
+            OnLevelObject *target = &custom_level.objects[i];
             if (target != trigger && target->type != ON_LEVEL_TRIGGER &&
                 target->number == trigger->trigger_group_id)
                 custom_apply_trigger_to_object(trigger, target);
@@ -2619,16 +2669,17 @@ static void custom_execute_trigger(OnLevelObject *trigger) {
     }
 }
 static void custom_fire_triggers(int event) {
+    float player_x = 0, player_y = 0, player_w = 0, player_h = 0;
+    if (event == ON_TRIGGER_TOUCH)
+        custom_player_visible_hitbox(&player_x, &player_y, &player_w, &player_h);
     for (int i = 0; i < custom_object_count; i++) {
-        OnLevelObject *trigger = &custom_objects[i];
+        OnLevelObject *trigger = &custom_level.objects[i];
         if (!trigger->visible || custom_object_collision_disabled(trigger) ||
             trigger->type != ON_LEVEL_TRIGGER ||
             trigger->trigger_event != event) continue;
         int legacy_loop = trigger->trigger_kind == ON_TRIGGER_KIND_FOREVER &&
                           !trigger->trigger_has_group;
         if (legacy_loop ? custom_trigger_active[i] : custom_trigger_fired[i]) continue;
-        float player_x, player_y, player_w, player_h;
-        custom_player_visible_hitbox(&player_x, &player_y, &player_w, &player_h);
         if (event == ON_TRIGGER_TOUCH &&
             !custom_player_object_contact(player_x, player_y, player_w, player_h,
                 trigger, custom_player_vx, custom_player_vy, NULL)) continue;
@@ -2643,7 +2694,7 @@ static void custom_fire_triggers(int event) {
 }
 static void custom_run_forever_triggers(float dt) {
     for (int i = 0; i < custom_object_count; ++i) {
-        OnLevelObject *trigger = &custom_objects[i];
+        OnLevelObject *trigger = &custom_level.objects[i];
         if (trigger->type != ON_LEVEL_TRIGGER ||
             trigger->trigger_kind != ON_TRIGGER_KIND_FOREVER ||
             trigger->trigger_has_group || !trigger->visible ||
@@ -2665,7 +2716,7 @@ static int custom_resolve_player_solids(void) {
     for (int iteration = 0; iteration < 4; ++iteration) {
         int collided = 0;
         for (int i = 0; i < custom_object_count; ++i) {
-            OnLevelObject *object = &custom_objects[i];
+            OnLevelObject *object = &custom_level.objects[i];
             if (!custom_solid(object)) continue;
             float player_x, player_y, player_w, player_h;
             custom_player_visible_hitbox(&player_x, &player_y, &player_w, &player_h);
@@ -2720,13 +2771,13 @@ static void custom_platformer_update(float dt) {
         custom_player_y + custom_player_h < -CUSTOM_WORLD_LIMIT * CUSTOM_TILE_H)
         custom_player_reset();
     if (custom_player_collision_enabled) {
+        float player_x, player_y, player_w, player_h;
+        custom_player_visible_hitbox(&player_x, &player_y, &player_w, &player_h);
         for (int i = 0; i < custom_object_count; ++i) {
-            OnLevelObject *object = &custom_objects[i];
+            OnLevelObject *object = &custom_level.objects[i];
             if (!object->visible || object->type == ON_LEVEL_PLAYER ||
                 object->type == ON_LEVEL_TRIGGER ||
                 custom_object_collision_disabled(object)) continue;
-            float player_x, player_y, player_w, player_h;
-            custom_player_visible_hitbox(&player_x, &player_y, &player_w, &player_h);
             if (!custom_player_object_contact(player_x, player_y,
                     player_w, player_h, object, custom_player_vx,
                     custom_player_vy, NULL)) continue;
@@ -2821,21 +2872,19 @@ static void custom_platformer_draw(void) {
             rect(x, grass_y, x + 54, grass_y + 3, COL(190, 221, 124));
     }
     for (int i = 0; i < custom_object_count; i++)
-        if (custom_objects[i].visible && !custom_object_is_invisible(&custom_objects[i]) &&
-            custom_objects[i].type != ON_LEVEL_PLAYER &&
-            custom_objects[i].type != ON_LEVEL_TRIGGER)
-            custom_draw_object(&custom_objects[i]);
+        if (custom_level.objects[i].visible && !custom_object_is_invisible(&custom_level.objects[i]) &&
+            custom_level.objects[i].type != ON_LEVEL_PLAYER &&
+            custom_level.objects[i].type != ON_LEVEL_TRIGGER)
+            custom_draw_object(&custom_level.objects[i]);
     int player_visible = 1, player_flip_x = 0, player_flip_y = 0;
     float player_angle = 0;
-    for (int i = 0; i < custom_object_count; ++i)
-        if (custom_objects[i].type == ON_LEVEL_PLAYER) {
-            player_visible = custom_objects[i].visible &&
-                             !custom_object_is_invisible(&custom_objects[i]);
-            player_angle = custom_objects[i].angle;
-            player_flip_x = custom_objects[i].flip_x;
-            player_flip_y = custom_objects[i].flip_y;
-            break;
-        }
+    if (custom_player_index >= 0 && custom_player_index < custom_object_count) {
+        const OnLevelObject *player = &custom_level.objects[custom_player_index];
+        player_visible = player->visible && !custom_object_is_invisible(player);
+        player_angle = player->angle;
+        player_flip_x = player->flip_x;
+        player_flip_y = player->flip_y;
+    }
     if (custom_level_active && player_visible) {
         int px = (int)lrintf(custom_player_x - custom_camera_x);
         int py = (int)lrintf(custom_player_y - custom_camera_y);
@@ -2990,14 +3039,9 @@ void game_tick(float dt, uint32_t *fb) {
         update_online(dt > 0.05f ? 0.05f : dt);
         if (online_hint_time > 0) online_hint_time -= dt;
     } else if (phase == PH_CUSTOM_LEVELS) {
-        OnNetView levels;on_net_view(&levels);
-        if (levels.level_loaded) {
+        if (on_net_take_loaded_level(&custom_level)) {
             custom_play_return = PH_CUSTOM_LEVELS;
-            if (custom_platformer_start(&levels.loaded_level)) {
-                on_net_level_consumed();phase = PH_CUSTOM_PLAY;
-            } else {
-                on_net_level_consumed();
-            }
+            if (custom_platformer_start(&custom_level)) phase = PH_CUSTOM_PLAY;
         }
     } else if (phase == PH_CUSTOM_PLAY) {
         custom_platformer_update(dt > 0.05f ? 0.05f : dt);
