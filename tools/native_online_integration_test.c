@@ -617,6 +617,27 @@ static void native_trigger_runtime_regression(void) {
            game_debug_custom_player_y() < yellow_bounce_y);
     game_custom_level_exit();
 
+    /* The art-free particle emitter draws its own trail in the native runtime. */
+    static uint32_t with_particles[GAME_W * GAME_H];
+    static uint32_t without_particles[GAME_W * GAME_H];
+    level.object_count = 3;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+        .x=0,.y=30,.w=16,.h=1,.visible=1,.number=3};
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
+        .x=1,.y=7,.w=.65f,.h=.85f,.visible=1,.number=1};
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
+    assert(game_workshop_preview(&level));
+    game_tick(0, without_particles);
+    game_custom_level_exit();
+    level.object_count = 4;
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_PARTICLE,
+        .x=6,.y=4,.w=1,.h=1,.color=0x68f0d8u,.visible=1};
+    assert(game_workshop_preview(&level));
+    game_tick(0, with_particles);
+    assert(memcmp(with_particles, without_particles, sizeof with_particles));
+    game_custom_level_exit();
+
     /* The bread's collider starts/ends at its visible alpha bounds, not its PNG canvas. */
     level.object_count = 4;
     level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
@@ -905,6 +926,12 @@ static int run_lvgl_test(void) {
     assert(editor_probe.objects[editor_probe.object_count - 1].flip_x &&
            editor_probe.objects[editor_probe.object_count - 1].flip_y);
 #endif
+    ui_tap(742, 596); /* the art-free P palette button */
+    ui_tap(590, 370);ui_snapshot("workshop_particle_added");
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[editor_probe.object_count - 1].type == ON_LEVEL_PARTICLE);
+#endif
     ui_tap(80, 596); /* reselect blocks category and choose its square variant */
     ui_tap(834, 439);
     ui_tap(422, 205); /* now maps to world X=10 */
@@ -950,6 +977,7 @@ static int run_lvgl_test(void) {
            strstr(uploaded_level_body, "\"value\":100.0000") &&
            strstr(uploaded_level_body, "\"type\":\"orb-yellow\"") &&
            strstr(uploaded_level_body, "\"type\":\"orb-orange\"") &&
+           strstr(uploaded_level_body, "\"type\":\"particle\"") &&
            strstr(uploaded_level_body, "\"event\":\"start\"") &&
            strstr(uploaded_level_body, "\"type\":\"slope\"") &&
            strstr(uploaded_level_body, "\"flipX\":true") &&

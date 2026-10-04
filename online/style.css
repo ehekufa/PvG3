@@ -275,10 +275,12 @@ main { min-width: 0; }
 .ws-category-list { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .ws-category-list button { display: flex; align-items: center; gap: 7px; text-align: left; }
 .ws-category-list img { width: 30px; height: 30px; flex: 0 0 30px; object-fit: contain; }
+.ws-category-glyph { display: inline-grid; width: 30px; height: 30px; flex: 0 0 30px; place-items: center; border: 2px solid currentColor; border-radius: 50%; color: #1c9ba6; font-size: 18px; font-weight: 800; }
 .ws-palette-items { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 .ws-palette-items:empty { display: none; }
 .ws-palette-items .ws-palette-item { display: grid; min-height: 78px; justify-items: center; align-content: center; gap: 4px; text-align: center; font-size: 13px; }
 .ws-palette-item img { width: 42px; height: 42px; object-fit: contain; }
+.ws-palette-glyph { display: grid; width: 42px; height: 42px; place-items: center; border: 3px solid #1c9ba6; border-radius: 50%; color: #1c9ba6; font-size: 26px; font-weight: 800; }
 .ws-palette-item.active { outline: 3px solid #1c9ba6; outline-offset: -3px; }
 .ws-properties { padding-top: 10px; border-top: 2px solid var(--outline); }
 .ws-properties > strong { font-size: 17px; }

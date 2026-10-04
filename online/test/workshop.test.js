@@ -11,20 +11,23 @@ function recordingCanvas() {
   const images = [];
   const outlines = [];
   const scales = [];
+  const labels = [];
+  const fills = [];
   let pathPoints = 0;
   const context = {
     clearRect() {}, fillRect() {}, beginPath() {pathPoints = 0;},
     moveTo() {pathPoints++;}, lineTo() {pathPoints++;},
-    closePath() {pathPoints++;}, fill() {},
+    closePath() {pathPoints++;}, fill() {fills.push({style:this.fillStyle, alpha:this.globalAlpha ?? 1});},
     stroke() {if (pathPoints >= 4) outlines.push({type: 'polygon'});},
     arc() {}, ellipse() {},
     save() {}, restore() {}, translate() {}, rotate() {},
     scale(...value) {scales.push(value);},
-    strokeRect(...bounds) {outlines.push(bounds);}, fillText() {},
+    strokeRect(...bounds) {outlines.push(bounds);},
+    fillText(text) {labels.push(String(text));},
     drawImage(image, ...bounds) {images.push({image, bounds});},
   };
   return {canvas: {width: 1280, height: 720, getContext: () => context},
-    images, outlines, scales};
+    images, outlines, scales, labels, fills};
 }
 
 test('new drafts are valid and object placement keeps player and finish unique', () => {
@@ -44,7 +47,7 @@ test('new drafts are valid and object placement keeps player and finish unique',
 test('the 20,000-object ceiling is combined across blocks, triggers, coins and every other type', () => {
   const level = newDraft('draft-limit');
   const additionalTypes = ['block', 'ground', 'hazard', 'coin', 'enemy', 'trigger', 'slope',
-    'orb-yellow', 'orb-orange'];
+    'orb-yellow', 'orb-orange', 'particle'];
   level.objects = Array.from({length:MAX_LEVEL_OBJECTS}, (_, index) => {
     const type = index === 0 ? 'player' : index === 1 ? 'goal' : index === 2 ? 'ground' :
       additionalTypes[(index - 3) % additionalTypes.length];
@@ -105,6 +108,7 @@ test('published records round-trip through the browser/native wire schema', () =
   const level = newDraft();level.title = 'Острова над рекой';level.description = 'Монеты и тайный мост';
   const block = addObject(level, 'block', 6, 6);
   const slope = addObject(level, 'slope', 8, 6);
+  const emitter = addObject(level, 'particle', 11, 4);
   const trigger = addObject(level, 'trigger', 4, 7);
   trigger.trigger = {event:'start',action:'recolor',targetId:block.id,value:0,color:'#ffcc44'};
   const record = publishedRecord('104', level);
@@ -115,10 +119,47 @@ test('published records round-trip through the browser/native wire schema', () =
   const restored = draftFromPublished(record);
   assert.equal(restored.title, level.title);
   assert.equal(restored.objects.find(o => o.id === slope.id).type, 'slope');
+  assert.equal(restored.objects.find(o => o.id === emitter.id).type, 'particle');
   assert.equal(restored.objects.find(o => o.id === trigger.id).trigger.action, 'recolor');
   assert.equal(restored.objects.find(o => o.id === trigger.id).trigger.event, 'start');
   assert.equal(validateDraft(restored).ok, true);
   assert.throws(() => publishedRecord('0', level), /ID/);
+});
+
+test('particle emitters round-trip, stay non-solid and draw P markers plus orb sparks', () => {
+  const level = newDraft('particle-effects');
+  const emitter = addObject(level, 'particle', 6, 4);
+  const yellow = addObject(level, 'orb-yellow', 9, 4);
+  const orange = addObject(level, 'orb-orange', 11, 4);
+  assert.equal(emitter.w, 1);assert.equal(emitter.h, 1);
+  const record = publishedRecord('712', level);
+  assert.equal(isPublishedRecord(record, '712'), true);
+  const restored = draftFromPublished(record);
+  assert.deepEqual(restored.objects.map(object => object.type).slice(-3),
+    ['particle', 'orb-yellow', 'orb-orange']);
+
+  const editor = recordingCanvas();
+  drawEditorCanvas(editor.canvas, level, emitter.id);
+  assert(editor.labels.includes('P'), 'the art-free emitter is selectable by its P marker');
+
+  const renderState = createPreviewState(level);renderState.time = .25;
+  const preview = recordingCanvas();
+  drawPreviewCanvas(preview.canvas, renderState);
+  const renderedColors = new Set(preview.fills.map(fill => fill.style));
+  assert(renderedColors.has(emitter.color), 'the particle object emits its configured color');
+  assert(renderedColors.has('#fff86b'), 'yellow orbs emit yellow sparks');
+  assert(renderedColors.has('#ffbb66'), 'orange orbs emit orange sparks');
+
+  const emptyLevel = newDraft('particle-no-collision');
+  emptyLevel.objects.find(object => object.type === 'ground').y = 30;
+  const withParticle = structuredClone(emptyLevel);
+  addObject(withParticle, 'particle', 1, 7);
+  const baseline = createPreviewState(emptyLevel);
+  const particleState = createPreviewState(withParticle);
+  stepPreview(baseline, {}, .05);stepPreview(particleState, {}, .05);
+  for (const property of ['x', 'y', 'vx', 'vy'])
+    assert.equal(particleState[property], baseline[property], `emitter must not collide (${property})`);
+  assert.equal(yellow.type, 'orb-yellow');assert.equal(orange.type, 'orb-orange');
 });
 
 test('gravity triggers round-trip a signed level setting and change preview acceleration', () => {

@@ -26,30 +26,33 @@ const TRIGGER_ACTIONS = Object.freeze({
 });
 export const LEVEL_TYPES = Object.freeze([
   'block', 'ground', 'hazard', 'coin', 'enemy', 'player', 'goal', 'trigger', 'slope',
-  'orb-yellow', 'orb-orange',
+  'orb-yellow', 'orb-orange', 'particle',
 ]);
 export const TYPE_LABELS = Object.freeze({
   block: 'Блок', ground: 'Платформа', hazard: 'Шипы', coin: 'Монета',
   enemy: 'Гусь', player: 'Игрок', goal: 'Финиш', trigger: 'Триггер', slope: 'Склон',
   'orb-yellow': 'Жёлтый орб', 'orb-orange': 'Оранжевый орб',
+  particle: 'Эмиттер частиц',
 });
 const TYPE_SIZES = Object.freeze({
   block: [1, 1], ground: [2, 1], hazard: [1, 1], coin: [.55, .55],
   enemy: [.8, .8], player: [.65, .85], goal: [1, 2], trigger: [1, 1], slope: [1, 1],
-  'orb-yellow': [.7, .7], 'orb-orange': [.7, .7],
+  'orb-yellow': [.7, .7], 'orb-orange': [.7, .7], particle: [1, 1],
 });
 const DEFAULT_COLORS = Object.freeze({
   block: '#55c8ea', ground: '#65a845', hazard: '#e56c5b', coin: '#ffc54e',
   enemy: '#9560bd', player: '#5ab7e8', goal: '#69d16c', trigger: '#f27652',
   slope: '#e56c5b', 'orb-yellow': '#fff400', 'orb-orange': '#ff8a16',
+  particle: '#68f0d8',
 });
 const TYPE_TO_ID = Object.freeze({
   block: 0, ground: 1, hazard: 2, coin: 3, enemy: 4,
   player: 5, goal: 6, trigger: 7, slope: 8, 'orb-yellow': 9, 'orb-orange': 10,
+  particle: 11,
 });
 const TYPE_NAMES = Object.freeze([
   'block', 'ground', 'hazard', 'coin', 'enemy', 'player', 'goal', 'trigger', 'slope',
-  'orb-yellow', 'orb-orange',
+  'orb-yellow', 'orb-orange', 'particle',
 ]);
 // Normalized opaque artwork bounds, measured from alpha in the supplied PNGs.
 const ART_ALPHA_BOUNDS = Object.freeze({
@@ -559,6 +562,7 @@ function playerInsideOrbRange(px, py, pw, ph, object) {
   return Math.hypot(closestX - centerX, closestY - centerY) <= radius + .1;
 }
 function playerObjectContact(px, py, pw, ph, object, vx = 0, vy = 0) {
+  if (object.type === 'particle') return null;
   if (object.type === 'slope')
     return playerTriangleContact(px, py, pw, ph, object, vx, vy,
                                  SLOPE_VERTICES, true);
@@ -815,6 +819,7 @@ function triggerArtKey(kind) {
     kind === 'gravity' ? 'triggerGravity' : 'triggerMove';
 }
 function drawWorkshopArt(ctx, art, type, x, y, w, h, triggerKind = 'move') {
+  if (type === 'particle') return false;
   const image = type === 'trigger' ? (art?.[triggerArtKey(triggerKind)] || art?.trigger) : art?.[type];
   if (!image?.naturalWidth) return false;
   if (type !== 'ground') {
@@ -843,6 +848,19 @@ function drawWorkshopObject(ctx, art, object, x, y, w, h) {
   return drawn;
 }
 
+function drawParticleEmitterMarker(ctx, x, y, w, h, color, angle = 0) {
+  ctx.save();ctx.translate(x + w / 2, y + h / 2);
+  ctx.rotate((Number(angle) || 0) * Math.PI / 180);
+  const radius = Math.max(2, Math.min(Math.max(0, w), Math.max(0, h)) * .36);
+  ctx.fillStyle = 'rgba(20,40,60,.94)';
+  ctx.beginPath();ctx.arc(0, 0, radius, 0, Math.PI * 2);ctx.fill();
+  ctx.strokeStyle = color;ctx.lineWidth = Math.max(2, radius * .12);ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.font = `bold ${Math.max(10, Math.min(32, radius * 1.45))}px PTSans, sans-serif`;
+  ctx.textAlign = 'center';ctx.textBaseline = 'middle';ctx.fillText('P', 0, 1);
+  ctx.restore();
+}
+
 export function drawEditorCanvas(canvas, level, selectedId = 0, tool = 'build', art = {}, camera = {x: 0, y: 0}) {
   const ctx = canvas.getContext('2d');
   const cameraX = clamp(Number(camera?.x) || 0, -WORLD_LIMIT, WORLD_LIMIT - LEVEL_WIDTH);
@@ -868,21 +886,25 @@ export function drawEditorCanvas(canvas, level, selectedId = 0, tool = 'build', 
     const x = (o.x - cameraX) * TILE_W + 3, y = (o.y - cameraY) * TILE_H + 3;
     const w = o.w * TILE_W - 6, h = o.h * TILE_H - 6;
     ctx.fillStyle = o.color || DEFAULT_COLORS[o.type];
-    const triggerArt = o.type === 'trigger' &&
-      (art?.[triggerArtKey(o.trigger?.kind)]?.naturalWidth || art.trigger?.naturalWidth);
-    if (triggerArt) {ctx.globalAlpha = .2;ctx.fillRect(x, y, w, h);ctx.globalAlpha = 1;}
-    const hasArt = drawWorkshopObject(ctx, art, o, x, y, w, h);
-    if (!hasArt && o.type === 'coin') {
-      ctx.beginPath();ctx.arc(x + w / 2, y + h / 2, Math.min(w, h) / 2, 0, Math.PI * 2);ctx.fill();
-    } else if (!hasArt && o.type === 'hazard') {
-      ctx.beginPath();ctx.moveTo(x + w / 2, y);ctx.lineTo(x + w, y + h);ctx.lineTo(x, y + h);ctx.closePath();ctx.fill();
-    } else if (!hasArt) {
-      ctx.fillRect(x, y, w, h);
-      if (o.type === 'trigger') {ctx.strokeStyle = '#fff2d8';ctx.lineWidth = 3;ctx.strokeRect(x + 2, y + 2, w - 4, h - 4);}
-      if (o.type === 'goal') {ctx.fillStyle = '#fff2d8';ctx.fillRect(x + w * .65, y, 4, h);}
-      if (o.type === 'player') {
-        ctx.fillStyle = '#fff';ctx.fillRect(x + w * .18, y + h * .25, w * .18, h * .12);
-        ctx.fillRect(x + w * .58, y + h * .25, w * .18, h * .12);
+    if (o.type === 'particle') {
+      drawParticleEmitterMarker(ctx, x, y, w, h, o.color || DEFAULT_COLORS.particle, o.angle);
+    } else {
+      const triggerArt = o.type === 'trigger' &&
+        (art?.[triggerArtKey(o.trigger?.kind)]?.naturalWidth || art.trigger?.naturalWidth);
+      if (triggerArt) {ctx.globalAlpha = .2;ctx.fillRect(x, y, w, h);ctx.globalAlpha = 1;}
+      const hasArt = drawWorkshopObject(ctx, art, o, x, y, w, h);
+      if (!hasArt && o.type === 'coin') {
+        ctx.beginPath();ctx.arc(x + w / 2, y + h / 2, Math.min(w, h) / 2, 0, Math.PI * 2);ctx.fill();
+      } else if (!hasArt && o.type === 'hazard') {
+        ctx.beginPath();ctx.moveTo(x + w / 2, y);ctx.lineTo(x + w, y + h);ctx.lineTo(x, y + h);ctx.closePath();ctx.fill();
+      } else if (!hasArt) {
+        ctx.fillRect(x, y, w, h);
+        if (o.type === 'trigger') {ctx.strokeStyle = '#fff2d8';ctx.lineWidth = 3;ctx.strokeRect(x + 2, y + 2, w - 4, h - 4);}
+        if (o.type === 'goal') {ctx.fillStyle = '#fff2d8';ctx.fillRect(x + w * .65, y, 4, h);}
+        if (o.type === 'player') {
+          ctx.fillStyle = '#fff';ctx.fillRect(x + w * .18, y + h * .25, w * .18, h * .12);
+          ctx.fillRect(x + w * .58, y + h * .25, w * .18, h * .12);
+        }
       }
     }
     if (selected.has(o.id)) {
@@ -916,6 +938,61 @@ export function drawEditorCanvas(canvas, level, selectedId = 0, tool = 'build', 
   ctx.fillText(hint, 18, 29);
 }
 
+const PREVIEW_PARTICLE_COUNT = 5;
+function drawParticleDot(ctx, x, y, radius, color, alpha) {
+  if (alpha <= 0) return;
+  const previousAlpha = ctx.globalAlpha ?? 1;
+  ctx.globalAlpha = Math.min(1, alpha);ctx.fillStyle = color;
+  ctx.beginPath();ctx.arc(x, y, radius, 0, Math.PI * 2);ctx.fill();
+  ctx.globalAlpha = previousAlpha;
+}
+function drawPreviewParticles(ctx, state, cameraX, cameraY, viewWidth, viewHeight) {
+  const time = Number(state.time) || 0;
+  for (const object of state.objects) {
+    if (object.visible === false ||
+        (object.type !== 'particle' && object.type !== 'orb-yellow' &&
+         object.type !== 'orb-orange') || state.invisible?.includes(object.id)) continue;
+    const width = object.w * TILE_W, height = object.h * TILE_H;
+    const centerX = (object.x + object.w / 2) * TILE_W - cameraX;
+    const centerY = (object.y + object.h / 2) * TILE_H - cameraY;
+    const extent = Math.max(width, height) + 32;
+    if (centerX + extent < 0 || centerX - extent > viewWidth ||
+        centerY + extent < 0 || centerY - extent > viewHeight) continue;
+    const angle = (Number(object.angle) || 0) * Math.PI / 180;
+    const cos = Math.cos(angle), sin = Math.sin(angle);
+    if (object.type === 'orb-yellow' || object.type === 'orb-orange') {
+      const color = object.type === 'orb-orange' ? '#ffbb66' : '#fff86b';
+      const orbitRadius = Math.min(width, height) * .58;
+      for (let index = 0; index < PREVIEW_PARTICLE_COUNT; index++) {
+        const phase = time * 2.1 + index * Math.PI * 2 / PREVIEW_PARTICLE_COUNT +
+          (object.id % 4093) * .023;
+        const localX = Math.cos(phase) * orbitRadius * (object.flipX ? -1 : 1);
+        const localY = Math.sin(phase) * orbitRadius * .7 * (object.flipY ? -1 : 1);
+        const x = centerX + localX * cos - localY * sin;
+        const y = centerY + localX * sin + localY * cos;
+        const flicker = .5 + .5 * Math.sin(phase * 1.6);
+        drawParticleDot(ctx, x, y, 1.2 + flicker * .8, color,
+          .18 + flicker * .62);
+      }
+    } else {
+      const color = object.color || DEFAULT_COLORS.particle;
+      const phaseSeed = object.id * .7548776662466927;
+      for (let index = 0; index < PREVIEW_PARTICLE_COUNT; index++) {
+        const age = (time * 1.35 + index / PREVIEW_PARTICLE_COUNT +
+          (object.id % 17) / 17) % 1;
+        const phase = phaseSeed + index * 2.399963229728653 + age * 4.4;
+        const localX = Math.sin(phase) * width * .4 * (object.flipX ? -1 : 1);
+        const localY = (height * .3 - age * (height * .95 + 26)) *
+          (object.flipY ? -1 : 1);
+        const x = centerX + localX * cos - localY * sin;
+        const y = centerY + localX * sin + localY * cos;
+        drawParticleDot(ctx, x, y, 1.1 + (1 - age) * 1.2,
+          color, .82 * (1 - age));
+      }
+    }
+  }
+}
+
 export function drawPreviewCanvas(canvas, state, control = 'keyboard', art = {}) {
   const ctx = canvas.getContext('2d');
   const player = state.objects.find(o => o.type === 'player');
@@ -938,7 +1015,7 @@ export function drawPreviewCanvas(canvas, state, control = 'keyboard', art = {})
   }
   for (const o of state.objects) {
     if (!o.visible || state.invisible?.includes(o.id) ||
-        o.type === 'player' || o.type === 'trigger') continue;
+        o.type === 'player' || o.type === 'trigger' || o.type === 'particle') continue;
     const x = o.x * TILE_W - cameraX, y = o.y * TILE_H - cameraY;
     const w = o.w * TILE_W, h = o.h * TILE_H;
     ctx.fillStyle = o.color || DEFAULT_COLORS[o.type];
@@ -958,6 +1035,7 @@ export function drawPreviewCanvas(canvas, state, control = 'keyboard', art = {})
       ctx.strokeStyle = '#fff';ctx.lineWidth = 3;ctx.strokeRect(x + 2, y + 2, w - 4, h - 4);
     } else ctx.fillRect(x, y, w, h);
   }
+  drawPreviewParticles(ctx, state, cameraX, cameraY, canvas.width, canvas.height);
   if (player && player.visible !== false && !state.invisible?.includes(player.id)) {
     const x = state.x - cameraX, y = state.y - cameraY;
     const w = playerW, h = playerH;

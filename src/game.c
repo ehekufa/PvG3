@@ -443,6 +443,7 @@ static int custom_id_map[CUSTOM_ID_MAP_CAP];
 static float custom_player_x, custom_player_y, custom_player_w, custom_player_h;
 static float custom_player_vx, custom_player_vy;
 static float custom_gravity = 1450.0f;
+static float custom_elapsed_time;
 static int custom_player_grounded, custom_control_axis, custom_jump_request;
 static int custom_jump_held, custom_trigger_request, custom_trigger_held;
 static uint8_t custom_trigger_fired[ON_LEVEL_OBJECT_CAP];
@@ -2476,6 +2477,7 @@ static int custom_activate_orb(void) {
 static int custom_player_object_contact(float px, float py, float pw, float ph,
                                         const OnLevelObject *object,
                                         float vx, float vy, CustomContact *contact) {
+    if (!object || object->type == ON_LEVEL_PARTICLE) return 0;
     float center_x = (object->x + object->w * .5f) * CUSTOM_TILE_W;
     float center_y = (object->y + object->h * .5f) * CUSTOM_TILE_H;
     float conservative_radius =
@@ -2569,7 +2571,7 @@ static int custom_platformer_start(const OnPublishedLevel *source) {
     memset(custom_trigger_timers, 0, sizeof custom_trigger_timers);
     memset(custom_collision_disabled, 0, sizeof custom_collision_disabled);
     memset(custom_invisible, 0, sizeof custom_invisible);
-    custom_gravity = 1450.0f;
+    custom_gravity = 1450.0f;custom_elapsed_time = 0;
     custom_player_collision_enabled = 1;
     custom_group_rotation_count = 0;
     memset(custom_group_rotation_slots, 0, sizeof custom_group_rotation_slots);
@@ -2585,7 +2587,7 @@ static int custom_platformer_start(const OnPublishedLevel *source) {
 }
 static void custom_platformer_stop(void) {
     custom_level_active = 0;custom_level_won = 0;custom_object_count = 0;
-    custom_gravity = 1450.0f;
+    custom_gravity = 1450.0f;custom_elapsed_time = 0;
     custom_group_rotation_count = 0;
     custom_control_axis = custom_jump_request = custom_jump_held = 0;
     custom_trigger_request = custom_trigger_held = 0;
@@ -2785,6 +2787,7 @@ static void custom_platformer_update(float dt) {
     if (!custom_level_active || custom_level_won) return;
     if (dt < 0) dt = 0;
     if (dt > .05f) dt = .05f;
+    custom_elapsed_time += dt;
     custom_player_vx = (float)custom_control_axis * 250.0f;
     if (custom_jump_request && !custom_activate_orb() && custom_player_grounded) {
         custom_player_vy = -570.0f;custom_player_grounded = 0;
@@ -2817,7 +2820,7 @@ static void custom_platformer_update(float dt) {
         for (int i = 0; i < custom_object_count; ++i) {
             OnLevelObject *object = &custom_level.objects[i];
             if (!object->visible || object->type == ON_LEVEL_PLAYER ||
-                object->type == ON_LEVEL_TRIGGER ||
+                object->type == ON_LEVEL_TRIGGER || object->type == ON_LEVEL_PARTICLE ||
                 object->type == ON_LEVEL_ORB_YELLOW ||
                 object->type == ON_LEVEL_ORB_ORANGE ||
                 custom_object_collision_disabled(object) ||
@@ -2841,7 +2844,7 @@ static void custom_platformer_update(float dt) {
     custom_update_group_rotations(dt);
 }
 static void custom_draw_object(const OnLevelObject *o) {
-    if (!o || o->type == ON_LEVEL_TRIGGER) return;
+    if (!o || o->type == ON_LEVEL_TRIGGER || o->type == ON_LEVEL_PARTICLE) return;
     int x = (int)lrintf(o->x * CUSTOM_TILE_W - custom_camera_x);
     int y = (int)lrintf(o->y * CUSTOM_TILE_H - custom_camera_y);
     int w = (int)lrintf(o->w * CUSTOM_TILE_W), h = (int)lrintf(o->h * CUSTOM_TILE_H);
@@ -2899,6 +2902,84 @@ static void custom_draw_object(const OnLevelObject *o) {
 #undef DRAW_LEVEL_ART
     if (o->number) draw_int(x + 3, y + 3, 2, COL(255, 255, 255), o->number);
 }
+static void custom_particle_dot(float x, float y, float radius,
+                                uint32_t color, float opacity) {
+    if (opacity <= .01f) return;
+    if (opacity > 1.0f) opacity = 1.0f;
+    int cx = (int)lrintf(x), cy = (int)lrintf(y);
+    int extent = (int)ceilf(radius);
+    if (extent < 1) extent = 1;
+    float radius_sq = radius * radius;
+    if (radius_sq < 1.0f) radius_sq = 1.0f;
+    for (int dy = -extent; dy <= extent; ++dy)
+        for (int dx = -extent; dx <= extent; ++dx) {
+            float distance_sq = (float)(dx * dx + dy * dy);
+            if (distance_sq > radius_sq) continue;
+            float edge = .72f + .28f * (1.0f - distance_sq / radius_sq);
+            int alpha = (int)lrintf(255.0f * opacity * edge);
+            if (alpha > 0) setpixA(cx + dx, cy + dy, color, alpha);
+        }
+}
+static uint32_t custom_particle_color(const OnLevelObject *object) {
+    if (object->type == ON_LEVEL_ORB_YELLOW) return COL(255, 248, 107);
+    if (object->type == ON_LEVEL_ORB_ORANGE) return COL(255, 187, 102);
+    return COL((object->color >> 16) & 255u,
+               (object->color >> 8) & 255u, object->color & 255u);
+}
+static void custom_draw_particle_effects(void) {
+    const int particle_count = 5;
+    for (int object_index = 0; object_index < custom_object_count; ++object_index) {
+        const OnLevelObject *object = &custom_level.objects[object_index];
+        if (!object->visible ||
+            (object->type != ON_LEVEL_PARTICLE &&
+             object->type != ON_LEVEL_ORB_YELLOW &&
+             object->type != ON_LEVEL_ORB_ORANGE) ||
+            custom_object_is_invisible(object)) continue;
+        float width = object->w * CUSTOM_TILE_W;
+        float height = object->h * CUSTOM_TILE_H;
+        float center_x = (object->x + object->w * .5f) * CUSTOM_TILE_W - custom_camera_x;
+        float center_y = (object->y + object->h * .5f) * CUSTOM_TILE_H - custom_camera_y;
+        float extent = fmaxf(width, height) + 32.0f;
+        if (center_x + extent < 0 || center_x - extent >= GAME_W ||
+            center_y + extent < 102 || center_y - extent >= GAME_H) continue;
+        float radians = object->angle * 0.01745329251994329577f;
+        float c = cosf(radians), s = sinf(radians);
+        uint32_t color = custom_particle_color(object);
+        if (object->type == ON_LEVEL_ORB_YELLOW ||
+            object->type == ON_LEVEL_ORB_ORANGE) {
+            float orbit = fminf(width, height) * .58f;
+            for (int i = 0; i < particle_count; ++i) {
+                float phase = custom_elapsed_time * 2.1f +
+                    i * 6.2831853071795864769f / particle_count +
+                    (object->id % 4093) * .023f;
+                float local_x = cosf(phase) * orbit * (object->flip_x ? -1.0f : 1.0f);
+                float local_y = sinf(phase) * orbit * .7f *
+                                (object->flip_y ? -1.0f : 1.0f);
+                float x = center_x + local_x * c - local_y * s;
+                float y = center_y + local_x * s + local_y * c;
+                float flicker = .5f + .5f * sinf(phase * 1.6f);
+                custom_particle_dot(x, y, 1.2f + flicker * .8f, color,
+                                    .18f + flicker * .62f);
+            }
+        } else {
+            float phase_seed = object->id * .7548776662466927f;
+            for (int i = 0; i < particle_count; ++i) {
+                float age = fmodf(custom_elapsed_time * 1.35f +
+                    (float)i / particle_count +
+                    (object->id % 17) / 17.0f, 1.0f);
+                float phase = phase_seed + i * 2.399963229728653f + age * 4.4f;
+                float local_x = sinf(phase) * width * .4f *
+                                (object->flip_x ? -1.0f : 1.0f);
+                float local_y = (height * .3f - age * (height * .95f + 26.0f)) *
+                                (object->flip_y ? -1.0f : 1.0f);
+                float x = center_x + local_x * c - local_y * s;
+                float y = center_y + local_x * s + local_y * c;
+                custom_particle_dot(x, y, 1.1f + (1.0f - age) * 1.2f,
+                                    color, .82f * (1.0f - age));
+            }
+        }
+    }
+}
 static void custom_platformer_draw(void) {
     custom_camera_x = custom_player_x + custom_player_w * .5f - GAME_W * .40f;
     custom_camera_y = custom_player_y + custom_player_h * .5f - 411.0f;
@@ -2923,6 +3004,7 @@ static void custom_platformer_draw(void) {
             custom_level.objects[i].type != ON_LEVEL_PLAYER &&
             custom_level.objects[i].type != ON_LEVEL_TRIGGER)
             custom_draw_object(&custom_level.objects[i]);
+    custom_draw_particle_effects();
     int player_visible = 1, player_flip_x = 0, player_flip_y = 0;
     float player_angle = 0;
     if (custom_player_index >= 0 && custom_player_index < custom_object_count) {

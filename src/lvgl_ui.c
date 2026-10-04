@@ -1345,6 +1345,7 @@ static const char *workshop_object_name(int type) {
     case ON_LEVEL_COIN: return "Монета";
     case ON_LEVEL_ORB_YELLOW: return "Жёлтый орб";
     case ON_LEVEL_ORB_ORANGE: return "Оранжевый орб";
+    case ON_LEVEL_PARTICLE: return "Эмиттер частиц";
     case ON_LEVEL_ENEMY: return "Гусь";
     case ON_LEVEL_PLAYER: return "Игрок";
     case ON_LEVEL_GOAL: return "Финиш";
@@ -1389,6 +1390,7 @@ static int workshop_object_art(int type, int trigger_kind) {
     case ON_LEVEL_COIN: return PV_ART_COIN;
     case ON_LEVEL_ORB_YELLOW: return PV_ART_LEVEL_ORB_YELLOW;
     case ON_LEVEL_ORB_ORANGE: return PV_ART_LEVEL_ORB_ORANGE;
+    case ON_LEVEL_PARTICLE: return -1;
     case ON_LEVEL_ENEMY: return PV_ART_DUCK;
     case ON_LEVEL_PLAYER: return PV_ART_BREAD;
     case ON_LEVEL_GOAL: return PV_ART_LEVEL_FLAG;
@@ -2185,7 +2187,13 @@ static void workshop_draw_world_object(lv_obj_t *root, int gx, int gy, int cell,
     int left = (int)lroundf(cx - shape_w * .5f);
     int top = (int)lroundf(cy - shape_h * .5f);
     int rotation = (int)lroundf(angle * 10.0f);
-    if (type != ON_LEVEL_SLOPE) {
+    if (type == ON_LEVEL_PARTICLE) {
+        lv_obj_t *marker = label(root, left, top, shape_w, shape_h, "P", 2,
+                                 color, LV_TEXT_ALIGN_CENTER);
+        lv_obj_set_style_transform_rotation(marker, rotation, 0);
+        lv_obj_set_style_transform_pivot_x(marker, LV_PCT(50), 0);
+        lv_obj_set_style_transform_pivot_y(marker, LV_PCT(50), 0);
+    } else if (type != ON_LEVEL_SLOPE) {
         lv_obj_t *shape = box(root, left, top, shape_w, shape_h, 4, color, 0);
         lv_obj_set_style_transform_rotation(shape, rotation, 0);
         lv_obj_set_style_transform_pivot_x(shape, LV_PCT(50), 0);
@@ -2502,6 +2510,9 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
         label(root, x + 1, 599, 78, 24, palette_names[i], 0,
               BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
     }
+    workshop_button(root, 724, 565, 38, 62, "P", 2,
+                    U_WORKSHOP_PALETTE_BASE + 8,
+                    workshop_palette_type == ON_LEVEL_PARTICLE ? WS_CYAN : BUTTON_GRAY);
     label(root, 43, 637, 193, 28, "ДВИГАТЬ ОБЪЕКТЫ", 0,
           WS_YELLOW, LV_TEXT_ALIGN_LEFT);
     workshop_nudge_button(root, 43, 666, 46, 44,
@@ -2532,7 +2543,7 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
         view->level_publish_notice[0] ? view->level_publish_notice :
         view->level_publish_id[0] ? "Уровень опубликован. ID показан ниже." :
         "Зелёные стрелки двигают на 0,5 блока; бирюзовые — окно карты.";
-    label(root, 747, 562, 493, 64, publish_status,
+    label(root, 770, 562, 480, 64, publish_status,
           1, WS_CREAM, LV_TEXT_ALIGN_CENTER);
     if (view->level_publish_id[0]) {
         char published_id[48];
@@ -3320,10 +3331,10 @@ static void pressed(lv_event_t *ev) {
         dirty = 1;return;
     }
     if (code >= U_WORKSHOP_PALETTE_BASE &&
-        code < U_WORKSHOP_PALETTE_BASE + 8) {
+        code < U_WORKSHOP_PALETTE_BASE + 9) {
         static const int types[] = {ON_LEVEL_BLOCK, ON_LEVEL_HAZARD, ON_LEVEL_COIN,
             ON_LEVEL_ENEMY, ON_LEVEL_PLAYER, ON_LEVEL_GOAL, ON_LEVEL_TRIGGER,
-            ON_LEVEL_ORB_YELLOW};
+            ON_LEVEL_ORB_YELLOW, ON_LEVEL_PARTICLE};
         workshop_palette_type = types[code - U_WORKSHOP_PALETTE_BASE];
         if (workshop_palette_type == ON_LEVEL_BLOCK)
             workshop_block_variant = ON_LEVEL_BLOCK;

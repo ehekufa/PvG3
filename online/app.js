@@ -248,6 +248,8 @@ function renderPaletteOptions() {
   ] : wsType === 'orb' ? [
     {kind: 'orb-yellow', label: TYPE_LABELS['orb-yellow'], art: 'orb-yellow'},
     {kind: 'orb-orange', label: TYPE_LABELS['orb-orange'], art: 'orb-orange'},
+  ] : wsType === 'particle' ? [
+    {kind: 'single', label: TYPE_LABELS.particle, glyph: 'P'},
   ] : [{kind: 'single', label: TYPE_LABELS[wsType], art: wsType}];
   for (const option of options) {
     const button = document.createElement('button');
@@ -257,9 +259,14 @@ function renderPaletteOptions() {
         wsType === 'block' ? wsBlockType === option.kind :
         wsType === 'orb' ? wsOrbType === option.kind : true);
     if (active) button.classList.add('active');
-    const icon = document.createElement('img');
-    icon.alt = '';icon.setAttribute('aria-hidden', 'true');
-    icon.src = wsArt[option.art]?.src || '';
+    const icon = option.glyph ? document.createElement('span') : document.createElement('img');
+    if (option.glyph) {
+      icon.className = 'ws-palette-glyph';icon.textContent = option.glyph;
+    } else {
+      icon.alt = '';icon.setAttribute('aria-hidden', 'true');
+      icon.src = wsArt[option.art]?.src || '';
+    }
+    icon.setAttribute('aria-hidden', 'true');
     const label = document.createElement('span');label.textContent = option.label;
     button.append(icon, label);
     button.addEventListener('click', () => {

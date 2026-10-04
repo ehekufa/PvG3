@@ -97,7 +97,7 @@ static void published_level_writer(void) {
     snprintf(level.id, sizeof level.id, "%s", "23817");
     snprintf(level.title, sizeof level.title, "%s", "Проверка \"уровня\"");
     snprintf(level.description, sizeof level.description, "%s", "Маршрут и триггер.");
-    level.width = 16;level.height = 10;level.object_count = 13;
+    level.width = 16;level.height = 10;level.object_count = 14;
     level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
         .x=0,.y=8,.w=16,.h=2,.color=0x65a845u,.visible=1};
     snprintf(level.objects[0].name, sizeof level.objects[0].name, "%s", "Платформа");
@@ -149,6 +149,8 @@ static void published_level_writer(void) {
         .x=10,.y=7,.w=.7f,.h=.7f,.color=0xfff400u,.visible=1};
     level.objects[12] = (OnLevelObject){.id=13,.type=ON_LEVEL_ORB_ORANGE,
         .x=11,.y=7,.w=.7f,.h=.7f,.color=0xff8a16u,.visible=1};
+    level.objects[13] = (OnLevelObject){.id=14,.type=ON_LEVEL_PARTICLE,
+        .x=12,.y=7,.w=1,.h=1,.color=0x68f0d8u,.visible=1};
     char body[8192], index[1024];
     size_t size = on_protocol_published_level_json(&level, body, sizeof body);
     assert(size && strstr(body, "PVG3-PUBLISHED-LEVEL") &&
@@ -169,9 +171,10 @@ static void published_level_writer(void) {
            strstr(body, "\"value\":-65.0000") &&
            strstr(body, "\"type\":\"orb-yellow\"") &&
            strstr(body, "\"type\":\"orb-orange\"") &&
+           strstr(body, "\"type\":\"particle\"") &&
            strstr(body, "\"flipX\":true") && strstr(body, "\"flipY\":true") &&
            on_protocol_published_level(body, "23817", &decoded));
-    assert(!strcmp(decoded.title, level.title) && decoded.object_count == 13);
+    assert(!strcmp(decoded.title, level.title) && decoded.object_count == 14);
     assert(decoded.objects[3].trigger_kind == ON_TRIGGER_KIND_MOVE &&
            decoded.objects[3].trigger_value == 9999 &&
            decoded.objects[3].trigger_value_y == -9999 &&
@@ -225,7 +228,9 @@ static void published_level_writer(void) {
     assert(decoded.objects[11].type == ON_LEVEL_ORB_YELLOW &&
            !strcmp(decoded.objects[11].name, "Жёлтый орб") &&
            decoded.objects[12].type == ON_LEVEL_ORB_ORANGE &&
-           !strcmp(decoded.objects[12].name, "Оранжевый орб"));
+           !strcmp(decoded.objects[12].name, "Оранжевый орб") &&
+           decoded.objects[13].type == ON_LEVEL_PARTICLE &&
+           !strcmp(decoded.objects[13].name, "Эмиттер частиц"));
     level.objects[10].trigger_value = 101;
     assert(!on_protocol_published_level_json(&level, body, sizeof body));
     level.objects[10].trigger_value = -65;
@@ -279,7 +284,7 @@ static void published_level_object_limit(void) {
                    i == 4 ? ON_LEVEL_HAZARD : i == 5 ? ON_LEVEL_COIN :
                    i == 6 ? ON_LEVEL_ENEMY : i == 7 ? ON_LEVEL_SLOPE :
                    i == 8 ? ON_LEVEL_ORB_YELLOW : i == 9 ? ON_LEVEL_ORB_ORANGE :
-                   ON_LEVEL_TRIGGER;
+                   i == 10 ? ON_LEVEL_PARTICLE : ON_LEVEL_TRIGGER;
         OnLevelObject *object = &level.objects[i];
         *object = (OnLevelObject){.id=i + 1,.type=type,
             .x=(float)(i % 16),.y=(float)((i / 16) % 10),.w=1,.h=1,
@@ -305,7 +310,8 @@ static void published_level_object_limit(void) {
            decoded.objects[7].type == ON_LEVEL_SLOPE &&
            decoded.objects[8].type == ON_LEVEL_ORB_YELLOW &&
            decoded.objects[9].type == ON_LEVEL_ORB_ORANGE &&
-           decoded.objects[10].type == ON_LEVEL_TRIGGER &&
+           decoded.objects[10].type == ON_LEVEL_PARTICLE &&
+           decoded.objects[11].type == ON_LEVEL_TRIGGER &&
            decoded.objects[ON_LEVEL_OBJECT_CAP - 1].id == ON_LEVEL_OBJECT_CAP);
     free(body);
 
