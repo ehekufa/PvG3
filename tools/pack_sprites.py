@@ -36,6 +36,8 @@ IMAGES = [
     ("LEVEL_TRIGGER", "assets/art/Триггер-движения.png"),
     ("LEVEL_TRIGGER_ROTATE", "assets/art/Триггер-вращения.png"),
     ("LEVEL_TRIGGER_FOREVER", "assets/art/Триггер-вечно.png"),
+    ("LEVEL_TRIGGER_INVISIBILITY", "assets/art/Триггер-невидимости.png"),
+    ("LEVEL_TRIGGER_NO_COLLISION", "assets/art/Триггер-нет столкновения.png"),
     ("LEVEL_FLAG", "assets/art/Флажок - финиш.png"),
     ("LEVEL_SPIKE", "assets/art/Шип.png"),
 ]

@@ -983,7 +983,11 @@ static void workshop_place_object(int type, int col, int row) {
     o->trigger_action = workshop_trigger_kind == ON_TRIGGER_KIND_FOREVER ?
                         ON_TRIGGER_ACTIVATE :
                         workshop_trigger_kind == ON_TRIGGER_KIND_ROTATE ?
-                        ON_TRIGGER_ROTATE : ON_TRIGGER_MOVE;
+                        ON_TRIGGER_ROTATE :
+                        workshop_trigger_kind == ON_TRIGGER_KIND_INVISIBILITY ?
+                        ON_TRIGGER_INVISIBLE :
+                        workshop_trigger_kind == ON_TRIGGER_KIND_NO_COLLISION ?
+                        ON_TRIGGER_NO_COLLISION : ON_TRIGGER_MOVE;
     o->trigger_group_id = 2; /* goal group */
     o->trigger_x = 1;o->trigger_y = 0;o->trigger_duration = 3;
     workshop_object_count++;
@@ -1217,7 +1221,9 @@ static const char *workshop_object_name(int type) {
 }
 static const char *workshop_trigger_name(int kind) {
     return kind == ON_TRIGGER_KIND_ROTATE ? "Разворот" :
-           kind == ON_TRIGGER_KIND_FOREVER ? "Вечно" : "Движение";
+           kind == ON_TRIGGER_KIND_FOREVER ? "Вечно" :
+           kind == ON_TRIGGER_KIND_INVISIBILITY ? "Невидимость" :
+           kind == ON_TRIGGER_KIND_NO_COLLISION ? "Нет столкновения" : "Движение";
 }
 
 static int workshop_object_art(int type, int trigger_kind) {
@@ -1232,6 +1238,8 @@ static int workshop_object_art(int type, int trigger_kind) {
     case ON_LEVEL_TRIGGER:
         return trigger_kind == ON_TRIGGER_KIND_ROTATE ? PV_ART_LEVEL_TRIGGER_ROTATE :
                trigger_kind == ON_TRIGGER_KIND_FOREVER ? PV_ART_LEVEL_TRIGGER_FOREVER :
+               trigger_kind == ON_TRIGGER_KIND_INVISIBILITY ? PV_ART_LEVEL_TRIGGER_INVISIBILITY :
+               trigger_kind == ON_TRIGGER_KIND_NO_COLLISION ? PV_ART_LEVEL_TRIGGER_NO_COLLISION :
                PV_ART_LEVEL_TRIGGER;
     default: return -1;
     }
@@ -1874,7 +1882,7 @@ static void workshop_draw_trigger_dialog(lv_obj_t *root) {
         label(root, 810, 330, 300, 90,
               "Группа вращается\nсо скоростью 1 оборот/с.",
               1, WS_CREAM, LV_TEXT_ALIGN_CENTER);
-    } else {
+    } else if (o->trigger_kind == ON_TRIGGER_KIND_FOREVER) {
         const char *action = o->trigger_action == ON_TRIGGER_ACTIVATE ?
                              "Активировать навсегда" : "Деактивировать навсегда";
         label(root, 158, 354, 300, 42, "Действие", 2,
@@ -1884,6 +1892,12 @@ static void workshop_draw_trigger_dialog(lv_obj_t *root) {
         label(root, 158, 435, 950, 46,
               "Группа останется в выбранном состоянии до другого триггера.",
               1, WS_CREAM, LV_TEXT_ALIGN_CENTER);
+    } else {
+        const char *description = o->trigger_kind == ON_TRIGGER_KIND_INVISIBILITY ?
+            "После события все объекты целевой группы исчезнут." :
+            "После события у объектов группы отключится столкновение.";
+        label(root, 158, 354, 950, 76, description, 2,
+              WS_CREAM, LV_TEXT_ALIGN_CENTER);
     }
     workshop_button(root, 500, 596, 280, 64, "ОК", 3,
                     U_WORKSHOP_DIALOG_OK, WS_GREEN);
@@ -2079,7 +2093,7 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
             lv_obj_set_style_radius(cell_button, 0, 0);
         }
 
-    box(root, 744, 122, 506, 405, 11, WS_BROWN, 0);
+    box(root, 744, 122, 506, 438, 11, WS_BROWN, 0);
     label(root, 769, 140, 450, 36, "РЕЖИМ РЕДАКТОРА", 1,
           WS_YELLOW, LV_TEXT_ALIGN_LEFT);
     workshop_button(root, 760, 181, 108, 56, "Строить", 0,
@@ -2128,23 +2142,28 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
                     U_WORKSHOP_COLOR_PANEL, BUTTON_GRAY);
     label(root, 769, 394, 448, 27, "ВАРИАНТЫ ТРИГГЕРА", 0,
           WS_YELLOW, LV_TEXT_ALIGN_LEFT);
-    static const char *const trigger_names[] = {"Движение", "Разворот", "Вечно"};
-    for (int i = 0; i < 3; ++i)
-        workshop_button(root, 760 + i * 156, 421, 148, 45,
+    static const char *const trigger_names[] = {
+        "Движение", "Разворот", "Вечно", "Невидимость", "Нет столкновения"
+    };
+    static const int trigger_x[] = {760, 916, 1072, 760, 998};
+    static const int trigger_y[] = {420, 420, 420, 461, 461};
+    static const int trigger_w[] = {148, 148, 148, 222, 222};
+    for (int i = 0; i < 5; ++i)
+        workshop_button(root, trigger_x[i], trigger_y[i], trigger_w[i], 38,
                         trigger_names[i], 0, U_WORKSHOP_TRIGGER_BASE + i,
                         workshop_trigger_kind == i ? WS_CYAN : BUTTON_GRAY);
     char camera_label[48];
     snprintf(camera_label, sizeof camera_label, "Карта X %d  Y %d",
              workshop_camera_x, workshop_camera_y);
-    label(root, 768, 477, 214, 38, camera_label, 0,
+    label(root, 768, 507, 214, 38, camera_label, 0,
           WS_CREAM, LV_TEXT_ALIGN_LEFT);
-    workshop_arrow_button(root, 984, 473, 52, 45,
+    workshop_arrow_button(root, 984, 504, 52, 45,
                           U_WORKSHOP_PAN_BASE, WS_CYAN, -1);
-    workshop_arrow_button(root, 1040, 473, 52, 45,
+    workshop_arrow_button(root, 1040, 504, 52, 45,
                           U_WORKSHOP_PAN_BASE + 1, WS_CYAN, 0);
-    workshop_arrow_button(root, 1096, 473, 52, 45,
+    workshop_arrow_button(root, 1096, 504, 52, 45,
                           U_WORKSHOP_PAN_BASE + 2, WS_CYAN, 2);
-    workshop_arrow_button(root, 1152, 473, 52, 45,
+    workshop_arrow_button(root, 1152, 504, 52, 45,
                           U_WORKSHOP_PAN_BASE + 3, WS_CYAN, 1);
 
     const int palette_types[] = {ON_LEVEL_BLOCK, ON_LEVEL_GROUND,
@@ -2873,7 +2892,7 @@ static void pressed(lv_event_t *ev) {
         workshop_tool = WS_TOOL_BUILD;
         dirty = 1;return;
     }
-    if (code >= U_WORKSHOP_TRIGGER_BASE && code < U_WORKSHOP_TRIGGER_BASE + 3) {
+    if (code >= U_WORKSHOP_TRIGGER_BASE && code < U_WORKSHOP_TRIGGER_BASE + 5) {
         workshop_trigger_kind = code - U_WORKSHOP_TRIGGER_BASE;
         dirty = 1;return;
     }
@@ -3223,8 +3242,10 @@ int lvgl_ui_init(void) {
                            PV_ART_JUMPER, PV_ART_LILY, PV_ART_COIN,
                            PV_ART_LEVEL_BLOCK, PV_ART_LEVEL_PLATFORM,
                            PV_ART_LEVEL_TRIGGER, PV_ART_LEVEL_TRIGGER_ROTATE,
-                           PV_ART_LEVEL_TRIGGER_FOREVER, PV_ART_LEVEL_FLAG,
-                           PV_ART_LEVEL_SPIKE};
+                           PV_ART_LEVEL_TRIGGER_FOREVER,
+                           PV_ART_LEVEL_TRIGGER_INVISIBILITY,
+                           PV_ART_LEVEL_TRIGGER_NO_COLLISION,
+                           PV_ART_LEVEL_FLAG, PV_ART_LEVEL_SPIKE};
     for (size_t j = 0; j < sizeof art_ids / sizeof art_ids[0]; j++) {
         int id = art_ids[j], w = 0, h = 0;
         const uint32_t *original = game_art_rgba(id, &w, &h);

@@ -276,10 +276,12 @@ static uint32_t ui_pixels[GAME_W * GAME_H];
 static void assert_platformer_art(void) {
     const int ids[] = {PV_ART_LEVEL_BLOCK, PV_ART_LEVEL_PLATFORM,
                        PV_ART_LEVEL_TRIGGER, PV_ART_LEVEL_TRIGGER_ROTATE,
-                       PV_ART_LEVEL_TRIGGER_FOREVER, PV_ART_LEVEL_FLAG,
+                       PV_ART_LEVEL_TRIGGER_FOREVER,
+                       PV_ART_LEVEL_TRIGGER_INVISIBILITY,
+                       PV_ART_LEVEL_TRIGGER_NO_COLLISION, PV_ART_LEVEL_FLAG,
                        PV_ART_LEVEL_SPIKE};
-    const int widths[] = {100, 100, 100, 100, 100, 50, 100};
-    const int heights[] = {100, 50, 100, 100, 100, 100, 100};
+    const int widths[] = {100, 100, 100, 100, 100, 100, 100, 50, 100};
+    const int heights[] = {100, 50, 100, 100, 100, 100, 100, 100, 100};
     for (size_t i = 0; i < sizeof ids / sizeof ids[0]; ++i) {
         int width = 0, height = 0, visible = 0;
         const uint32_t *pixels = game_art_rgba(ids[i], &width, &height);
@@ -392,6 +394,76 @@ static void native_trigger_runtime_regression(void) {
     assert(game_debug_custom_object(4, &first) && first.visible &&
            first.angle > 35.9f && first.angle < 36.1f);
     game_custom_level_exit();
+
+    /* The new visibility trigger hides its whole target group. */
+    level.object_count = 5;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+        .x=0,.y=20,.w=16,.h=1,.visible=1,.number=3};
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
+        .x=1,.y=7,.w=.65f,.h=.85f,.visible=1,.number=1};
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_BLOCK,
+        .x=1,.y=8,.w=1,.h=1,.visible=1,.number=42};
+    level.objects[4] = (OnLevelObject){.id=5,.type=ON_LEVEL_TRIGGER,
+        .x=1,.y=7,.w=1,.h=1,.visible=1,
+        .trigger_kind=ON_TRIGGER_KIND_INVISIBILITY,
+        .trigger_event=ON_TRIGGER_MANUAL,.trigger_action=ON_TRIGGER_INVISIBLE,
+        .trigger_group_id=42,.trigger_has_group=1};
+    assert(game_workshop_preview(&level));
+    game_custom_control(0, 0, 1);game_tick(.05f, NULL);game_custom_control(0, 0, 0);
+    assert(game_debug_custom_object(4, &first) && !first.visible);
+    game_custom_level_exit();
+
+    /* The collision trigger leaves its block visible but lets the player fall through. */
+    level.objects[3].visible = 1;
+    level.objects[4].trigger_kind = ON_TRIGGER_KIND_NO_COLLISION;
+    level.objects[4].trigger_action = ON_TRIGGER_NO_COLLISION;
+    assert(game_workshop_preview(&level));
+    game_custom_control(0, 0, 1);game_tick(.05f, NULL);game_custom_control(0, 0, 0);
+    for (int i = 0; i < 20; ++i) game_tick(.05f, NULL);
+    assert(game_debug_custom_object(4, &first) && first.visible);
+    assert(game_debug_custom_player_y() > 9 * 72);
+    game_custom_level_exit();
+
+    /* Rotated blocks use the same oriented geometry as their artwork. */
+    level.object_count = 4;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+        .x=0,.y=12,.w=16,.h=1,.visible=1,.number=3};
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
+        .x=4.5f,.y=4.5f,.w=.65f,.h=.85f,.visible=1,.number=1};
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_BLOCK,
+        .x=4,.y=6,.w=2,.h=1,.angle=90,.visible=1,.number=42};
+    assert(game_workshop_preview(&level));
+    for (int i = 0; i < 120; ++i) game_tick(1.0f / 60.0f, NULL);
+    assert(game_debug_custom_player_y() > 315 && game_debug_custom_player_y() < 345);
+    game_custom_level_exit();
+
+    /* Trigger PNGs are for the editor only and never appear in a play preview. */
+    static uint32_t with_trigger[GAME_W * GAME_H];
+    static uint32_t without_trigger[GAME_W * GAME_H];
+    level.object_count = 4;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+        .x=0,.y=12,.w=16,.h=1,.visible=1,.number=3};
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
+        .x=1,.y=7,.w=.65f,.h=.85f,.visible=1,.number=1};
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_TRIGGER,
+        .x=10,.y=1,.w=1,.h=1,.visible=1,
+        .trigger_kind=ON_TRIGGER_KIND_INVISIBILITY,
+        .trigger_event=ON_TRIGGER_MANUAL,.trigger_action=ON_TRIGGER_INVISIBLE,
+        .target_id=3};
+    assert(game_workshop_preview(&level));
+    game_tick(0, with_trigger);
+    game_custom_level_exit();
+    level.object_count = 3;
+    assert(game_workshop_preview(&level));
+    game_tick(0, without_trigger);
+    assert(!memcmp(with_trigger, without_trigger, sizeof with_trigger));
+    game_custom_level_exit();
 }
 
 static int run_lvgl_test(void) {
@@ -405,6 +477,8 @@ static int run_lvgl_test(void) {
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_ROTATE));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_FOREVER));
+    assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_INVISIBILITY));
+    assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_NO_COLLISION));
     game_set_lvgl_ui(1);
     ui_snapshot("menu");
     assert(ui_pixels[60 * GAME_W + 545] == 0xFFFFFFFFu); /* campaign */
@@ -523,7 +597,21 @@ static int run_lvgl_test(void) {
     ui_tap(975, 505);ui_tap(417, 275);ui_tap(194, 390);ui_tap(975, 390);
     ui_tap(720, 371); /* unactivate forever */
     ui_tap(640, 628); /* save trigger settings */
-    ui_tap(1178, 495); /* scroll the infinite workshop map */
+    ui_tap(870, 480); /* invisibility variant */
+    ui_tap(422, 330); /* place invisibility trigger */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[editor_probe.object_count - 1].trigger_kind ==
+           ON_TRIGGER_KIND_INVISIBILITY);
+#endif
+    ui_tap(1108, 480); /* no-collision variant */
+    ui_tap(472, 330); /* place no-collision trigger */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[editor_probe.object_count - 1].trigger_kind ==
+           ON_TRIGGER_KIND_NO_COLLISION);
+#endif
+    ui_tap(1178, 526); /* scroll the infinite workshop map */
     ui_tap(80, 596); /* block category */
     ui_tap(422, 205); /* now maps to world X=10 */
     ui_snapshot("workshop_trigger_variants_and_pan");
@@ -556,6 +644,10 @@ static int run_lvgl_test(void) {
            strstr(uploaded_level_body, "\"groupId\":24") &&
            strstr(uploaded_level_body, "\"action\":\"unactivate\"") &&
            strstr(uploaded_level_body, "\"kind\":\"forever\"") &&
+           strstr(uploaded_level_body, "\"kind\":\"invisibility\"") &&
+           strstr(uploaded_level_body, "\"action\":\"invisible\"") &&
+           strstr(uploaded_level_body, "\"kind\":\"no-collision\"") &&
+           strstr(uploaded_level_body, "\"action\":\"no-collision\"") &&
            strstr(uploaded_level_body, "\"x\":10.0000") &&
            strstr(uploaded_level_body, "\"w\":1.1000") &&
            strstr(uploaded_level_body, "\"angle\":45.000"));

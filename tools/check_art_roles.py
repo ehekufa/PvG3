@@ -26,6 +26,8 @@ EXPECTED = {
     "LEVEL_TRIGGER": "assets/art/Триггер-движения.png",
     "LEVEL_TRIGGER_ROTATE": "assets/art/Триггер-вращения.png",
     "LEVEL_TRIGGER_FOREVER": "assets/art/Триггер-вечно.png",
+    "LEVEL_TRIGGER_INVISIBILITY": "assets/art/Триггер-невидимости.png",
+    "LEVEL_TRIGGER_NO_COLLISION": "assets/art/Триггер-нет столкновения.png",
     "LEVEL_FLAG": "assets/art/Флажок - финиш.png",
     "LEVEL_SPIKE": "assets/art/Шип.png",
 }
@@ -36,10 +38,12 @@ for name, filename in EXPECTED.items():
     w, h, pixels = png_pixels(ROOT / filename)
     assert w > 0 and h > 0 and any(p >> 24 for p in pixels), (name, filename)
 
-# The two new duck drawings and the coin must remain transparent at the corners,
-# so they can be composited over the author's map and UI without a black box.
-for name in ("DUCK_CONE", "DUCK_BUCKET", "COIN"):
+# Author drawings and all trigger icons remain transparent at the corners, so
+# they can be composited over the map and UI without a black box.
+for name in ("DUCK_CONE", "DUCK_BUCKET", "COIN", "LEVEL_TRIGGER",
+             "LEVEL_TRIGGER_ROTATE", "LEVEL_TRIGGER_FOREVER",
+             "LEVEL_TRIGGER_INVISIBILITY", "LEVEL_TRIGGER_NO_COLLISION"):
     _, _, pixels = png_pixels(ROOT / EXPECTED[name])
     assert pixels[0] == 0, (name, "expected transparent top-left corner")
 
-print("OK: twenty-three named sprites, including platformer blocks, flag, spike and all three trigger variants")
+print("OK: twenty-five named sprites, including platformer blocks, flag, spike and all five trigger variants")

@@ -42,6 +42,8 @@ const WS_ART_FILES = {
   goal: 'Флажок - финиш.png',
   triggerMove: 'Триггер-движения.png', triggerRotate: 'Триггер-вращения.png',
   triggerForever: 'Триггер-вечно.png',
+  triggerInvisibility: 'Триггер-невидимости.png',
+  triggerNoCollision: 'Триггер-нет столкновения.png',
 };
 const wsArt = Object.fromEntries(Object.entries(WS_ART_FILES).map(([type, file]) => {
   const image = new Image();
@@ -143,6 +145,8 @@ function renderPaletteOptions() {
     {kind: 'move', label: TRIGGER_LABELS.move, art: 'triggerMove'},
     {kind: 'rotate', label: TRIGGER_LABELS.rotate, art: 'triggerRotate'},
     {kind: 'forever', label: TRIGGER_LABELS.forever, art: 'triggerForever'},
+    {kind: 'invisibility', label: TRIGGER_LABELS.invisibility, art: 'triggerInvisibility'},
+    {kind: 'no-collision', label: TRIGGER_LABELS['no-collision'], art: 'triggerNoCollision'},
   ] : [{kind: 'single', label: TYPE_LABELS[wsType], art: wsType}];
   for (const option of options) {
     const button = document.createElement('button');
@@ -244,12 +248,13 @@ function renderSelectedObject() {
   const kind = t.kind || 'move';
   const forever = kind === 'forever';
   const rotate = kind === 'rotate';
+  const moving = kind === 'move';
   const legacyTarget = wsDraft.objects.find(candidate => candidate.id === t.targetId);
   const groupId = Number.isInteger(t.groupId) ? t.groupId :
     Number.isInteger(legacyTarget?.number) ? legacyTarget.number : 0;
   $('ws-trigger-event').value = t.event || 'touch';
   $('ws-trigger-motion-fields').classList.toggle('hidden', forever);
-  $('ws-trigger-move-fields').classList.toggle('hidden', rotate);
+  $('ws-trigger-move-fields').classList.toggle('hidden', !moving);
   $('ws-trigger-rotate-field').classList.toggle('hidden', !rotate);
   $('ws-trigger-forever-fields').classList.toggle('hidden', !forever);
   $('ws-trigger-group').value = groupId;

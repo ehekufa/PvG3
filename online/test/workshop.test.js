@@ -56,7 +56,8 @@ test('world placement is scrollable across large positive and negative coordinat
   assert.equal(validateDraft(level).ok, true);
   for (const kind of TRIGGER_KINDS)
     assert.equal(addObject(level, 'trigger', kind === 'rotate' ? 8 : 7, 5, kind).trigger.kind, kind);
-  assert.deepEqual(TRIGGER_KINDS, ['move', 'rotate', 'forever']);
+  assert.deepEqual(TRIGGER_KINDS,
+    ['move', 'rotate', 'forever', 'invisibility', 'no-collision']);
   assert.equal(validateDraft(level).ok, true);
 });
 
@@ -150,6 +151,75 @@ test('typed trigger settings persist per object and apply group movement, rotati
   for (let i = 0; i < 30; i++) stepPreview(state, {}, .05);
   assert(Math.min(moved[0].angle, 360 - moved[0].angle) < .01);
   assert.deepEqual(moved.map(o => o.visible), [false, false]);
+});
+
+test('invisibility and no-collision variants round-trip and change grouped targets', () => {
+  const level = newDraft('visibility-collision');
+  const first = addObject(level, 'block', 6, 6);
+  const second = addObject(level, 'block', 8, 6);
+  first.number = second.number = 42;
+  const invisible = addObject(level, 'trigger', 1, 7, 'invisibility');
+  invisible.trigger = {kind: 'invisibility', event: 'manual', action: 'invisible',
+    targetId: first.id, groupId: 42, color: '#ffc54e'};
+  const noCollision = addObject(level, 'trigger', 1, 7, 'no-collision');
+  noCollision.trigger = {kind: 'no-collision', event: 'manual', action: 'no-collision',
+    targetId: first.id, groupId: 42, color: '#ffc54e'};
+
+  assert.equal(validateDraft(level).ok, true);
+  const record = publishedRecord('316', level);
+  assert(isPublishedRecord(record, '316'));
+  assert.equal(record.project.objects.find(object => object.id === invisible.id)
+    .trigger.kind, 'invisibility');
+  assert.equal(record.project.objects.find(object => object.id === noCollision.id)
+    .trigger.action, 'no-collision');
+  const restored = draftFromPublished(record);
+  const state = createPreviewState(restored);
+  stepPreview(state, {trigger: true}, 1 / 60);
+  assert.deepEqual(state.objects.filter(object => object.id === first.id ||
+    object.id === second.id).map(object => object.visible), [false, false]);
+  assert.deepEqual(state.noCollision, [first.id, second.id]);
+
+  const fallLevel = newDraft('no-collision-fall');
+  const floor = fallLevel.objects.find(object => object.type === 'ground');
+  floor.y = 20;floor.h = 1;
+  const platform = addObject(fallLevel, 'block', 1, 8);
+  platform.number = 55;
+  const passThrough = addObject(fallLevel, 'trigger', 1, 7, 'no-collision');
+  passThrough.trigger = {kind: 'no-collision', event: 'manual', action: 'no-collision',
+    targetId: platform.id, groupId: 55, color: '#ffc54e'};
+  const falling = createPreviewState(fallLevel);
+  stepPreview(falling, {trigger: true}, .05);
+  for (let i = 0; i < 20; i++) stepPreview(falling, {}, .05);
+  assert(falling.noCollision.includes(platform.id));
+  assert(falling.y > 9 * 72, 'the player falls through the collision-disabled block');
+});
+
+test('rotated collision follows the drawn block and play preview hides all trigger art', () => {
+  const level = newDraft('rotated-collision');
+  const player = level.objects.find(object => object.type === 'player');
+  const floor = level.objects.find(object => object.type === 'ground');
+  player.x = 4.5;player.y = 4.5;floor.y = 12;floor.h = 1;
+  const block = addObject(level, 'block', 4, 6);
+  block.w = 2;block.h = 1;block.angle = 90;
+  const trigger = addObject(level, 'trigger', 10, 1, 'invisibility');
+  const state = createPreviewState(level);
+  for (let i = 0; i < 120; i++) stepPreview(state, {}, 1 / 60);
+  assert.equal(state.grounded, true);
+  assert(state.y > 315 && state.y < 345,
+    `the rotated block's top surface should support the player (y=${state.y})`);
+
+  const art = {triggerInvisibility: {type: 'triggerInvisibility', naturalWidth: 100},
+    block: {type: 'block', naturalWidth: 100}, ground: {type: 'ground', naturalWidth: 100},
+    player: {type: 'player', naturalWidth: 100}, goal: {type: 'goal', naturalWidth: 100}};
+  const editor = recordingCanvas();
+  drawEditorCanvas(editor.canvas, level, 0, 'build', art);
+  assert(editor.images.some(call => call.image.type === 'triggerInvisibility'),
+    'the icon remains available in the editor');
+  const preview = recordingCanvas();
+  drawPreviewCanvas(preview.canvas, createPreviewState(level), 'keyboard', art);
+  assert(!preview.images.some(call => call.image.type.startsWith('trigger')),
+    'triggers are invisible in the playable preview');
+  assert.equal(trigger.trigger.kind, 'invisibility');
 });
 
 test('movement offsets accept the full requested range and reject values beyond it', () => {

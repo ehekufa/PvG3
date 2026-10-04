@@ -96,7 +96,7 @@ static void published_level_writer(void) {
     snprintf(level.id, sizeof level.id, "%s", "23817");
     snprintf(level.title, sizeof level.title, "%s", "Проверка \"уровня\"");
     snprintf(level.description, sizeof level.description, "%s", "Маршрут и триггер.");
-    level.width = 16;level.height = 10;level.object_count = 6;
+    level.width = 16;level.height = 10;level.object_count = 8;
     level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
         .x=0,.y=8,.w=16,.h=2,.color=0x65a845u,.visible=1};
     snprintf(level.objects[0].name, sizeof level.objects[0].name, "%s", "Платформа");
@@ -121,6 +121,16 @@ static void published_level_writer(void) {
         .trigger_kind=ON_TRIGGER_KIND_FOREVER,.trigger_event=ON_TRIGGER_TOUCH,
         .trigger_action=ON_TRIGGER_UNACTIVATE,.target_id=0,
         .trigger_color=0xffc54eu,.trigger_group_id=42,.trigger_has_group=1};
+    level.objects[6] = (OnLevelObject){.id=7,.type=ON_LEVEL_TRIGGER,
+        .x=24,.y=-20,.w=1,.h=1,.color=0xf27652u,.visible=1,
+        .trigger_kind=ON_TRIGGER_KIND_INVISIBILITY,.trigger_event=ON_TRIGGER_TOUCH,
+        .trigger_action=ON_TRIGGER_INVISIBLE,.target_id=3,
+        .trigger_color=0xffc54eu,.trigger_group_id=42,.trigger_has_group=1};
+    level.objects[7] = (OnLevelObject){.id=8,.type=ON_LEVEL_TRIGGER,
+        .x=26,.y=-20,.w=1,.h=1,.color=0xf27652u,.visible=1,
+        .trigger_kind=ON_TRIGGER_KIND_NO_COLLISION,.trigger_event=ON_TRIGGER_MANUAL,
+        .trigger_action=ON_TRIGGER_NO_COLLISION,.target_id=0,
+        .trigger_color=0xffc54eu,.trigger_group_id=42,.trigger_has_group=1};
     char body[8192], index[1024];
     size_t size = on_protocol_published_level_json(&level, body, sizeof body);
     assert(size && strstr(body, "PVG3-PUBLISHED-LEVEL") &&
@@ -130,8 +140,12 @@ static void published_level_writer(void) {
            strstr(body, "\"duration\":4") &&
            strstr(body, "\"groupId\":42") &&
            strstr(body, "\"action\":\"unactivate\"") &&
+           strstr(body, "\"kind\":\"invisibility\"") &&
+           strstr(body, "\"action\":\"invisible\"") &&
+           strstr(body, "\"kind\":\"no-collision\"") &&
+           strstr(body, "\"action\":\"no-collision\"") &&
            on_protocol_published_level(body, "23817", &decoded));
-    assert(!strcmp(decoded.title, level.title) && decoded.object_count == 6);
+    assert(!strcmp(decoded.title, level.title) && decoded.object_count == 8);
     assert(decoded.objects[3].trigger_kind == ON_TRIGGER_KIND_MOVE &&
            decoded.objects[3].trigger_value == 9999 &&
            decoded.objects[3].trigger_value_y == -9999 &&
@@ -160,6 +174,15 @@ static void published_level_writer(void) {
            decoded.objects[5].trigger_action == ON_TRIGGER_UNACTIVATE &&
            decoded.objects[5].trigger_group_id == 42 &&
            decoded.objects[5].trigger_has_group);
+    assert(decoded.objects[6].trigger_kind == ON_TRIGGER_KIND_INVISIBILITY &&
+           decoded.objects[6].trigger_action == ON_TRIGGER_INVISIBLE &&
+           decoded.objects[6].trigger_group_id == 42 &&
+           decoded.objects[6].trigger_has_group);
+    assert(decoded.objects[7].trigger_kind == ON_TRIGGER_KIND_NO_COLLISION &&
+           decoded.objects[7].trigger_action == ON_TRIGGER_NO_COLLISION &&
+           decoded.objects[7].trigger_event == ON_TRIGGER_MANUAL &&
+           decoded.objects[7].trigger_group_id == 42 &&
+           decoded.objects[7].trigger_has_group);
     assert(on_protocol_level_summary_json(&level, index, sizeof index, 1234));
     assert(strstr(index, "\"updatedAt\":1234") && strstr(index, "23817"));
     OnPublishedLevel scaled = level;

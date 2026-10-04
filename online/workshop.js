@@ -11,9 +11,12 @@ export const MAX_LEVEL_OBJECTS = 120;
 export const MIN_OBJECT_SIZE = .1;
 export const MAX_OBJECT_WIDTH = LEVEL_WIDTH * 4;
 export const MAX_OBJECT_HEIGHT = LEVEL_HEIGHT * 4;
-export const TRIGGER_KINDS = Object.freeze(['move', 'rotate', 'forever']);
+export const TRIGGER_KINDS = Object.freeze([
+  'move', 'rotate', 'forever', 'invisibility', 'no-collision',
+]);
 export const TRIGGER_LABELS = Object.freeze({
   move: 'Движение', rotate: 'Разворот', forever: 'Вечно',
+  invisibility: 'Невидимость', 'no-collision': 'Нет столкновения',
 });
 export const LEVEL_TYPES = Object.freeze([
   'block', 'ground', 'hazard', 'coin', 'enemy', 'player', 'goal', 'trigger',
@@ -38,7 +41,9 @@ const TYPE_NAMES = Object.freeze([
   'block', 'ground', 'hazard', 'coin', 'enemy', 'player', 'goal', 'trigger',
 ]);
 const EVENTS = new Set(['touch', 'coin', 'manual']);
-const ACTIONS = new Set(['toggle', 'move', 'recolor', 'number', 'rotate']);
+const ACTIONS = new Set([
+  'toggle', 'move', 'recolor', 'number', 'rotate', 'invisible', 'no-collision',
+]);
 const FOREVER_ACTIONS = new Set(['activate', 'unactivate']);
 const GROUP_ID_MAX = 9999;
 const ROTATION_DURATION_MAX = 9999;
@@ -83,8 +88,11 @@ export function addObject(level, type, x, y, triggerKind = 'move') {
     const kind = TRIGGER_KINDS.includes(triggerKind) ? triggerKind : 'move';
     const target = level.objects.find(o => o.type === 'goal') || level.objects[0];
     const targetGroup = Number.isInteger(target?.number) ? target.number : 0;
-    object.trigger = {kind, event: 'touch',
-      action: kind === 'forever' ? 'activate' : kind === 'rotate' ? 'rotate' : 'move',
+    const action = kind === 'forever' ? 'activate' :
+      kind === 'rotate' ? 'rotate' :
+      kind === 'invisibility' ? 'invisible' :
+      kind === 'no-collision' ? 'no-collision' : 'move';
+    object.trigger = {kind, event: 'touch', action,
       targetId: target?.id || 0, groupId: targetGroup,
       valueX: kind === 'move' ? 1 : 0, valueY: 0,
       duration: kind === 'rotate' ? 3 : 0,
@@ -227,6 +235,7 @@ export function validateDraft(level) {
         t.groupId >= 0 && t.groupId <= GROUP_ID_MAX;
       const validTarget = Number.isInteger(t?.targetId) &&
         t.targetId >= 0 && t.targetId <= 1_000_000;
+      const directTargetConfigured = validTarget && t.targetId > 0;
       const targetConfigured = validGroup || validTarget;
       const moveX = t?.valueX ?? t?.value;
       const moveY = t?.valueY ?? 0;
@@ -236,14 +245,20 @@ export function validateDraft(level) {
           Number.isInteger(t.duration) && t.duration >= 1 && t.duration <= ROTATION_DURATION_MAX :
         finite(degrees) && degrees >= -360 && degrees <= 360;
       const foreverConfigured = kind === 'forever' && validGroup;
-      const validAction = foreverConfigured ? FOREVER_ACTIONS.has(t.action) : ACTIONS.has(t?.action);
+      const specialKind = kind === 'invisibility' || kind === 'no-collision';
+      const fixedAction = kind === 'invisibility' ? 'invisible' : 'no-collision';
+      const validAction = specialKind ? t?.action === fixedAction :
+        foreverConfigured ? FOREVER_ACTIONS.has(t.action) : ACTIONS.has(t?.action);
       const validValues = kind === 'move' ? finite(moveX) && moveX >= -9999 && moveX <= 9999 &&
           finite(moveY) && moveY >= -9999 && moveY <= 9999 :
         kind === 'rotate' ? validRotation :
-        foreverConfigured || (validTarget && finite(t?.value) && t.value >= -100 && t.value <= 100);
+        kind === 'forever' ? foreverConfigured ||
+          (validTarget && finite(t?.value) && t.value >= -100 && t.value <= 100) :
+        specialKind;
       if (!t || !TRIGGER_KINDS.includes(kind) || !EVENTS.has(t.event) ||
           !validAction || (kind !== 'forever' && !targetConfigured) ||
           (kind === 'forever' && !foreverConfigured && !validTarget) ||
+          (specialKind && !validGroup && !directTargetConfigured) ||
           (t.groupId !== undefined && !validGroup) || !validValues || !rgb(t.color))
         return fail('Настрой триггер: событие, группу, действие и параметры.');
     }
@@ -276,7 +291,7 @@ function recordObject(object) {
         trigger.degrees = t.degrees ?? t.value ?? 0;
         trigger.value = trigger.degrees; // legacy readers treat this as the angle
       }
-    } else if (!Number.isInteger(t.groupId)) {
+    } else if (kind === 'forever' && !Number.isInteger(t.groupId)) {
       // Preserve the pre-group cyclic trigger payload when importing old records.
       trigger.value = t.value ?? 0;
     }
@@ -360,10 +375,58 @@ export function createPreviewState(level) {
   return {objects: copy(level.objects), x: player.x * TILE_W, y: player.y * TILE_H,
     vx: 0, vy: 0, grounded: false, time: 0, coins: 0, won: false,
     collected: [], triggerFired: [], triggerActive: [], triggerTimers: Object.create(null),
-    groupRotations: [], spawn: {x: player.x * TILE_W, y: player.y * TILE_H}};
+    noCollision: [], groupRotations: [],
+    spawn: {x: player.x * TILE_W, y: player.y * TILE_H}};
 }
-function overlap(ax, ay, aw, ah, bx, by, bw, bh) {
-  return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+function playerObjectContact(px, py, pw, ph, object, vx = 0, vy = 0) {
+  const angle = (Number(object.angle) || 0) * Math.PI / 180;
+  const c = Math.cos(angle), s = Math.sin(angle);
+  const objectX = (object.x + object.w / 2) * TILE_W;
+  const objectY = (object.y + object.h / 2) * TILE_H;
+  const halfObjectW = object.w * TILE_W / 2;
+  const halfObjectH = object.h * TILE_H / 2;
+  const halfPlayerW = pw / 2, halfPlayerH = ph / 2;
+  const dx = px + halfPlayerW - objectX;
+  const dy = py + halfPlayerH - objectY;
+  const axes = [[1, 0], [0, 1], [c, s], [-s, c]];
+  let smallestOverlap = Infinity, normalX = 0, normalY = 0;
+  for (const [axisX, axisY] of axes) {
+    const objectRadius = halfObjectW * Math.abs(axisX * c + axisY * s) +
+      halfObjectH * Math.abs(-axisX * s + axisY * c);
+    const playerRadius = halfPlayerW * Math.abs(axisX) + halfPlayerH * Math.abs(axisY);
+    const distance = dx * axisX + dy * axisY;
+    const penetration = objectRadius + playerRadius - Math.abs(distance);
+    if (penetration <= 0) return null;
+    if (penetration < smallestOverlap) {
+      const motion = vx * axisX + vy * axisY;
+      const sign = distance > 1e-7 ? 1 : distance < -1e-7 ? -1 : motion > 0 ? -1 : 1;
+      smallestOverlap = penetration;
+      normalX = axisX * sign;normalY = axisY * sign;
+    }
+  }
+  return {x: normalX, y: normalY, depth: smallestOverlap};
+}
+function resolvePreviewPlayer(state, pw, ph, solids) {
+  let grounded = false;
+  for (let iteration = 0; iteration < 4; iteration++) {
+    let collided = false;
+    for (const object of solids) {
+      const contact = playerObjectContact(state.x, state.y, pw, ph, object,
+                                           state.vx, state.vy);
+      if (!contact) continue;
+      state.x += contact.x * contact.depth;
+      state.y += contact.y * contact.depth;
+      const inwardVelocity = state.vx * contact.x + state.vy * contact.y;
+      if (inwardVelocity < 0) {
+        state.vx -= inwardVelocity * contact.x;
+        state.vy -= inwardVelocity * contact.y;
+      }
+      if (contact.y < -.5) grounded = true;
+      collided = true;
+    }
+    if (!collided) break;
+  }
+  state.grounded = grounded;
 }
 function executeTrigger(state, trigger) {
   const t = trigger.trigger || {};
@@ -399,6 +462,15 @@ function executeTrigger(state, trigger) {
   const targets = Number.isInteger(t.groupId) ? state.objects.filter(object =>
     object.type !== 'trigger' && object.number === t.groupId) :
     state.objects.filter(object => object.id === t.targetId);
+  if (kind === 'invisibility') {
+    for (const target of targets) target.visible = false;
+    return;
+  }
+  if (kind === 'no-collision') {
+    for (const target of targets)
+      if (!state.noCollision.includes(target.id)) state.noCollision.push(target.id);
+    return;
+  }
   const action = kind === 'rotate' ? 'rotate' : t.action;
   for (const target of targets) {
     switch (action) {
@@ -430,7 +502,8 @@ function stepGroupRotations(state, dt) {
 }
 function runTriggers(state, event) {
   for (const trigger of state.objects) {
-    if (!trigger.visible || trigger.type !== 'trigger' || trigger.trigger?.event !== event) continue;
+    if (!trigger.visible || trigger.type !== 'trigger' ||
+        state.noCollision.includes(trigger.id) || trigger.trigger?.event !== event) continue;
     const kind = TRIGGER_KINDS.includes(trigger.trigger.kind) ? trigger.trigger.kind : 'move';
     const completed = state.triggerFired.includes(trigger.id);
     const legacyLoop = kind === 'forever' && !Number.isInteger(trigger.trigger?.groupId);
@@ -439,8 +512,8 @@ function runTriggers(state, event) {
     const player = state.objects.find(o => o.type === 'player');
     const px = state.x, py = state.y, pw = (player?.w || .65) * TILE_W,
       ph = (player?.h || .85) * TILE_H;
-    if (event === 'touch' && !overlap(px, py, pw, ph, trigger.x * TILE_W,
-        trigger.y * TILE_H, trigger.w * TILE_W, trigger.h * TILE_H)) continue;
+    if (event === 'touch' &&
+        !playerObjectContact(px, py, pw, ph, trigger, state.vx, state.vy)) continue;
     if (event === 'manual' && Math.hypot(px + pw / 2 - (trigger.x + trigger.w / 2) * TILE_W,
         py + ph / 2 - (trigger.y + trigger.h / 2) * TILE_H) > 150) continue;
     if (legacyLoop) {
@@ -476,54 +549,50 @@ export function stepPreview(state, input = {}, dt = 1 / 60) {
   const player = state.objects.find(o => o.type === 'player');
   if (!player) return state;
   const pw = player.w * TILE_W, ph = player.h * TILE_H;
-  const solids = state.objects.filter(o => o.visible && ['block', 'ground'].includes(o.type));
-  const oldX = state.x;
+  const playerCollisionEnabled = !state.noCollision.includes(player.id);
+  const solids = playerCollisionEnabled ? state.objects.filter(o =>
+    o.visible && !state.noCollision.includes(o.id) && ['block', 'ground'].includes(o.type)) : [];
   state.vx = (input.axis || 0) * 250;
-  state.x = clamp(state.x + state.vx * dt,
-    -WORLD_LIMIT * TILE_W, WORLD_LIMIT * TILE_W - pw);
-  for (const o of solids) {
-    const bx = o.x * TILE_W, by = o.y * TILE_H, bw = o.w * TILE_W, bh = o.h * TILE_H;
-    if (!overlap(state.x, state.y, pw, ph, bx, by, bw, bh)) continue;
-    if (state.vx > 0) state.x = bx - pw;
-    else if (state.vx < 0) state.x = bx + bw;
-  }
-  const oldY = state.y;
   if (input.jump && state.grounded) {state.vy = -570;state.grounded = false;}
-  state.vy = Math.min(780, state.vy + 1450 * dt);
-  state.y += state.vy * dt;
+  const predictedVy = Math.min(780, state.vy + 1450 * dt);
+  const displacement = Math.max(Math.abs(state.vx * dt), Math.abs(predictedVy * dt));
+  const substeps = clamp(Math.ceil(displacement / 4), 1, 16);
+  const subDt = dt / substeps;
   state.grounded = false;
-  for (const o of solids) {
-    const bx = o.x * TILE_W, by = o.y * TILE_H, bw = o.w * TILE_W, bh = o.h * TILE_H;
-    if (!overlap(state.x, state.y, pw, ph, bx, by, bw, bh)) continue;
-    if (state.vy >= 0 && oldY + ph <= by + 8) {
-      state.y = by - ph;state.vy = 0;state.grounded = true;
-    } else if (state.vy < 0 && oldY >= by + bh - 5) {
-      state.y = by + bh;state.vy = 0;
-    }
+  for (let step = 0; step < substeps; step++) {
+    state.vy = Math.min(780, state.vy + 1450 * subDt);
+    state.x = clamp(state.x + state.vx * subDt,
+      -WORLD_LIMIT * TILE_W, WORLD_LIMIT * TILE_W - pw);
+    state.y += state.vy * subDt;
+    if (playerCollisionEnabled) resolvePreviewPlayer(state, pw, ph, solids);
   }
   if (state.y > WORLD_LIMIT * TILE_H) {
     state.x = state.spawn.x;state.y = state.spawn.y;state.vx = state.vy = 0;
+    state.grounded = false;
   }
-  for (const o of state.objects) {
-    if (!o.visible || o.type === 'player') continue;
-    const bx = o.x * TILE_W, by = o.y * TILE_H, bw = o.w * TILE_W, bh = o.h * TILE_H;
-    if (!overlap(state.x, state.y, pw, ph, bx, by, bw, bh)) continue;
+  if (playerCollisionEnabled) for (const o of state.objects) {
+    if (!o.visible || o.type === 'player' || o.type === 'trigger' ||
+        state.noCollision.includes(o.id)) continue;
+    if (!playerObjectContact(state.x, state.y, pw, ph, o, state.vx, state.vy)) continue;
     if (o.type === 'coin' && !state.collected.includes(o.id)) {
       state.collected.push(o.id);state.coins++;o.visible = false;runTriggers(state, 'coin');
     } else if (o.type === 'hazard' || o.type === 'enemy') {
       state.x = state.spawn.x;state.y = state.spawn.y;state.vx = state.vy = 0;
+      state.grounded = false;
     } else if (o.type === 'goal') state.won = true;
-    else if (o.type === 'trigger') runTriggers(state, 'touch');
   }
+  runTriggers(state, 'touch');
   if (input.trigger) runTriggers(state, 'manual');
-  if (state.x !== oldX) runTriggers(state, 'touch');
   runForeverTriggers(state, dt);
   stepGroupRotations(state, dt);
   return state;
 }
 
 function triggerArtKey(kind) {
-  return kind === 'rotate' ? 'triggerRotate' : kind === 'forever' ? 'triggerForever' : 'triggerMove';
+  return kind === 'rotate' ? 'triggerRotate' :
+    kind === 'forever' ? 'triggerForever' :
+    kind === 'invisibility' ? 'triggerInvisibility' :
+    kind === 'no-collision' ? 'triggerNoCollision' : 'triggerMove';
 }
 function drawWorkshopArt(ctx, art, type, x, y, w, h, triggerKind = 'move') {
   const image = type === 'trigger' ? (art?.[triggerArtKey(triggerKind)] || art?.trigger) : art?.[type];
@@ -630,7 +699,7 @@ export function drawPreviewCanvas(canvas, state, control = 'keyboard', art = {})
     if (grassY >= 64) {ctx.fillStyle = '#222';ctx.fillRect(0, grassY, canvas.width, 3);}
   }
   for (const o of state.objects) {
-    if (!o.visible || o.type === 'player') continue;
+    if (!o.visible || o.type === 'player' || o.type === 'trigger') continue;
     const x = o.x * TILE_W - cameraX, y = o.y * TILE_H - cameraY;
     const w = o.w * TILE_W, h = o.h * TILE_H;
     ctx.fillStyle = o.color || DEFAULT_COLORS[o.type];

@@ -124,6 +124,8 @@ _Static_assert((int)PV_ART_BREAD == (int)SPR_KHLEBUSHEK &&
                (int)PV_ART_LEVEL_TRIGGER == (int)SPR_LEVEL_TRIGGER &&
                (int)PV_ART_LEVEL_TRIGGER_ROTATE == (int)SPR_LEVEL_TRIGGER_ROTATE &&
                (int)PV_ART_LEVEL_TRIGGER_FOREVER == (int)SPR_LEVEL_TRIGGER_FOREVER &&
+               (int)PV_ART_LEVEL_TRIGGER_INVISIBILITY == (int)SPR_LEVEL_TRIGGER_INVISIBILITY &&
+               (int)PV_ART_LEVEL_TRIGGER_NO_COLLISION == (int)SPR_LEVEL_TRIGGER_NO_COLLISION &&
                (int)PV_ART_LEVEL_FLAG == (int)SPR_LEVEL_FLAG &&
                (int)PV_ART_LEVEL_SPIKE == (int)SPR_LEVEL_SPIKE &&
                (int)PV_ART_COUNT == (int)SPR_COUNT,
@@ -424,6 +426,8 @@ static int custom_jump_held, custom_trigger_request, custom_trigger_held;
 static uint8_t custom_trigger_fired[ON_LEVEL_OBJECT_CAP];
 static uint8_t custom_trigger_active[ON_LEVEL_OBJECT_CAP];
 static float custom_trigger_timers[ON_LEVEL_OBJECT_CAP];
+static uint8_t custom_collision_disabled[ON_LEVEL_OBJECT_CAP];
+static int custom_player_collision_enabled;
 /* A timed rotation completes one full turn per second. */
 #define CUSTOM_GROUP_ROTATION_DEGREES_PER_SECOND 360.0f
 typedef struct {int group_id;float remaining;} CustomGroupRotation;
@@ -2229,15 +2233,58 @@ static float custom_world_clamp(float value, float size) {
     if (value > CUSTOM_WORLD_LIMIT - size) return CUSTOM_WORLD_LIMIT - size;
     return value;
 }
-static uint32_t custom_color(uint32_t rgb) {
-    return COL((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255);
+typedef struct {float x, y, depth;} CustomContact;
+static int custom_object_collision_disabled(const OnLevelObject *object) {
+    for (int i = 0; i < custom_object_count; ++i)
+        if (&custom_objects[i] == object) return custom_collision_disabled[i] != 0;
+    return 0;
 }
-static int custom_overlap(float ax, float ay, float aw, float ah,
-                          float bx, float by, float bw, float bh) {
-    return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+static void custom_disable_object_collision(OnLevelObject *object) {
+    for (int i = 0; i < custom_object_count; ++i) {
+        if (&custom_objects[i] != object) continue;
+        custom_collision_disabled[i] = 1;
+        if (object->type == ON_LEVEL_PLAYER) custom_player_collision_enabled = 0;
+        return;
+    }
+}
+static int custom_player_object_contact(float px, float py, float pw, float ph,
+                                        const OnLevelObject *object,
+                                        float vx, float vy, CustomContact *contact) {
+    float radians = object->angle * 0.01745329251994329577f;
+    float c = cosf(radians), s = sinf(radians);
+    float object_x = (object->x + object->w * .5f) * CUSTOM_TILE_W;
+    float object_y = (object->y + object->h * .5f) * CUSTOM_TILE_H;
+    float half_object_w = object->w * CUSTOM_TILE_W * .5f;
+    float half_object_h = object->h * CUSTOM_TILE_H * .5f;
+    float half_player_w = pw * .5f, half_player_h = ph * .5f;
+    float dx = px + half_player_w - object_x;
+    float dy = py + half_player_h - object_y;
+    const float axes_x[4] = {1.0f, 0.0f, c, -s};
+    const float axes_y[4] = {0.0f, 1.0f, s, c};
+    float smallest_overlap = INFINITY, normal_x = 0, normal_y = 0;
+    for (int i = 0; i < 4; ++i) {
+        float axis_x = axes_x[i], axis_y = axes_y[i];
+        float object_radius = half_object_w * fabsf(axis_x * c + axis_y * s) +
+            half_object_h * fabsf(-axis_x * s + axis_y * c);
+        float player_radius = half_player_w * fabsf(axis_x) +
+            half_player_h * fabsf(axis_y);
+        float distance = dx * axis_x + dy * axis_y;
+        float penetration = object_radius + player_radius - fabsf(distance);
+        if (penetration <= 0) return 0;
+        if (penetration < smallest_overlap) {
+            float motion = vx * axis_x + vy * axis_y;
+            float sign = distance > 1e-7f ? 1.0f :
+                         distance < -1e-7f ? -1.0f : motion > 0 ? -1.0f : 1.0f;
+            smallest_overlap = penetration;
+            normal_x = axis_x * sign;normal_y = axis_y * sign;
+        }
+    }
+    if (contact) *contact = (CustomContact){normal_x, normal_y, smallest_overlap};
+    return 1;
 }
 static int custom_solid(const OnLevelObject *o) {
-    return o->visible && (o->type == ON_LEVEL_BLOCK || o->type == ON_LEVEL_GROUND);
+    return o->visible && !custom_object_collision_disabled(o) &&
+           (o->type == ON_LEVEL_BLOCK || o->type == ON_LEVEL_GROUND);
 }
 static OnLevelObject *custom_find_id(int id) {
     for (int i = 0; i < custom_object_count; i++)
@@ -2271,6 +2318,8 @@ static int custom_platformer_start(const OnPublishedLevel *source) {
     memset(custom_trigger_fired, 0, sizeof custom_trigger_fired);
     memset(custom_trigger_active, 0, sizeof custom_trigger_active);
     memset(custom_trigger_timers, 0, sizeof custom_trigger_timers);
+    memset(custom_collision_disabled, 0, sizeof custom_collision_disabled);
+    custom_player_collision_enabled = 1;
     custom_group_rotation_count = 0;
     custom_camera_x = custom_camera_y = 0;
     custom_player_w = CUSTOM_TILE_W * 0.65f;
@@ -2300,6 +2349,8 @@ static void custom_apply_trigger_to_object(const OnLevelObject *trigger,
                  ON_TRIGGER_ROTATE : trigger->trigger_action;
     switch (action) {
     case ON_TRIGGER_TOGGLE: target->visible = !target->visible;break;
+    case ON_TRIGGER_INVISIBLE: target->visible = 0;break;
+    case ON_TRIGGER_NO_COLLISION: custom_disable_object_collision(target);break;
     case ON_TRIGGER_MOVE:
         target->x = custom_world_clamp(target->x + trigger->trigger_value, target->w);
         target->y = custom_world_clamp(target->y + trigger->trigger_value_y, target->h);
@@ -2393,7 +2444,8 @@ static void custom_execute_trigger(OnLevelObject *trigger) {
 static void custom_fire_triggers(int event) {
     for (int i = 0; i < custom_object_count; i++) {
         OnLevelObject *trigger = &custom_objects[i];
-        if (!trigger->visible || trigger->type != ON_LEVEL_TRIGGER ||
+        if (!trigger->visible || custom_object_collision_disabled(trigger) ||
+            trigger->type != ON_LEVEL_TRIGGER ||
             trigger->trigger_event != event) continue;
         int legacy_loop = trigger->trigger_kind == ON_TRIGGER_KIND_FOREVER &&
                           !trigger->trigger_has_group;
@@ -2401,8 +2453,9 @@ static void custom_fire_triggers(int event) {
         float tx = trigger->x * CUSTOM_TILE_W, ty = trigger->y * CUSTOM_TILE_H;
         float tw = trigger->w * CUSTOM_TILE_W, th = trigger->h * CUSTOM_TILE_H;
         if (event == ON_TRIGGER_TOUCH &&
-            !custom_overlap(custom_player_x, custom_player_y, custom_player_w,
-                            custom_player_h, tx, ty, tw, th)) continue;
+            !custom_player_object_contact(custom_player_x, custom_player_y,
+                custom_player_w, custom_player_h, trigger,
+                custom_player_vx, custom_player_vy, NULL)) continue;
         if (event == ON_TRIGGER_MANUAL) {
             float dx = custom_player_x + custom_player_w * .5f - (tx + tw * .5f);
             float dy = custom_player_y + custom_player_h * .5f - (ty + th * .5f);
@@ -2422,7 +2475,8 @@ static void custom_run_forever_triggers(float dt) {
         OnLevelObject *trigger = &custom_objects[i];
         if (trigger->type != ON_LEVEL_TRIGGER ||
             trigger->trigger_kind != ON_TRIGGER_KIND_FOREVER ||
-            trigger->trigger_has_group || !trigger->visible) continue;
+            trigger->trigger_has_group || !trigger->visible ||
+            custom_object_collision_disabled(trigger)) continue;
         if (!custom_trigger_active[i]) {
             custom_trigger_active[i] = 1;custom_trigger_timers[i] = 0;
             continue;
@@ -2434,65 +2488,80 @@ static void custom_run_forever_triggers(float dt) {
         }
     }
 }
+static int custom_resolve_player_solids(void) {
+    if (!custom_player_collision_enabled) return 0;
+    int grounded = 0;
+    for (int iteration = 0; iteration < 4; ++iteration) {
+        int collided = 0;
+        for (int i = 0; i < custom_object_count; ++i) {
+            OnLevelObject *object = &custom_objects[i];
+            if (!custom_solid(object)) continue;
+            CustomContact contact;
+            if (!custom_player_object_contact(custom_player_x, custom_player_y,
+                    custom_player_w, custom_player_h, object,
+                    custom_player_vx, custom_player_vy, &contact)) continue;
+            custom_player_x += contact.x * contact.depth;
+            custom_player_y += contact.y * contact.depth;
+            float inward_velocity = custom_player_vx * contact.x +
+                                    custom_player_vy * contact.y;
+            if (inward_velocity < 0) {
+                custom_player_vx -= inward_velocity * contact.x;
+                custom_player_vy -= inward_velocity * contact.y;
+            }
+            if (contact.y < -.5f) grounded = 1;
+            collided = 1;
+        }
+        if (!collided) break;
+    }
+    return grounded;
+}
 static void custom_platformer_update(float dt) {
     if (!custom_level_active || custom_level_won) return;
     if (dt < 0) dt = 0;
     if (dt > .05f) dt = .05f;
-    float before_y = custom_player_y;
     custom_player_vx = (float)custom_control_axis * 250.0f;
     if (custom_jump_request && custom_player_grounded) {
         custom_player_vy = -570.0f;custom_player_grounded = 0;
     }
     custom_jump_request = 0;
-    custom_player_vy = fminf(780.0f, custom_player_vy + 1450.0f * dt);
-    custom_player_x += custom_player_vx * dt;
-    if (custom_player_x < -CUSTOM_WORLD_LIMIT * CUSTOM_TILE_W)
-        custom_player_x = -CUSTOM_WORLD_LIMIT * CUSTOM_TILE_W;
-    if (custom_player_x > CUSTOM_WORLD_LIMIT * CUSTOM_TILE_W - custom_player_w)
-        custom_player_x = CUSTOM_WORLD_LIMIT * CUSTOM_TILE_W - custom_player_w;
-    for (int i = 0; i < custom_object_count; i++) {
-        OnLevelObject *o = &custom_objects[i];
-        if (!custom_solid(o)) continue;
-        float x = o->x * CUSTOM_TILE_W, y = o->y * CUSTOM_TILE_H;
-        float w = o->w * CUSTOM_TILE_W, h = o->h * CUSTOM_TILE_H;
-        if (!custom_overlap(custom_player_x, custom_player_y, custom_player_w,
-                            custom_player_h, x, y, w, h)) continue;
-        if (custom_player_vx > 0) custom_player_x = x - custom_player_w;
-        else if (custom_player_vx < 0) custom_player_x = x + w;
-    }
-    custom_player_y += custom_player_vy * dt;
+    float predicted_vy = fminf(780.0f, custom_player_vy + 1450.0f * dt);
+    float displacement = fmaxf(fabsf(custom_player_vx * dt),
+                                fabsf(predicted_vy * dt));
+    int substeps = (int)ceilf(displacement / 4.0f);
+    if (substeps < 1) substeps = 1;
+    if (substeps > 16) substeps = 16;
+    float sub_dt = dt / (float)substeps;
     custom_player_grounded = 0;
-    for (int i = 0; i < custom_object_count; i++) {
-        OnLevelObject *o = &custom_objects[i];
-        if (!custom_solid(o)) continue;
-        float x = o->x * CUSTOM_TILE_W, y = o->y * CUSTOM_TILE_H;
-        float w = o->w * CUSTOM_TILE_W, h = o->h * CUSTOM_TILE_H;
-        if (!custom_overlap(custom_player_x, custom_player_y, custom_player_w,
-                            custom_player_h, x, y, w, h)) continue;
-        if (custom_player_vy >= 0 && before_y + custom_player_h <= y + 8) {
-            custom_player_y = y - custom_player_h;
-            custom_player_vy = 0;custom_player_grounded = 1;
-        } else if (custom_player_vy < 0 && before_y >= y + h - 5) {
-            custom_player_y = y + h;custom_player_vy = 0;
-        }
+    for (int step = 0; step < substeps; ++step) {
+        custom_player_vy = fminf(780.0f, custom_player_vy + 1450.0f * sub_dt);
+        custom_player_x += custom_player_vx * sub_dt;
+        if (custom_player_x < -CUSTOM_WORLD_LIMIT * CUSTOM_TILE_W)
+            custom_player_x = -CUSTOM_WORLD_LIMIT * CUSTOM_TILE_W;
+        if (custom_player_x > CUSTOM_WORLD_LIMIT * CUSTOM_TILE_W - custom_player_w)
+            custom_player_x = CUSTOM_WORLD_LIMIT * CUSTOM_TILE_W - custom_player_w;
+        custom_player_y += custom_player_vy * sub_dt;
+        custom_player_grounded = custom_resolve_player_solids();
     }
     if (custom_player_y > CUSTOM_WORLD_LIMIT * CUSTOM_TILE_H ||
         custom_player_y + custom_player_h < -CUSTOM_WORLD_LIMIT * CUSTOM_TILE_H)
         custom_player_reset();
-    for (int i = 0; i < custom_object_count; i++) {
-        OnLevelObject *o = &custom_objects[i];
-        if (!o->visible || o->type == ON_LEVEL_PLAYER) continue;
-        float x = o->x * CUSTOM_TILE_W, y = o->y * CUSTOM_TILE_H;
-        float w = o->w * CUSTOM_TILE_W, h = o->h * CUSTOM_TILE_H;
-        if (!custom_overlap(custom_player_x, custom_player_y, custom_player_w,
-                            custom_player_h, x, y, w, h)) continue;
-        if (o->type == ON_LEVEL_HAZARD || o->type == ON_LEVEL_ENEMY) {
-            custom_player_reset();
-        } else if (o->type == ON_LEVEL_COIN) {
-            o->visible = 0;custom_level_coins++;
-            custom_fire_triggers(ON_TRIGGER_COIN);
-        } else if (o->type == ON_LEVEL_GOAL) {
-            custom_level_won = 1;
+    if (custom_player_collision_enabled) {
+        for (int i = 0; i < custom_object_count; ++i) {
+            OnLevelObject *object = &custom_objects[i];
+            if (!object->visible || object->type == ON_LEVEL_PLAYER ||
+                object->type == ON_LEVEL_TRIGGER ||
+                custom_object_collision_disabled(object)) continue;
+            if (!custom_player_object_contact(custom_player_x, custom_player_y,
+                    custom_player_w, custom_player_h, object,
+                    custom_player_vx, custom_player_vy, NULL)) continue;
+            if (object->type == ON_LEVEL_HAZARD || object->type == ON_LEVEL_ENEMY) {
+                custom_player_reset();
+            } else if (object->type == ON_LEVEL_COIN) {
+                object->visible = 0;custom_level_coins++;
+                custom_fire_triggers(ON_TRIGGER_COIN);
+            } else if (object->type == ON_LEVEL_GOAL) {
+                custom_level_won = 1;
+            }
         }
     }
     custom_fire_triggers(ON_TRIGGER_TOUCH);
@@ -2502,11 +2571,11 @@ static void custom_platformer_update(float dt) {
     custom_update_group_rotations(dt);
 }
 static void custom_draw_object(const OnLevelObject *o) {
+    if (!o || o->type == ON_LEVEL_TRIGGER) return;
     int x = (int)lrintf(o->x * CUSTOM_TILE_W - custom_camera_x);
     int y = (int)lrintf(o->y * CUSTOM_TILE_H - custom_camera_y);
     int w = (int)lrintf(o->w * CUSTOM_TILE_W), h = (int)lrintf(o->h * CUSTOM_TILE_H);
     if (w < 3 || h < 3) return;
-    uint32_t fill = custom_color(o->color);
     int rotated = fabsf(o->angle) >= .01f;
 #define DRAW_LEVEL_ART(id) do { \
         if (rotated) sprite_draw_rotated((id), x, y, w, h, o->angle); \
@@ -2543,16 +2612,8 @@ static void custom_draw_object(const OnLevelObject *o) {
         break;
     case ON_LEVEL_GOAL:
         DRAW_LEVEL_ART(PV_ART_LEVEL_FLAG);break;
-    case ON_LEVEL_TRIGGER: {
-        rect_blend(x, y, x + w - 1, y + h - 1, fill, 50);
-        int art = o->trigger_kind == ON_TRIGGER_KIND_ROTATE ?
-                  PV_ART_LEVEL_TRIGGER_ROTATE :
-                  o->trigger_kind == ON_TRIGGER_KIND_FOREVER ?
-                  PV_ART_LEVEL_TRIGGER_FOREVER : PV_ART_LEVEL_TRIGGER;
-        if (rotated) sprite_draw_rotated(art, x, y, w, h, o->angle);
-        else sprite_draw(art, x, y, w, h, 0);
-        break;
-    }
+    case ON_LEVEL_TRIGGER:
+        break; /* Trigger textures are editor-only; triggers stay hidden in play. */
     }
 #undef DRAW_LEVEL_ART
     if (o->number) draw_int(x + 3, y + 3, 2, COL(255, 255, 255), o->number);
@@ -2577,7 +2638,8 @@ static void custom_platformer_draw(void) {
             rect(x, grass_y, x + 54, grass_y + 3, COL(190, 221, 124));
     }
     for (int i = 0; i < custom_object_count; i++)
-        if (custom_objects[i].visible && custom_objects[i].type != ON_LEVEL_PLAYER)
+        if (custom_objects[i].visible && custom_objects[i].type != ON_LEVEL_PLAYER &&
+            custom_objects[i].type != ON_LEVEL_TRIGGER)
             custom_draw_object(&custom_objects[i]);
     int player_visible = 1;
     float player_angle = 0;
