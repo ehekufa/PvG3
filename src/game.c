@@ -128,6 +128,7 @@ _Static_assert((int)PV_ART_BREAD == (int)SPR_KHLEBUSHEK &&
                (int)PV_ART_LEVEL_TRIGGER_NO_COLLISION == (int)SPR_LEVEL_TRIGGER_NO_COLLISION &&
                (int)PV_ART_LEVEL_FLAG == (int)SPR_LEVEL_FLAG &&
                (int)PV_ART_LEVEL_SPIKE == (int)SPR_LEVEL_SPIKE &&
+               (int)PV_ART_LEVEL_SLOPE == (int)SPR_LEVEL_SLOPE &&
                (int)PV_ART_COUNT == (int)SPR_COUNT,
                "LVGL art IDs must match the PNG packer");
 static uint32_t *sprite_pixels[SPR_COUNT];
@@ -2259,9 +2260,84 @@ static void custom_disable_object_collision(OnLevelObject *object) {
     custom_collision_disabled[index] = 1;
     if (object->type == ON_LEVEL_PLAYER) custom_player_collision_enabled = 0;
 }
+/* Match the uploaded right-triangle slope image and resolve it as a safe ramp. */
+static int custom_player_slope_contact(float px, float py, float pw, float ph,
+                                        const OnLevelObject *object,
+                                        float vx, float vy, CustomContact *contact) {
+    static const float u[3] = {0.0f, 1.0f, 1.0f};
+    static const float v[3] = {1.0f, 0.0f, 1.0f};
+    float radians = object->angle * 0.01745329251994329577f;
+    float c = cosf(radians), s = sinf(radians);
+    float object_x = (object->x + object->w * .5f) * CUSTOM_TILE_W;
+    float object_y = (object->y + object->h * .5f) * CUSTOM_TILE_H;
+    float vertices[3][2];
+    for (int i = 0; i < 3; ++i) {
+        float local_x = (u[i] - .5f) * object->w * CUSTOM_TILE_W;
+        float local_y = (v[i] - .5f) * object->h * CUSTOM_TILE_H;
+        vertices[i][0] = object_x + local_x * c - local_y * s;
+        vertices[i][1] = object_y + local_x * s + local_y * c;
+    }
+    float axes_x[5] = {1.0f, 0.0f, 0, 0, 0};
+    float axes_y[5] = {0.0f, 1.0f, 0, 0, 0};
+    int axis_count = 2;
+    for (int i = 0; i < 3; ++i) {
+        int next = (i + 1) % 3;
+        float edge_x = vertices[next][0] - vertices[i][0];
+        float edge_y = vertices[next][1] - vertices[i][1];
+        float length = hypotf(edge_x, edge_y);
+        if (length > 1e-7f) {
+            axes_x[axis_count] = -edge_y / length;
+            axes_y[axis_count] = edge_x / length;
+            axis_count++;
+        }
+    }
+    float player_x = px + pw * .5f, player_y = py + ph * .5f;
+    float smallest_depth = INFINITY, normal_x = 0, normal_y = 0;
+    float climb_depth = INFINITY, climb_x = 0, climb_y = 0;
+    for (int i = 0; i < axis_count; ++i) {
+        float axis_x = axes_x[i], axis_y = axes_y[i];
+        float object_min = INFINITY, object_max = -INFINITY;
+        for (int j = 0; j < 3; ++j) {
+            float projection = vertices[j][0] * axis_x + vertices[j][1] * axis_y;
+            if (projection < object_min) object_min = projection;
+            if (projection > object_max) object_max = projection;
+        }
+        float player_center = player_x * axis_x + player_y * axis_y;
+        float player_radius = pw * .5f * fabsf(axis_x) +
+                              ph * .5f * fabsf(axis_y);
+        float player_min = player_center - player_radius;
+        float player_max = player_center + player_radius;
+        float move_positive = object_max - player_min;
+        float move_negative = player_max - object_min;
+        if (move_positive <= 0 || move_negative <= 0) return 0;
+        float depth = fminf(move_positive, move_negative);
+        float motion = vx * axis_x + vy * axis_y;
+        int positive = move_positive < move_negative - 1e-6f ||
+            (fabsf(move_positive - move_negative) <= 1e-6f && motion <= 0);
+        float candidate_x = axis_x * (positive ? 1.0f : -1.0f);
+        float candidate_y = axis_y * (positive ? 1.0f : -1.0f);
+        if (depth < smallest_depth) {
+            smallest_depth = depth;
+            normal_x = candidate_x;normal_y = candidate_y;
+        }
+        float candidate_motion = vx * candidate_x + vy * candidate_y;
+        if (fabsf(candidate_x) > .1f && candidate_y < -.2f &&
+            candidate_motion < -1e-6f && depth < climb_depth) {
+            climb_depth = depth;climb_x = candidate_x;climb_y = candidate_y;
+        }
+    }
+    if (climb_depth < INFINITY) {
+        if (contact) *contact = (CustomContact){climb_x, climb_y, climb_depth};
+    } else if (contact) {
+        *contact = (CustomContact){normal_x, normal_y, smallest_depth};
+    }
+    return 1;
+}
 static int custom_player_object_contact(float px, float py, float pw, float ph,
                                         const OnLevelObject *object,
                                         float vx, float vy, CustomContact *contact) {
+    if (object->type == ON_LEVEL_SLOPE)
+        return custom_player_slope_contact(px, py, pw, ph, object, vx, vy, contact);
     float radians = object->angle * 0.01745329251994329577f;
     float c = cosf(radians), s = sinf(radians);
     float object_x = (object->x + object->w * .5f) * CUSTOM_TILE_W;
@@ -2296,7 +2372,8 @@ static int custom_player_object_contact(float px, float py, float pw, float ph,
 }
 static int custom_solid(const OnLevelObject *o) {
     return o->visible && !custom_object_collision_disabled(o) &&
-           (o->type == ON_LEVEL_BLOCK || o->type == ON_LEVEL_GROUND);
+           (o->type == ON_LEVEL_BLOCK || o->type == ON_LEVEL_GROUND ||
+            o->type == ON_LEVEL_SLOPE);
 }
 static OnLevelObject *custom_find_id(int id) {
     for (int i = 0; i < custom_object_count; i++)
@@ -2515,7 +2592,8 @@ static int custom_resolve_player_solids(void) {
                 custom_player_vx -= inward_velocity * contact.x;
                 custom_player_vy -= inward_velocity * contact.y;
             }
-            if (contact.y < -.5f) grounded = 1;
+            if (contact.y < (object->type == ON_LEVEL_SLOPE ? -.35f : -.5f))
+                grounded = 1;
             collided = 1;
         }
         if (!collided) break;
@@ -2609,6 +2687,8 @@ static void custom_draw_object(const OnLevelObject *o) {
     }
     case ON_LEVEL_HAZARD:
         DRAW_LEVEL_ART(PV_ART_LEVEL_SPIKE);break;
+    case ON_LEVEL_SLOPE:
+        DRAW_LEVEL_ART(PV_ART_LEVEL_SLOPE);break;
     case ON_LEVEL_COIN:
         DRAW_LEVEL_ART(PV_ART_COIN);break;
     case ON_LEVEL_ENEMY:

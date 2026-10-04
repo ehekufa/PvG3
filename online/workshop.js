@@ -23,27 +23,30 @@ const TRIGGER_ACTIONS = Object.freeze({
   invisibility: 'invisible', 'no-collision': 'no-collision',
 });
 export const LEVEL_TYPES = Object.freeze([
-  'block', 'ground', 'hazard', 'coin', 'enemy', 'player', 'goal', 'trigger',
+  'block', 'ground', 'hazard', 'coin', 'enemy', 'player', 'goal', 'trigger', 'slope',
 ]);
 export const TYPE_LABELS = Object.freeze({
   block: 'Блок', ground: 'Платформа', hazard: 'Шипы', coin: 'Монета',
-  enemy: 'Гусь', player: 'Игрок', goal: 'Финиш', trigger: 'Триггер',
+  enemy: 'Гусь', player: 'Игрок', goal: 'Финиш', trigger: 'Триггер', slope: 'Склон',
 });
 const TYPE_SIZES = Object.freeze({
   block: [1, 1], ground: [2, 1], hazard: [1, 1], coin: [.55, .55],
-  enemy: [.8, .8], player: [.65, .85], goal: [1, 2], trigger: [1, 1],
+  enemy: [.8, .8], player: [.65, .85], goal: [1, 2], trigger: [1, 1], slope: [1, 1],
 });
 const DEFAULT_COLORS = Object.freeze({
   block: '#55c8ea', ground: '#65a845', hazard: '#e56c5b', coin: '#ffc54e',
   enemy: '#9560bd', player: '#5ab7e8', goal: '#69d16c', trigger: '#f27652',
+  slope: '#e56c5b',
 });
 const TYPE_TO_ID = Object.freeze({
   block: 0, ground: 1, hazard: 2, coin: 3, enemy: 4,
-  player: 5, goal: 6, trigger: 7,
+  player: 5, goal: 6, trigger: 7, slope: 8,
 });
 const TYPE_NAMES = Object.freeze([
-  'block', 'ground', 'hazard', 'coin', 'enemy', 'player', 'goal', 'trigger',
+  'block', 'ground', 'hazard', 'coin', 'enemy', 'player', 'goal', 'trigger', 'slope',
 ]);
+// Normalized right-triangle silhouette of the existing Склон.png artwork.
+const SLOPE_VERTICES = Object.freeze([[0, 1], [1, 0], [1, 1]]);
 const EVENTS = new Set(['touch', 'coin', 'manual', 'start']);
 const ACTIONS = new Set([
   'toggle', 'move', 'recolor', 'number', 'rotate', 'invisible', 'no-collision',
@@ -128,6 +131,17 @@ export function addObject(level, type, x, y, triggerKind = 'move') {
   return object;
 }
 
+function pointInTriangle(x, y, vertices) {
+  const cross = (a, b) => (x - b[0]) * (a[1] - b[1]) -
+    (a[0] - b[0]) * (y - b[1]);
+  const d1 = cross(vertices[0], vertices[1]);
+  const d2 = cross(vertices[1], vertices[2]);
+  const d3 = cross(vertices[2], vertices[0]);
+  const hasNegative = d1 < -1e-9 || d2 < -1e-9 || d3 < -1e-9;
+  const hasPositive = d1 > 1e-9 || d2 > 1e-9 || d3 > 1e-9;
+  return !(hasNegative && hasPositive);
+}
+
 export function findObjectAt(level, x, y) {
   return level.objects
     .filter(o => {
@@ -136,7 +150,10 @@ export function findObjectAt(level, x, y) {
       const dx = x - (o.x + o.w / 2), dy = y - (o.y + o.h / 2);
       const localX = Math.cos(angle) * dx + Math.sin(angle) * dy;
       const localY = -Math.sin(angle) * dx + Math.cos(angle) * dy;
-      return Math.abs(localX) <= o.w / 2 && Math.abs(localY) <= o.h / 2;
+      if (Math.abs(localX) > o.w / 2 || Math.abs(localY) > o.h / 2) return false;
+      if (o.type === 'slope')
+        return pointInTriangle(localX / o.w + .5, localY / o.h + .5, SLOPE_VERTICES);
+      return true;
     })
     .sort((a, b) => (b.layer || 0) - (a.layer || 0) ||
                     (b.zOrder || 0) - (a.zOrder || 0))
@@ -399,7 +416,64 @@ export function createPreviewState(level) {
   runTriggers(state, 'start');
   return state;
 }
+function playerSlopeContact(px, py, pw, ph, object, vx, vy) {
+  const angle = (Number(object.angle) || 0) * Math.PI / 180;
+  const c = Math.cos(angle), s = Math.sin(angle);
+  const objectX = (object.x + object.w / 2) * TILE_W;
+  const objectY = (object.y + object.h / 2) * TILE_H;
+  const vertices = SLOPE_VERTICES.map(([u, v]) => {
+    const localX = (u - .5) * object.w * TILE_W;
+    const localY = (v - .5) * object.h * TILE_H;
+    return [objectX + localX * c - localY * s,
+      objectY + localX * s + localY * c];
+  });
+  const axes = [[1, 0], [0, 1]];
+  for (let i = 0; i < vertices.length; i++) {
+    const a = vertices[i], b = vertices[(i + 1) % vertices.length];
+    const edgeX = b[0] - a[0], edgeY = b[1] - a[1];
+    const length = Math.hypot(edgeX, edgeY);
+    if (length > 1e-9) axes.push([-edgeY / length, edgeX / length]);
+  }
+
+  const playerX = px + pw / 2, playerY = py + ph / 2;
+  let smallestDepth = Infinity, normalX = 0, normalY = 0;
+  let climbDepth = Infinity, climbX = 0, climbY = 0;
+  for (const [axisX, axisY] of axes) {
+    let objectMin = Infinity, objectMax = -Infinity;
+    for (const [x, y] of vertices) {
+      const projection = x * axisX + y * axisY;
+      objectMin = Math.min(objectMin, projection);
+      objectMax = Math.max(objectMax, projection);
+    }
+    const playerCenter = playerX * axisX + playerY * axisY;
+    const playerRadius = pw / 2 * Math.abs(axisX) + ph / 2 * Math.abs(axisY);
+    const playerMin = playerCenter - playerRadius;
+    const playerMax = playerCenter + playerRadius;
+    const movePositive = objectMax - playerMin;
+    const moveNegative = playerMax - objectMin;
+    if (movePositive <= 0 || moveNegative <= 0) return null;
+    const depth = Math.min(movePositive, moveNegative);
+    const motion = vx * axisX + vy * axisY;
+    const positive = movePositive < moveNegative - 1e-7 ||
+      (Math.abs(movePositive - moveNegative) <= 1e-7 && motion <= 0);
+    const candidateX = axisX * (positive ? 1 : -1);
+    const candidateY = axisY * (positive ? 1 : -1);
+    if (depth < smallestDepth) {
+      smallestDepth = depth;
+      normalX = candidateX;normalY = candidateY;
+    }
+    const candidateMotion = vx * candidateX + vy * candidateY;
+    if (Math.abs(candidateX) > .1 && candidateY < -.2 && candidateMotion < -1e-7 &&
+        depth < climbDepth) {
+      climbDepth = depth;climbX = candidateX;climbY = candidateY;
+    }
+  }
+  if (climbDepth < Infinity) return {x: climbX, y: climbY, depth: climbDepth};
+  return {x: normalX, y: normalY, depth: smallestDepth};
+}
+
 function playerObjectContact(px, py, pw, ph, object, vx = 0, vy = 0) {
+  if (object.type === 'slope') return playerSlopeContact(px, py, pw, ph, object, vx, vy);
   const angle = (Number(object.angle) || 0) * Math.PI / 180;
   const c = Math.cos(angle), s = Math.sin(angle);
   const objectX = (object.x + object.w / 2) * TILE_W;
@@ -442,7 +516,7 @@ function resolvePreviewPlayer(state, pw, ph, solids) {
         state.vx -= inwardVelocity * contact.x;
         state.vy -= inwardVelocity * contact.y;
       }
-      if (contact.y < -.5) grounded = true;
+      if (contact.y < (object.type === 'slope' ? -.35 : -.5)) grounded = true;
       collided = true;
     }
     if (!collided) break;
@@ -571,7 +645,8 @@ export function stepPreview(state, input = {}, dt = 1 / 60) {
   const pw = player.w * TILE_W, ph = player.h * TILE_H;
   const playerCollisionEnabled = !state.noCollision.includes(player.id);
   const solids = playerCollisionEnabled ? state.objects.filter(o =>
-    o.visible && !state.noCollision.includes(o.id) && ['block', 'ground'].includes(o.type)) : [];
+    o.visible && !state.noCollision.includes(o.id) &&
+    ['block', 'ground', 'slope'].includes(o.type)) : [];
   state.vx = (input.axis || 0) * 250;
   if (input.jump && state.grounded) {state.vy = -570;state.grounded = false;}
   const predictedVy = Math.min(780, state.vy + 1450 * dt);

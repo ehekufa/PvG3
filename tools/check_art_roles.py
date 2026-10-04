@@ -30,6 +30,7 @@ EXPECTED = {
     "LEVEL_TRIGGER_NO_COLLISION": "assets/art/Триггер-нет столкновения.png",
     "LEVEL_FLAG": "assets/art/Флажок - финиш.png",
     "LEVEL_SPIKE": "assets/art/Шип.png",
+    "LEVEL_SLOPE": "assets/art/Склон.png",
 }
 
 assert len(IMAGES) == len(EXPECTED) == len(dict(IMAGES)), "Unexpected extra/missing sprite"
@@ -45,5 +46,7 @@ for name in ("DUCK_CONE", "DUCK_BUCKET", "COIN", "LEVEL_TRIGGER",
              "LEVEL_TRIGGER_INVISIBILITY", "LEVEL_TRIGGER_NO_COLLISION"):
     _, _, pixels = png_pixels(ROOT / EXPECTED[name])
     assert pixels[0] == 0, (name, "expected transparent top-left corner")
+_, _, slope_pixels = png_pixels(ROOT / EXPECTED["LEVEL_SLOPE"])
+assert slope_pixels[0] >> 24 <= 16, "slope artwork should fade at its transparent corner"
 
-print("OK: twenty-five named sprites, including platformer blocks, flag, spike and all five trigger variants")
+print("OK: twenty-six named sprites, including block, slope, platform, flag, spike and all five trigger variants")

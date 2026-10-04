@@ -26,7 +26,7 @@ const WS_CONTROL_KEY = 'pvg3-workshop-control-v1';
 const wsPages = {home: $('ws-home-page'), editor: $('ws-editor-page'),
   preview: $('ws-preview-page'), catalog: $('ws-catalog-page')};
 let wsPage = 'home', wsDraft = loadWorkshopDraft(), wsTool = 'build', wsType = 'block';
-let wsTriggerKind = 'move', wsPaletteSelected = true;
+let wsTriggerKind = 'move', wsBlockType = 'block', wsPaletteSelected = true;
 let wsSelectedId = 0, wsSelectedIds = new Set(), wsClipboard = [];
 let wsDrag = null, wsPanDrag = null, wsCatalogGeneration = 0, wsCatalog = [];
 let wsCamera = {x: 0, y: 0};
@@ -37,7 +37,7 @@ const wsTouchButtons = createTouchButtonState();
 const wsKeys = new Set();
 let wsWinAnnounced = false;
 const WS_ART_FILES = {
-  block: 'Блок.png', ground: 'Платформа.png', hazard: 'Шип.png',
+  block: 'Блок.png', ground: 'Платформа.png', hazard: 'Шип.png', slope: 'Склон.png',
   coin: 'coin-token.png', enemy: 'zombie-duck.png', player: 'khlebushek.png',
   goal: 'Флажок - финиш.png',
   triggerMove: 'Триггер-движения.png', triggerRotate: 'Триггер-вращения.png',
@@ -141,7 +141,11 @@ function renderPaletteOptions() {
   for (const button of document.querySelectorAll('[data-ws-type]'))
     button.classList.toggle('active', button.dataset.wsType === wsType);
   container.replaceChildren();
-  const options = wsType === 'trigger' ? [
+  const options = wsType === 'block' ? [
+    {kind: 'block', label: TYPE_LABELS.block, art: 'block'},
+    {kind: 'slope', label: TYPE_LABELS.slope, art: 'slope'},
+    {kind: 'ground', label: TYPE_LABELS.ground, art: 'ground'},
+  ] : wsType === 'trigger' ? [
     {kind: 'move', label: TRIGGER_LABELS.move, art: 'triggerMove'},
     {kind: 'rotate', label: TRIGGER_LABELS.rotate, art: 'triggerRotate'},
     {kind: 'forever', label: TRIGGER_LABELS.forever, art: 'triggerForever'},
@@ -152,7 +156,8 @@ function renderPaletteOptions() {
     const button = document.createElement('button');
     button.type = 'button';button.className = 'ws-palette-item';
     const active = wsPaletteSelected &&
-      (wsType !== 'trigger' || wsTriggerKind === option.kind);
+      (wsType === 'trigger' ? wsTriggerKind === option.kind :
+        wsType === 'block' ? wsBlockType === option.kind : true);
     if (active) button.classList.add('active');
     const icon = document.createElement('img');
     icon.alt = '';icon.setAttribute('aria-hidden', 'true');
@@ -161,6 +166,7 @@ function renderPaletteOptions() {
     button.append(icon, label);
     button.addEventListener('click', () => {
       if (wsType === 'trigger') wsTriggerKind = option.kind;
+      else if (wsType === 'block') wsBlockType = option.kind;
       wsPaletteSelected = true;
       wsTool = 'build';
       renderWorkshopEditor();
@@ -299,7 +305,8 @@ function wsPointerDown(event) {
     if (!wsPaletteSelected) {
       showWorkshopMessage('Сначала выбери объект в выбранной категории.');return;
     }
-    const placed = addObject(wsDraft, wsType, Math.floor(point.x), Math.floor(point.y), wsTriggerKind);
+    const objectType = wsType === 'block' ? wsBlockType : wsType;
+    const placed = addObject(wsDraft, objectType, Math.floor(point.x), Math.floor(point.y), wsTriggerKind);
     if (!placed) {
       showWorkshopMessage('Достигнут лимит 120 объектов. Удали лишние объекты перед добавлением новых.');return;
     }
@@ -898,6 +905,7 @@ for (const button of document.querySelectorAll('[data-ws-tool]'))
 for (const button of document.querySelectorAll('[data-ws-type]')) button.addEventListener('click', () => {
   wsType = button.dataset.wsType;
   if (wsType === 'trigger') wsTriggerKind = 'move';
+  if (wsType === 'block') wsBlockType = 'block';
   wsPaletteSelected = false;wsTool = 'build';
   renderWorkshopEditor();
 });

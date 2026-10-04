@@ -271,7 +271,7 @@ static int color_value(const JD *d, int token, uint32_t *out) {
 }
 static int level_object_type(const JD *d, int token) {
     static const char *const names[] = {
-        "block", "ground", "hazard", "coin", "enemy", "player", "goal", "trigger"
+        "block", "ground", "hazard", "coin", "enemy", "player", "goal", "trigger", "slope"
     };
     for (int i = 0; i < (int)(sizeof names / sizeof names[0]); i++)
         if (eq(d, token, names[i])) return i;
@@ -909,7 +909,7 @@ static int published_level_valid(const OnPublishedLevel *level) {
     for (int i = 0; i < level->object_count; ++i) {
         const OnLevelObject *o = &level->objects[i];
         if (o->id < 1 || o->id > 1000000 || o->type < ON_LEVEL_BLOCK ||
-            o->type > ON_LEVEL_TRIGGER || !memchr(o->name, 0, sizeof o->name) ||
+            o->type > ON_LEVEL_SLOPE || !memchr(o->name, 0, sizeof o->name) ||
             !utf8_units(o->name, sizeof o->name, 48) || !isfinite(o->x) || !isfinite(o->y) || !isfinite(o->w) ||
             !isfinite(o->h) || !isfinite(o->angle) ||
             o->x < -ON_LEVEL_WORLD_LIMIT || o->y < -ON_LEVEL_WORLD_LIMIT ||
@@ -931,7 +931,7 @@ size_t on_protocol_published_level_json(const OnPublishedLevel *level,
                                         char *out, size_t cap) {
     if (!out || !cap || !published_level_valid(level)) return 0;
     static const char *const types[] = {
-        "block", "ground", "hazard", "coin", "enemy", "player", "goal", "trigger"
+        "block", "ground", "hazard", "coin", "enemy", "player", "goal", "trigger", "slope"
     };
     static const char *const events[] = {"touch", "coin", "manual", "start"};
     static const char *const actions[] = {
@@ -942,7 +942,7 @@ size_t on_protocol_published_level_json(const OnPublishedLevel *level,
         "move", "rotate", "forever", "invisibility", "no-collision"
     };
     static const char *const names[] = {
-        "Блок", "Платформа", "Шипы", "Монета", "Гусь", "Игрок", "Финиш", "Триггер"
+        "Блок", "Платформа", "Шипы", "Монета", "Гусь", "Игрок", "Финиш", "Триггер", "Склон"
     };
     JW w = {out, cap, 0, 0};
     put(&w, "{\"format\":\"PVG3-PUBLISHED-LEVEL\",\"version\":1,\"id\":");

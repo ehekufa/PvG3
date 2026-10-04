@@ -73,6 +73,7 @@ test('map arrow controls pan the viewport independently and clamp to the world e
 test('published records round-trip through the browser/native wire schema', () => {
   const level = newDraft();level.title = 'Острова над рекой';level.description = 'Монеты и тайный мост';
   const block = addObject(level, 'block', 6, 6);
+  const slope = addObject(level, 'slope', 8, 6);
   const trigger = addObject(level, 'trigger', 4, 7);
   trigger.trigger = {event:'start',action:'recolor',targetId:block.id,value:0,color:'#ffcc44'};
   const record = publishedRecord('104', level);
@@ -82,6 +83,7 @@ test('published records round-trip through the browser/native wire schema', () =
   assert(!isPublishedRecord(record, '105'));
   const restored = draftFromPublished(record);
   assert.equal(restored.title, level.title);
+  assert.equal(restored.objects.find(o => o.id === slope.id).type, 'slope');
   assert.equal(restored.objects.find(o => o.id === trigger.id).trigger.action, 'recolor');
   assert.equal(restored.objects.find(o => o.id === trigger.id).trigger.event, 'start');
   assert.equal(validateDraft(restored).ok, true);
@@ -97,12 +99,15 @@ test('control mode defaults to buttons on touch devices and can be chosen explic
 
 test('workshop editor and preview use the supplied level artwork and tile wide platforms', () => {
   const level = newDraft();
+  addObject(level, 'slope', 5, 6);
   const art = Object.fromEntries(LEVEL_TYPES.map(type => [type,
     {type, naturalWidth: 100, naturalHeight: type === 'ground' ? 50 : 100}]));
   const editor = recordingCanvas();
   drawEditorCanvas(editor.canvas, level, 0, 'build', art);
   assert(editor.images.some(call => call.image.type === 'player'));
   assert(editor.images.some(call => call.image.type === 'goal'));
+  assert(editor.images.some(call => call.image.type === 'slope'),
+    'the slope uses the supplied slope drawing');
   assert.equal(editor.images.filter(call => call.image.type === 'ground').length, 16);
 
   const preview = recordingCanvas();
@@ -268,6 +273,33 @@ test('start and action events do not need contact, while touch events do', () =>
   stepPreview(touched, {}, .01);
   assert(touched.invisible.includes(touchBlock.id),
     'the touch trigger fires once the player contacts it');
+});
+
+test('the safe triangular slope matches its artwork and can be climbed', () => {
+  const level = newDraft('climbable-slope');
+  const player = level.objects.find(object => object.type === 'player');
+  player.x = 1;player.y = 7;
+  const slope = addObject(level, 'slope', 3, 7);
+  assert.equal(validateDraft(level).ok, true);
+  assert.equal(findObjectAt(level, 3.5, 7.5)?.id, slope.id);
+  assert.equal(findObjectAt(level, 3.1, 7.2), null,
+    'transparent space outside the triangle is not selectable');
+  slope.angle = 90;
+  assert.equal(findObjectAt(level, 3.3, 7.6)?.id, slope.id,
+    'selection follows the triangle when it is rotated');
+  assert.equal(findObjectAt(level, 3.8, 7.1), null);
+  slope.angle = 0;
+
+  const state = createPreviewState(level);
+  const spawnY = state.y;
+  let highestY = spawnY;
+  for (let i = 0; i < 24; i++) {
+    stepPreview(state, {axis: 1}, .05);
+    highestY = Math.min(highestY, state.y);
+  }
+  assert(state.x > 240, 'the player gets past the slope instead of hitting a wall');
+  assert(highestY < spawnY - 35, 'the player rises while walking up the triangle');
+  assert(!state.won, 'the slope is not treated as a damaging spike');
 });
 
 test('rotated collision follows the drawn block and play preview hides all trigger art', () => {

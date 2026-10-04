@@ -279,9 +279,9 @@ static void assert_platformer_art(void) {
                        PV_ART_LEVEL_TRIGGER_FOREVER,
                        PV_ART_LEVEL_TRIGGER_INVISIBILITY,
                        PV_ART_LEVEL_TRIGGER_NO_COLLISION, PV_ART_LEVEL_FLAG,
-                       PV_ART_LEVEL_SPIKE};
-    const int widths[] = {100, 100, 100, 100, 100, 100, 100, 50, 100};
-    const int heights[] = {100, 50, 100, 100, 100, 100, 100, 100, 100};
+                       PV_ART_LEVEL_SPIKE, PV_ART_LEVEL_SLOPE};
+    const int widths[] = {100, 100, 100, 100, 100, 100, 100, 50, 100, 100};
+    const int heights[] = {100, 50, 100, 100, 100, 100, 100, 100, 100, 100};
     for (size_t i = 0; i < sizeof ids / sizeof ids[0]; ++i) {
         int width = 0, height = 0, visible = 0;
         const uint32_t *pixels = game_art_rgba(ids[i], &width, &height);
@@ -457,6 +457,28 @@ static void native_trigger_runtime_regression(void) {
     assert(game_workshop_preview(&level));
     for (int i = 0; i < 120; ++i) game_tick(1.0f / 60.0f, NULL);
     assert(game_debug_custom_player_y() > 315 && game_debug_custom_player_y() < 345);
+    game_custom_level_exit();
+
+    /* The existing triangular art is solid, safe, and climbable in native play. */
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+        .x=0,.y=8,.w=16,.h=2,.visible=1,.number=3};
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
+        .x=1,.y=7,.w=.65f,.h=.85f,.visible=1,.number=1};
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_SLOPE,
+        .x=3,.y=7,.w=1,.h=1,.visible=1,.number=42};
+    assert(game_workshop_preview(&level));
+    float spawn_y = game_debug_custom_player_y();
+    float highest_y = spawn_y;
+    game_custom_control(1, 0, 0);
+    for (int i = 0; i < 24; ++i) {
+        game_tick(.05f, NULL);
+        if (game_debug_custom_player_y() < highest_y)
+            highest_y = game_debug_custom_player_y();
+    }
+    game_custom_control(0, 0, 0);
+    assert(game_debug_custom_player_x() > 240 && highest_y < spawn_y - 35);
     game_custom_level_exit();
 
     /* Trigger PNGs are for the editor only and never appear in a play preview. */
@@ -643,7 +665,16 @@ static int run_lvgl_test(void) {
            ON_TRIGGER_START);
 #endif
     ui_tap(1178, 526); /* scroll the infinite workshop map */
-    ui_tap(80, 596); /* block category */
+    ui_tap(80, 596); /* select the shared blocks category */
+    ui_tap(990, 439); /* choose its slope variant */
+    ui_tap(506, 331); /* place a solid triangular slope */
+    ui_snapshot("workshop_slope_added");
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[editor_probe.object_count - 1].type == ON_LEVEL_SLOPE);
+#endif
+    ui_tap(80, 596); /* reselect blocks category and choose its square variant */
+    ui_tap(834, 439);
     ui_tap(422, 205); /* now maps to world X=10 */
     ui_snapshot("workshop_trigger_variants_and_pan");
 #ifdef PVG3_LVGL_TEST
@@ -683,6 +714,7 @@ static int run_lvgl_test(void) {
            strstr(uploaded_level_body, "\"kind\":\"no-collision\"") &&
            strstr(uploaded_level_body, "\"action\":\"no-collision\"") &&
            strstr(uploaded_level_body, "\"event\":\"start\"") &&
+           strstr(uploaded_level_body, "\"type\":\"slope\"") &&
            strstr(uploaded_level_body, "\"x\":10.0000") &&
            strstr(uploaded_level_body, "\"w\":1.1000") &&
            strstr(uploaded_level_body, "\"angle\":45.000"));

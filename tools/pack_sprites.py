@@ -40,6 +40,7 @@ IMAGES = [
     ("LEVEL_TRIGGER_NO_COLLISION", "assets/art/Триггер-нет столкновения.png"),
     ("LEVEL_FLAG", "assets/art/Флажок - финиш.png"),
     ("LEVEL_SPIKE", "assets/art/Шип.png"),
+    ("LEVEL_SLOPE", "assets/art/Склон.png"),
 ]
 
 
