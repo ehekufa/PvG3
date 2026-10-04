@@ -265,6 +265,7 @@ main { min-width: 0; }
 .ws-canvas-wrap { overflow: auto; }
 #ws-editor-canvas, #ws-preview-canvas { background: #14283c; }
 #ws-editor-canvas { cursor: crosshair; }
+#ws-preview-canvas { cursor: pointer; touch-action: none; }
 .ws-board-column .hint { margin: 8px 2px; }
 .ws-tools { display: grid; gap: 14px; padding: 15px; border: 3px solid var(--outline); border-radius: 5px; background: var(--paper); }
 .ws-tool-group { display: grid; gap: 8px; }

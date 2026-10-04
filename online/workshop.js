@@ -71,6 +71,7 @@ const FOREVER_ACTIONS = new Set(['activate', 'unactivate']);
 const GROUP_ID_MAX = 9999;
 const ROTATION_DURATION_MAX = 9999;
 const ROTATION_DEGREES_PER_SECOND = 360;
+const ORB_DOUBLE_TAP_SECONDS = .45;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const worldClamp = (value, size = 0) => clamp(value, -WORLD_LIMIT, WORLD_LIMIT - size);
@@ -485,7 +486,7 @@ export function createPreviewState(level) {
     vx: 0, vy: 0, gravity: 1450, grounded: false, time: 0, coins: 0, won: false,
     collected: [], triggerFired: [], triggerActive: [], triggerTimers: Object.create(null),
     invisible: [], noCollision: [], groupRotations: [], orbContacts: new Set(),
-    spawn: {x: player.x * TILE_W, y: player.y * TILE_H}};
+    orbLastTap: null, spawn: {x: player.x * TILE_W, y: player.y * TILE_H}};
   runTriggers(state, 'start');
   return state;
 }
@@ -604,6 +605,40 @@ function playerObjectContact(px, py, pw, ph, object, vx = 0, vy = 0) {
     }
   }
   return {x: normalX, y: normalY, depth: smallestOverlap};
+}
+function orbUnderPoint(object, worldX, worldY) {
+  const centerX = object.x + object.w / 2;
+  const centerY = object.y + object.h / 2;
+  const radius = Math.min(object.w, object.h) * .46;
+  return (worldX - centerX) ** 2 + (worldY - centerY) ** 2 <= radius ** 2;
+}
+export function tapPreviewOrb(state, worldX, worldY, pointerId = 0) {
+  if (!state || state.won) return null;
+  const orb = [...state.objects].reverse().find(object =>
+    (object.type === 'orb-yellow' || object.type === 'orb-orange') &&
+    object.visible !== false && orbUnderPoint(object, worldX, worldY));
+  if (!orb) {state.orbLastTap = null;return null;}
+  const player = state.objects.find(object => object.type === 'player');
+  const playerCanTouch = player && !state.noCollision?.includes(player.id) &&
+    !state.noCollision?.includes(orb.id);
+  const box = player ? playerVisibleHitbox(state, player) : null;
+  if (!playerCanTouch || !playerObjectContact(box.x, box.y, box.w, box.h, orb,
+                                               state.vx, state.vy)) {
+    state.orbLastTap = null;
+    return 'not-touching';
+  }
+  const previous = state.orbLastTap;
+  if (previous?.id === orb.id && previous.released &&
+      state.time - previous.time <= ORB_DOUBLE_TAP_SECONDS) {
+    state.vy = orb.type === 'orb-orange' ? -1050 : -650;
+    state.grounded = false;state.orbLastTap = null;
+    return 'bounced';
+  }
+  state.orbLastTap = {id: orb.id, time: state.time, pointerId, released: false};
+  return 'armed';
+}
+export function releasePreviewOrbTap(state, pointerId = 0) {
+  if (state?.orbLastTap?.pointerId === pointerId) state.orbLastTap.released = true;
 }
 function resolvePreviewPlayer(state, player, solids) {
   let grounded = false;
@@ -783,10 +818,6 @@ export function stepPreview(state, input = {}, dt = 1 / 60) {
     if (!playerObjectContact(box.x, box.y, box.w, box.h, o, state.vx, state.vy)) continue;
     if (o.type === 'orb-yellow' || o.type === 'orb-orange') {
       currentOrbContacts.add(o.id);
-      if (!state.orbContacts.has(o.id)) {
-        state.vy = o.type === 'orb-orange' ? -1050 : -650;
-        state.grounded = false;
-      }
     } else if (o.type === 'coin' && !state.collected.includes(o.id)) {
       state.collected.push(o.id);state.coins++;o.visible = false;runTriggers(state, 'coin');
     } else if (o.type === 'hazard' || o.type === 'enemy') {
@@ -795,6 +826,8 @@ export function stepPreview(state, input = {}, dt = 1 / 60) {
     } else if (o.type === 'goal') state.won = true;
   }
   state.orbContacts = currentOrbContacts;
+  if (state.orbLastTap && !currentOrbContacts.has(state.orbLastTap.id))
+    state.orbLastTap = null;
   runTriggers(state, 'touch');
   if (input.trigger) runTriggers(state, 'manual');
   runForeverTriggers(state, dt);

@@ -5,11 +5,12 @@ import {DATABASE, validId, randomPlayerId, listRooms, getRoom, createRoom,
         listPublishedLevels, getPublishedLevel, publishLevel} from './firebase.js';
 import {preloadArtwork, drawGame} from './draw.js';
 import {LEVEL_WIDTH, LEVEL_HEIGHT, MAX_LEVEL_OBJECTS, WORLD_LIMIT,
-        MIN_OBJECT_SIZE, MAX_OBJECT_WIDTH, MAX_OBJECT_HEIGHT, TYPE_LABELS,
-        TRIGGER_KINDS, TRIGGER_LABELS, newDraft, setTriggerKind,
+        MIN_OBJECT_SIZE, MAX_OBJECT_WIDTH, MAX_OBJECT_HEIGHT, TILE_W, TILE_H,
+        TYPE_LABELS, TRIGGER_KINDS, TRIGGER_LABELS, newDraft, setTriggerKind,
         addObject, findObjectAt, validateDraft, draftFromPublished,
         moveObjects, resizeObjects, rotateObjects, flipObjects, panCamera, copyObjects, pasteObjects,
-        createPreviewState, stepPreview, drawEditorCanvas, drawPreviewCanvas,
+        createPreviewState, stepPreview, tapPreviewOrb, releasePreviewOrbTap,
+        drawEditorCanvas, drawPreviewCanvas,
         resolveControlMode, createTouchButtonState} from './workshop.js';
 
 const $ = id => document.getElementById(id);
@@ -667,6 +668,35 @@ function startWorkshopPreview(level, title, returnPage) {
 function drawCurrentPreview() {
   if (wsPreviewState) drawPreviewCanvas($('ws-preview-canvas'), wsPreviewState, wsControlMode, wsArt);
 }
+function previewOrbPointerDown(event) {
+  if (screen !== 'workshop' || wsPage !== 'preview' || !wsPreviewState) return;
+  const canvas = $('ws-preview-canvas');
+  const rect = canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  const x = (event.clientX - rect.left) * canvas.width / rect.width;
+  const y = (event.clientY - rect.top) * canvas.height / rect.height;
+  const player = wsPreviewState.objects.find(object => object.type === 'player');
+  const playerW = (player?.w || .65) * TILE_W;
+  const playerH = (player?.h || .85) * TILE_H;
+  const cameraX = wsPreviewState.x + playerW / 2 - canvas.width * .4;
+  const cameraY = wsPreviewState.y + playerH / 2 - (canvas.height + 64) * .52;
+  const result = y < 64 ? tapPreviewOrb(wsPreviewState, NaN, NaN, event.pointerId) :
+    tapPreviewOrb(wsPreviewState, (x + cameraX) / TILE_W,
+                  (y + cameraY) / TILE_H, event.pointerId);
+  if (!result) return;
+  event.preventDefault();canvas.setPointerCapture?.(event.pointerId);
+  if (result === 'armed')
+    $('ws-preview-status').textContent = 'Нажми на орб ещё раз за 0,45 с, пока игрок касается его.';
+  else if (result === 'bounced')
+    $('ws-preview-status').textContent = 'Орб подбросил игрока!';
+  else if (result === 'not-touching')
+    $('ws-preview-status').textContent = 'Сначала коснись орба игроком, затем нажми на него дважды.';
+  drawCurrentPreview();
+}
+function previewOrbPointerUp(event) {
+  if (screen === 'workshop' && wsPage === 'preview' && wsPreviewState)
+    releasePreviewOrbTap(wsPreviewState, event.pointerId);
+}
 function applyWorkshopControl(preference) {
   wsControlPreference = ['auto', 'buttons', 'keyboard'].includes(preference) ? preference : 'auto';
   try {localStorage.setItem(WS_CONTROL_KEY, wsControlPreference);} catch {}
@@ -675,8 +705,8 @@ function applyWorkshopControl(preference) {
   $('ws-control-select').value = wsControlPreference;
   $('ws-buttons-controls').classList.toggle('hidden', wsControlMode !== 'buttons');
   $('ws-control-help').textContent = wsControlMode === 'keyboard' ?
-    'Клавиши A / D для движения, пробел или W для прыжка, E для действия.' :
-    'Удерживай «Назад» или «Вперёд». Одновременно нажми «Прыжок»; «Действие» запускает ручные триггеры.';
+    'Клавиши A / D для движения, пробел или W для прыжка, E для действия. Чтобы отскочить от орба, нажми на него дважды, пока игрок касается его.' :
+    'Удерживай «Назад» или «Вперёд». Одновременно нажми «Прыжок»; «Действие» запускает ручные триггеры. Орб срабатывает от двойного нажатия, когда игрок касается его.';
   clearWorkshopInput();drawCurrentPreview();
 }
 function clearWorkshopInput() {
@@ -1025,6 +1055,10 @@ for (const button of document.querySelectorAll('[data-ws-type]')) button.addEven
   wsPaletteSelected = false;wsTool = 'build';
   renderWorkshopEditor();
 });
+$('ws-preview-canvas').addEventListener('pointerdown', previewOrbPointerDown);
+$('ws-preview-canvas').addEventListener('pointerup', previewOrbPointerUp);
+$('ws-preview-canvas').addEventListener('pointercancel', previewOrbPointerUp);
+$('ws-preview-canvas').addEventListener('lostpointercapture', previewOrbPointerUp);
 $('ws-editor-canvas').addEventListener('pointerdown', wsPointerDown);
 $('ws-editor-canvas').addEventListener('pointermove', wsPointerMove);
 $('ws-editor-canvas').addEventListener('pointerup', wsPointerUp);

@@ -50,6 +50,9 @@ void game_custom_levels_refresh(void);
 void game_custom_level_request(const char *id);
 void game_custom_level_exit(void);
 void game_custom_control(int horizontal, int jump, int trigger);
+/* Native pointer coordinates for a double-tap directly on an orb. */
+int game_custom_orb_tap_screen(int pointer_id, int x, int y);
+void game_custom_orb_tap_release(int pointer_id);
 
 /* The native platformer workshop is a separate editor from the public catalog. */
 void game_workshop_open(void);

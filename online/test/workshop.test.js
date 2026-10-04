@@ -5,7 +5,7 @@ import {LEVEL_TYPES, TRIGGER_KINDS, WORLD_LIMIT, MAX_LEVEL_OBJECTS,
         moveObjects, resizeObjects, rotateObjects, flipObjects, panCamera, copyObjects, pasteObjects, validateDraft,
         publishedRecord, isPublishedRecord, draftFromPublished, resolveControlMode,
         setTriggerKind, createTouchButtonState, createPreviewState, stepPreview,
-        drawEditorCanvas, drawPreviewCanvas} from '../workshop.js';
+        tapPreviewOrb, releasePreviewOrbTap, drawEditorCanvas, drawPreviewCanvas} from '../workshop.js';
 
 function recordingCanvas() {
   const images = [];
@@ -152,26 +152,34 @@ test('gravity triggers round-trip a signed level setting and change preview acce
     'positive slider values accelerate downward more strongly than negative values');
 });
 
-test('yellow and orange orbs launch on contact without changing gravity; orange is stronger', () => {
+test('orbs only bounce on a direct double tap while touched; orange is stronger and neither changes gravity', () => {
   const launch = type => {
     const level = newDraft(`orb-${type}`);
     level.objects.find(object => object.type === 'ground').y = 30;
     const player = level.objects.find(object => object.type === 'player');
     player.x = 3;player.y = 4;
-    assert(addObject(level, type, 3, 4));
+    const orb = addObject(level, type, 3, 4);
     assert.equal(validateDraft(level).ok, true);
     const state = createPreviewState(level);
     const gravity = state.gravity;
     stepPreview(state, {}, .05);
-    const initialLaunchSpeed = state.vy;
-    stepPreview(state, {}, .05);
+    const preTapY = state.y;
+    assert(state.vy > 0, 'contact without tapping must not cause an automatic bounce');
+    assert(state.orbContacts.has(orb.id));
+    assert.equal(tapPreviewOrb(state, 3.35, 4.35, 7), 'armed');
+    assert(state.vy > 0, 'the first tap only arms the orb');
+    releasePreviewOrbTap(state, 7);
+    assert.equal(tapPreviewOrb(state, 3.35, 4.35, 7), 'bounced');
+    const launchSpeed = state.vy;
     assert.equal(state.gravity, gravity, 'an orb must not modify the gravity setting');
-    return {state, initialLaunchSpeed};
+    stepPreview(state, {}, .05);
+    assert(state.y < preTapY, 'the second direct tap launches the player upward');
+    return {state, launchSpeed};
   };
   const yellow = launch('orb-yellow');
   const orange = launch('orb-orange');
-  assert.equal(yellow.initialLaunchSpeed, -650);
-  assert.equal(orange.initialLaunchSpeed, -1050);
+  assert.equal(yellow.launchSpeed, -650);
+  assert.equal(orange.launchSpeed, -1050);
   assert(orange.state.vy < yellow.state.vy);
   assert(orange.state.y < yellow.state.y);
 });
