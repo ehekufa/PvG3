@@ -36,7 +36,8 @@ const wsPages = {home: $('ws-home-page'), editor: $('ws-editor-page'),
 let wsDraftFromLocalStorage = false;
 let wsPage = 'home', wsDraft = loadWorkshopDraft(), wsTool = 'build', wsType = 'block';
 let wsDraftReady = Promise.resolve();
-let wsTriggerKind = 'move', wsBlockType = 'block', wsOrbType = 'orb-yellow', wsPaletteSelected = true;
+let wsTriggerKind = 'move', wsBlockType = 'block', wsOrbType = 'orb-yellow';
+let wsGoalType = 'goal', wsPaletteSelected = true;
 let wsSelectedId = 0, wsSelectedIds = new Set(), wsClipboard = [];
 let wsDrag = null, wsPanDrag = null, wsCatalogGeneration = 0, wsCatalog = [];
 let wsCamera = {x: 0, y: 0};
@@ -57,6 +58,7 @@ const WS_ART_FILES = {
   triggerNoCollision: 'Триггер-нет столкновения.png',
   triggerGravity: 'Триггер-гравитации.png',
   'orb-orange': 'Оранжевый opб.png', 'orb-yellow': 'Жёлтый орб.png',
+  checkpoint: 'Чекпоинт-выключен.png', checkpointActive: 'Чекпоинт-включён.png',
 };
 const wsArt = Object.fromEntries(Object.entries(WS_ART_FILES).map(([type, file]) => {
   const image = new Image();
@@ -251,6 +253,9 @@ function renderPaletteOptions() {
   ] : wsType === 'orb' ? [
     {kind: 'orb-yellow', label: TYPE_LABELS['orb-yellow'], art: 'orb-yellow'},
     {kind: 'orb-orange', label: TYPE_LABELS['orb-orange'], art: 'orb-orange'},
+  ] : wsType === 'goal' ? [
+    {kind: 'goal', label: TYPE_LABELS.goal, art: 'goal'},
+    {kind: 'checkpoint', label: TYPE_LABELS.checkpoint, art: 'checkpoint'},
   ] : wsType === 'particle' ? [
     {kind: 'single', label: TYPE_LABELS.particle, glyph: 'P'},
   ] : [{kind: 'single', label: TYPE_LABELS[wsType], art: wsType}];
@@ -260,7 +265,8 @@ function renderPaletteOptions() {
     const active = wsPaletteSelected &&
       (wsType === 'trigger' ? wsTriggerKind === option.kind :
         wsType === 'block' ? wsBlockType === option.kind :
-        wsType === 'orb' ? wsOrbType === option.kind : true);
+        wsType === 'orb' ? wsOrbType === option.kind :
+        wsType === 'goal' ? wsGoalType === option.kind : true);
     if (active) button.classList.add('active');
     const icon = option.glyph ? document.createElement('span') : document.createElement('img');
     if (option.glyph) {
@@ -276,6 +282,7 @@ function renderPaletteOptions() {
       if (wsType === 'trigger') wsTriggerKind = option.kind;
       else if (wsType === 'block') wsBlockType = option.kind;
       else if (wsType === 'orb') wsOrbType = option.kind;
+      else if (wsType === 'goal') wsGoalType = option.kind;
       wsPaletteSelected = true;
       wsTool = 'build';
       renderWorkshopEditor();
@@ -474,7 +481,8 @@ function wsPointerDown(event) {
       showWorkshopMessage('Сначала выбери объект в выбранной категории.');return;
     }
     const objectType = wsType === 'block' ? wsBlockType :
-      wsType === 'orb' ? wsOrbType : wsType;
+      wsType === 'orb' ? wsOrbType :
+      wsType === 'goal' ? wsGoalType : wsType;
     const placed = addObject(wsDraft, objectType, Math.floor(point.x), Math.floor(point.y), wsTriggerKind);
     if (!placed) {
       showWorkshopMessage(`Достигнут общий лимит ${MAX_LEVEL_OBJECTS} объектов. Удали лишние объекты перед добавлением новых.`);return;
@@ -663,7 +671,8 @@ function updateSelectedTrigger(property, value) {
 function beginNewDraft() {
   if (!confirm('Создать новый уровень вместо текущего черновика? Опубликованные уровни не затрагиваются.')) return;
   wsDraft = newDraft();setWorkshopSelection([]);wsClipboard = [];wsTool = 'build';wsType = 'block';
-  wsTriggerKind = 'move';wsPaletteSelected = true;wsCamera = {x: 0, y: 0};
+  wsTriggerKind = 'move';wsGoalType = 'goal';wsPaletteSelected = true;
+  wsCamera = {x: 0, y: 0};
   saveWorkshopDraft('Создан новый черновик.');setWorkshopPage('editor');
 }
 function setCatalogMessage(message = '') {
@@ -1094,6 +1103,7 @@ for (const button of document.querySelectorAll('[data-ws-type]')) button.addEven
   if (wsType === 'trigger') wsTriggerKind = 'move';
   if (wsType === 'block') wsBlockType = 'block';
   if (wsType === 'orb') wsOrbType = 'orb-yellow';
+  if (wsType === 'goal') wsGoalType = 'goal';
   wsPaletteSelected = false;wsTool = 'build';
   renderWorkshopEditor();
 });

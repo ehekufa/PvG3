@@ -26,33 +26,34 @@ const TRIGGER_ACTIONS = Object.freeze({
 });
 export const LEVEL_TYPES = Object.freeze([
   'block', 'ground', 'hazard', 'coin', 'enemy', 'player', 'goal', 'trigger', 'slope',
-  'orb-yellow', 'orb-orange', 'particle',
+  'orb-yellow', 'orb-orange', 'particle', 'checkpoint',
 ]);
 export const TYPE_LABELS = Object.freeze({
   block: 'Блок', ground: 'Платформа', hazard: 'Шипы', coin: 'Монета',
   enemy: 'Гусь', player: 'Игрок', goal: 'Финиш', trigger: 'Триггер', slope: 'Склон',
   'orb-yellow': 'Жёлтый орб', 'orb-orange': 'Оранжевый орб',
-  particle: 'Эмиттер частиц',
+  particle: 'Эмиттер частиц', checkpoint: 'Чекпоинт',
 });
 const TYPE_SIZES = Object.freeze({
   block: [1, 1], ground: [2, 1], hazard: [1, 1], coin: [.55, .55],
   enemy: [.8, .8], player: [.65, .85], goal: [1, 2], trigger: [1, 1], slope: [1, 1],
   'orb-yellow': [.7, .7], 'orb-orange': [.7, .7], particle: [1, 1],
+  checkpoint: [1, 1],
 });
 const DEFAULT_COLORS = Object.freeze({
   block: '#55c8ea', ground: '#65a845', hazard: '#e56c5b', coin: '#ffc54e',
   enemy: '#9560bd', player: '#5ab7e8', goal: '#69d16c', trigger: '#f27652',
   slope: '#e56c5b', 'orb-yellow': '#fff400', 'orb-orange': '#ff8a16',
-  particle: '#68f0d8',
+  particle: '#68f0d8', checkpoint: '#b6d8ff',
 });
 const TYPE_TO_ID = Object.freeze({
   block: 0, ground: 1, hazard: 2, coin: 3, enemy: 4,
   player: 5, goal: 6, trigger: 7, slope: 8, 'orb-yellow': 9, 'orb-orange': 10,
-  particle: 11,
+  particle: 11, checkpoint: 12,
 });
 const TYPE_NAMES = Object.freeze([
   'block', 'ground', 'hazard', 'coin', 'enemy', 'player', 'goal', 'trigger', 'slope',
-  'orb-yellow', 'orb-orange', 'particle',
+  'orb-yellow', 'orb-orange', 'particle', 'checkpoint',
 ]);
 // Normalized opaque artwork bounds, measured from alpha in the supplied PNGs.
 const ART_ALPHA_BOUNDS = Object.freeze({
@@ -60,6 +61,7 @@ const ART_ALPHA_BOUNDS = Object.freeze({
   enemy: Object.freeze([.20, .21, .99, .99]),
   coin: Object.freeze([.05, .03, .96, .97]),
   goal: Object.freeze([.04, .03, 1, 1]),
+  checkpoint: Object.freeze([.14, 0, .75, 1]),
 });
 const FULL_ART_BOUNDS = Object.freeze([0, 0, 1, 1]);
 // Silhouettes of Склон.png and Шип.png; transparent canvas corners are not solid.
@@ -538,7 +540,8 @@ export function createPreviewState(level) {
     vx: 0, vy: 0, gravity: 1450, grounded: false, time: 0, coins: 0, won: false,
     collected: [], triggerFired: [], triggerActive: [], triggerTimers: Object.create(null),
     invisible: [], noCollision: [], groupRotations: [], jumpHeld: false,
-    orbActivated: false, spawn: {x: player.x * TILE_W, y: player.y * TILE_H}};
+    orbActivated: false, checkpointId: 0,
+    spawn: {x: player.x * TILE_W, y: player.y * TILE_H}};
   runTriggers(state, 'start');
   return state;
 }
@@ -665,6 +668,20 @@ function activatePreviewOrb(state, player) {
   state.grounded = false;
   state.orbActivated = true;
   return orb;
+}
+function activatePreviewCheckpoint(state, player, checkpoint) {
+  if (!player || !checkpoint || checkpoint.type !== 'checkpoint') return false;
+  state.checkpointId = checkpoint.id;
+  state.spawn = {
+    x: worldClamp(checkpoint.x + checkpoint.w / 2 - player.w / 2, player.w) * TILE_W,
+    y: worldClamp(checkpoint.y + checkpoint.h - player.h, player.h) * TILE_H,
+  };
+  return true;
+}
+function resetPreviewPlayer(state) {
+  state.x = state.spawn.x;state.y = state.spawn.y;
+  state.vx = state.vy = 0;state.grounded = false;
+  state.jumpHeld = false;state.orbActivated = false;
 }
 function resolvePreviewPlayer(state, player, solids) {
   let grounded = false;
@@ -837,22 +854,34 @@ export function stepPreview(state, input = {}, dt = 1 / 60) {
     state.y += state.vy * subDt;
     if (playerCollisionEnabled) resolvePreviewPlayer(state, player, solids);
   }
+  let playerRespawned = false;
   if (state.y > WORLD_LIMIT * TILE_H) {
-    state.x = state.spawn.x;state.y = state.spawn.y;state.vx = state.vy = 0;
-    state.grounded = false;
+    resetPreviewPlayer(state);playerRespawned = true;
   }
-  if (playerCollisionEnabled) for (const o of state.objects) {
-    if (!o.visible || o.type === 'player' || o.type === 'trigger' ||
-        o.type === 'orb-yellow' || o.type === 'orb-orange' ||
-        state.noCollision.includes(o.id)) continue;
-    const box = playerVisibleHitbox(state, player);
-    if (!playerObjectContact(box.x, box.y, box.w, box.h, o, state.vx, state.vy)) continue;
-    if (o.type === 'coin' && !state.collected.includes(o.id)) {
-      state.collected.push(o.id);state.coins++;o.visible = false;runTriggers(state, 'coin');
-    } else if (o.type === 'hazard' || o.type === 'enemy') {
-      state.x = state.spawn.x;state.y = state.spawn.y;state.vx = state.vy = 0;
-      state.grounded = false;
-    } else if (o.type === 'goal') state.won = true;
+  if (playerCollisionEnabled && !playerRespawned) {
+    let box = playerVisibleHitbox(state, player);
+    for (const object of state.objects) {
+      if (!object.visible || (object.type !== 'hazard' && object.type !== 'enemy') ||
+          state.noCollision.includes(object.id) ||
+          !playerObjectContact(box.x, box.y, box.w, box.h, object,
+                               state.vx, state.vy)) continue;
+      resetPreviewPlayer(state);playerRespawned = true;break;
+    }
+    if (!playerRespawned) for (const object of state.objects) {
+      if (!object.visible || object.type === 'player' || object.type === 'trigger' ||
+          object.type === 'particle' || object.type === 'orb-yellow' ||
+          object.type === 'orb-orange' || object.type === 'hazard' ||
+          object.type === 'enemy' || state.noCollision.includes(object.id)) continue;
+      box = playerVisibleHitbox(state, player);
+      if (!playerObjectContact(box.x, box.y, box.w, box.h, object,
+                               state.vx, state.vy)) continue;
+      if (object.type === 'coin' && !state.collected.includes(object.id)) {
+        state.collected.push(object.id);state.coins++;object.visible = false;
+        runTriggers(state, 'coin');
+      } else if (object.type === 'goal') state.won = true;
+      else if (object.type === 'checkpoint')
+        activatePreviewCheckpoint(state, player, object);
+    }
   }
   runTriggers(state, 'touch');
   if (input.trigger) runTriggers(state, 'manual');
@@ -884,15 +913,17 @@ function drawWorkshopArt(ctx, art, type, x, y, w, h, triggerKind = 'move') {
         Math.min(tileW, w - dx), Math.min(tileH, h - dy));
   return true;
 }
-function drawWorkshopObject(ctx, art, object, x, y, w, h) {
+function drawWorkshopObject(ctx, art, object, x, y, w, h, checkpointActive = false) {
   const angle = ((object.angle || 0) % 360) * Math.PI / 180;
   const flipX = objectFlipX(object), flipY = object.flipY === true;
+  const artType = object.type === 'checkpoint' && checkpointActive ?
+    'checkpointActive' : object.type;
   if (!angle && !flipX && !flipY)
-    return drawWorkshopArt(ctx, art, object.type, x, y, w, h,
+    return drawWorkshopArt(ctx, art, artType, x, y, w, h,
                            object.trigger?.kind);
   ctx.save();ctx.translate(x + w / 2, y + h / 2);ctx.rotate(angle);
   ctx.scale(flipX ? -1 : 1, flipY ? -1 : 1);
-  const drawn = drawWorkshopArt(ctx, art, object.type, -w / 2, -h / 2, w, h,
+  const drawn = drawWorkshopArt(ctx, art, artType, -w / 2, -h / 2, w, h,
                                 object.trigger?.kind);
   ctx.restore();
   return drawn;
@@ -1154,7 +1185,8 @@ export function drawPreviewCanvas(canvas, state, control = 'keyboard', art = {})
     const triggerArt = o.type === 'trigger' &&
       (art?.[triggerArtKey(o.trigger?.kind)]?.naturalWidth || art.trigger?.naturalWidth);
     if (triggerArt) {ctx.globalAlpha = .18;ctx.fillRect(x, y, w, h);ctx.globalAlpha = 1;}
-    const hasArt = drawWorkshopObject(ctx, art, o, x, y, w, h);
+    const hasArt = drawWorkshopObject(ctx, art, o, x, y, w, h,
+                                      state.checkpointId === o.id);
     if (hasArt) continue;
     if (o.type === 'hazard') {
       ctx.beginPath();ctx.moveTo(x + w / 2, y);ctx.lineTo(x + w, y + h);ctx.lineTo(x, y + h);ctx.closePath();ctx.fill();

@@ -21,7 +21,8 @@ enum {
     ON_LEVEL_ENEMY, ON_LEVEL_PLAYER, ON_LEVEL_GOAL, ON_LEVEL_TRIGGER,
     ON_LEVEL_SLOPE, /* appended to keep all existing published type IDs stable */
     ON_LEVEL_ORB_YELLOW, ON_LEVEL_ORB_ORANGE,
-    ON_LEVEL_PARTICLE /* invisible in play; emits a configurable-color particle trail */
+    ON_LEVEL_PARTICLE, /* configurable particle trail */
+    ON_LEVEL_CHECKPOINT /* activates on overlap and remembers a respawn point */
 };
 enum { ON_TRIGGER_TOUCH, ON_TRIGGER_COIN, ON_TRIGGER_MANUAL, ON_TRIGGER_START };
 enum { ON_TRIGGER_TOGGLE, ON_TRIGGER_MOVE, ON_TRIGGER_RECOLOR,

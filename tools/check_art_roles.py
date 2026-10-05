@@ -34,6 +34,8 @@ EXPECTED = {
     "LEVEL_TRIGGER_GRAVITY": "assets/art/Триггер-гравитации.png",
     "LEVEL_ORB_ORANGE": "assets/art/Оранжевый opб.png",
     "LEVEL_ORB_YELLOW": "assets/art/Жёлтый орб.png",
+    "LEVEL_CHECKPOINT_INACTIVE": "assets/art/Чекпоинт-выключен.png",
+    "LEVEL_CHECKPOINT_ACTIVE": "assets/art/Чекпоинт-включён.png",
 }
 
 assert len(IMAGES) == len(EXPECTED) == len(dict(IMAGES)), "Unexpected extra/missing sprite"
@@ -49,6 +51,8 @@ EXPECTED_ALPHA_BOUNDS = {
     "DUCK": (20, 21, 99, 99),
     "COIN": (5, 3, 96, 97),
     "LEVEL_FLAG": (2, 3, 50, 100),
+    "LEVEL_CHECKPOINT_INACTIVE": (14, 0, 75, 100),
+    "LEVEL_CHECKPOINT_ACTIVE": (14, 0, 75, 100),
 }
 for name, expected in EXPECTED_ALPHA_BOUNDS.items():
     w, h, pixels = png_pixels(ROOT / EXPECTED[name])
@@ -62,10 +66,11 @@ for name, expected in EXPECTED_ALPHA_BOUNDS.items():
 for name in ("DUCK_CONE", "DUCK_BUCKET", "COIN", "LEVEL_TRIGGER",
              "LEVEL_TRIGGER_ROTATE", "LEVEL_TRIGGER_FOREVER",
              "LEVEL_TRIGGER_INVISIBILITY", "LEVEL_TRIGGER_NO_COLLISION",
-             "LEVEL_TRIGGER_GRAVITY", "LEVEL_ORB_ORANGE", "LEVEL_ORB_YELLOW"):
+             "LEVEL_TRIGGER_GRAVITY", "LEVEL_ORB_ORANGE", "LEVEL_ORB_YELLOW",
+             "LEVEL_CHECKPOINT_INACTIVE", "LEVEL_CHECKPOINT_ACTIVE"):
     _, _, pixels = png_pixels(ROOT / EXPECTED[name])
     assert pixels[0] == 0, (name, "expected transparent top-left corner")
 _, _, slope_pixels = png_pixels(ROOT / EXPECTED["LEVEL_SLOPE"])
 assert slope_pixels[0] >> 24 <= 16, "slope artwork should fade at its transparent corner"
 
-print("OK: twenty-nine named sprites, including block, slope, platform, flag, spike, six trigger variants and both orbs")
+print("OK: thirty-one named sprites, including block, slope, platform, flag, spike, six trigger variants, both orbs and both checkpoint states")

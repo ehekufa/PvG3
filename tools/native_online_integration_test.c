@@ -10,6 +10,7 @@
 #endif
 
 #include <assert.h>
+#include <math.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -309,11 +310,13 @@ static void assert_platformer_art(void) {
                        PV_ART_LEVEL_TRIGGER_NO_COLLISION,
                        PV_ART_LEVEL_TRIGGER_GRAVITY, PV_ART_LEVEL_FLAG,
                        PV_ART_LEVEL_SPIKE, PV_ART_LEVEL_SLOPE,
-                       PV_ART_LEVEL_ORB_ORANGE, PV_ART_LEVEL_ORB_YELLOW};
+                       PV_ART_LEVEL_ORB_ORANGE, PV_ART_LEVEL_ORB_YELLOW,
+                       PV_ART_LEVEL_CHECKPOINT_INACTIVE,
+                       PV_ART_LEVEL_CHECKPOINT_ACTIVE};
     const int widths[] = {100, 100, 100, 100, 100, 100, 100, 100, 50,
-                          100, 100, 100, 100};
+                          100, 100, 100, 100, 100, 100};
     const int heights[] = {100, 50, 100, 100, 100, 100, 100, 100, 100,
-                           100, 100, 100, 100};
+                           100, 100, 100, 100, 100, 100};
     for (size_t i = 0; i < sizeof ids / sizeof ids[0]; ++i) {
         int width = 0, height = 0, visible = 0;
         const uint32_t *pixels = game_art_rgba(ids[i], &width, &height);
@@ -617,6 +620,73 @@ static void native_trigger_runtime_regression(void) {
            game_debug_custom_player_y() < yellow_bounce_y);
     game_custom_level_exit();
 
+    /* Checkpoints activate once touched and own the next death respawn point. */
+    level.object_count = 6;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+        .x=0,.y=8,.w=16,.h=2,.visible=1,.number=3};
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
+        .x=1,.y=7,.w=.65f,.h=.85f,.visible=1,.number=1};
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_CHECKPOINT,
+        .x=2,.y=7,.w=1,.h=1,.visible=1,.number=4};
+    level.objects[4] = (OnLevelObject){.id=5,.type=ON_LEVEL_CHECKPOINT,
+        .x=4,.y=7,.w=1,.h=1,.visible=1,.number=5};
+    level.objects[5] = (OnLevelObject){.id=6,.type=ON_LEVEL_HAZARD,
+        .x=7,.y=7,.w=1,.h=1,.visible=1,.number=6};
+    assert(game_workshop_preview(&level));
+    game_custom_control(1, 0, 0);
+    int saw_first_checkpoint = 0, saw_latest_checkpoint = 0, died_at_latest = 0;
+    float latest_spawn_x = (4.0f + .5f - .65f * .5f) * 80.0f;
+    float latest_spawn_y = (7.0f + 1.0f - .85f) * 72.0f;
+    for (int i = 0; i < 80; ++i) {
+        float previous_x = game_debug_custom_player_x();
+        game_tick(.05f, NULL);
+        int active_checkpoint = game_debug_custom_checkpoint_id();
+        if (active_checkpoint == 4) saw_first_checkpoint = 1;
+        if (active_checkpoint == 5) saw_latest_checkpoint = 1;
+        if (active_checkpoint == 5 && previous_x > latest_spawn_x + 100.0f &&
+            fabsf(game_debug_custom_player_x() - latest_spawn_x) < .001f) {
+            died_at_latest = 1;break;
+        }
+    }
+    game_custom_control(0, 0, 0);
+    assert(saw_first_checkpoint && saw_latest_checkpoint && died_at_latest);
+    assert(fabsf(game_debug_custom_player_x() - latest_spawn_x) < .001f &&
+           fabsf(game_debug_custom_player_y() - latest_spawn_y) < .001f &&
+           game_debug_custom_player_vx() == 0.0f &&
+           game_debug_custom_player_vy() == 0.0f &&
+           !game_debug_custom_player_grounded() &&
+           game_debug_custom_checkpoint_id() == 5);
+    game_custom_level_exit();
+
+    /* Falling beyond the world boundary also returns to the saved checkpoint. */
+    level.object_count = 3;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_PLAYER,
+        .x=1,.y=99999.0f,.w=.65f,.h=.85f,.visible=1,.number=1};
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_CHECKPOINT,
+        .x=1,.y=99999.0f,.w=1,.h=1,.visible=1,.number=3};
+    assert(game_workshop_preview(&level));
+    game_tick(0, NULL);
+    assert(game_debug_custom_checkpoint_id() == 3);
+    float fall_spawn_y = (99999.0f + 1.0f - .85f) * 72.0f;
+    int fell_to_checkpoint = 0;
+    for (int i = 0; i < 60; ++i) {
+        float previous_y = game_debug_custom_player_y();
+        game_tick(.05f, NULL);
+        if (previous_y > fall_spawn_y + 1.0f &&
+            fabsf(game_debug_custom_player_y() - fall_spawn_y) < .001f) {
+            fell_to_checkpoint = 1;break;
+        }
+    }
+    assert(fell_to_checkpoint && game_debug_custom_checkpoint_id() == 3 &&
+           fabsf(game_debug_custom_player_vy()) < .001f &&
+           fabsf(game_debug_custom_player_vx()) < .001f &&
+           !game_debug_custom_player_grounded());
+    game_custom_level_exit();
+
     /* The art-free particle emitter draws its own trail in the native runtime. */
     static uint32_t with_particles[GAME_W * GAME_H];
     static uint32_t without_particles[GAME_W * GAME_H];
@@ -729,6 +799,8 @@ static int run_lvgl_test(void) {
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_GRAVITY));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_ORB_ORANGE));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_ORB_YELLOW));
+    assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_CHECKPOINT_INACTIVE));
+    assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_CHECKPOINT_ACTIVE));
     game_set_lvgl_ui(1);
     ui_snapshot("menu");
     assert(ui_pixels[60 * GAME_W + 545] == 0xFFFFFFFFu); /* campaign */
@@ -964,6 +1036,14 @@ static int run_lvgl_test(void) {
            on_level_particle_valid(&editor_probe.objects[editor_probe.object_count - 1].emitter));
 #endif
     ui_tap(640, 659);ui_snapshot("workshop_particle_settings_closed");
+    ui_tap(508, 596); /* goals group contains both the finish and checkpoints */
+    ui_tap(1108, 439); /* checkpoint variant */
+    ui_tap(675, 220); /* place a checkpoint on an empty map cell */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[editor_probe.object_count - 1].type ==
+           ON_LEVEL_CHECKPOINT);
+#endif
     ui_tap(80, 596); /* reselect blocks category and choose its square variant */
     ui_tap(834, 439);
     ui_tap(422, 205); /* now maps to world X=10 */

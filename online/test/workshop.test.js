@@ -49,7 +49,7 @@ test('new drafts are valid and object placement keeps player and finish unique',
 test('the 20,000-object ceiling is combined across blocks, triggers, coins and every other type', () => {
   const level = newDraft('draft-limit');
   const additionalTypes = ['block', 'ground', 'hazard', 'coin', 'enemy', 'trigger', 'slope',
-    'orb-yellow', 'orb-orange', 'particle'];
+    'orb-yellow', 'orb-orange', 'particle', 'checkpoint'];
   level.objects = Array.from({length:MAX_LEVEL_OBJECTS}, (_, index) => {
     const type = index === 0 ? 'player' : index === 1 ? 'goal' : index === 2 ? 'ground' :
       additionalTypes[(index - 3) % additionalTypes.length];
@@ -110,6 +110,7 @@ test('published records round-trip through the browser/native wire schema', () =
   const level = newDraft();level.title = 'Острова над рекой';level.description = 'Монеты и тайный мост';
   const block = addObject(level, 'block', 6, 6);
   const slope = addObject(level, 'slope', 8, 6);
+  const checkpoint = addObject(level, 'checkpoint', 10, 6);
   const emitter = addObject(level, 'particle', 11, 4);
   emitter.emitter = {...emitter.emitter, continuous:false, gravityEnabled:true,
     rate:13, lifetime:2.4, speed:177, spread:72, size:7, direction:-45, gravity:140};
@@ -123,6 +124,8 @@ test('published records round-trip through the browser/native wire schema', () =
   const restored = draftFromPublished(record);
   assert.equal(restored.title, level.title);
   assert.equal(restored.objects.find(o => o.id === slope.id).type, 'slope');
+  assert.equal(restored.objects.find(o => o.id === checkpoint.id).type, 'checkpoint');
+  assert.equal(record.project.objects.find(o => o.id === checkpoint.id).type, 'checkpoint');
   assert.equal(restored.objects.find(o => o.id === emitter.id).type, 'particle');
   assert.deepEqual(restored.objects.find(o => o.id === emitter.id).emitter, emitter.emitter);
   assert.deepEqual(record.project.objects.find(o => o.id === emitter.id).emitter,
@@ -292,12 +295,15 @@ test('control mode defaults to buttons on touch devices and can be chosen explic
 test('workshop editor and preview use the supplied level artwork and tile wide platforms', () => {
   const level = newDraft();
   addObject(level, 'slope', 5, 6);
+  addObject(level, 'checkpoint', 8, 6);
   const art = Object.fromEntries(LEVEL_TYPES.map(type => [type,
     {type, naturalWidth: 100, naturalHeight: type === 'ground' ? 50 : 100}]));
   const editor = recordingCanvas();
   drawEditorCanvas(editor.canvas, level, 0, 'build', art);
   assert(editor.images.some(call => call.image.type === 'player'));
   assert(editor.images.some(call => call.image.type === 'goal'));
+  assert(editor.images.some(call => call.image.type === 'checkpoint'),
+    'the editor shows an inactive checkpoint from the supplied art');
   assert(editor.images.some(call => call.image.type === 'slope'),
     'the slope uses the supplied slope drawing');
   assert.equal(editor.images.filter(call => call.image.type === 'ground').length, 16);
@@ -306,7 +312,56 @@ test('workshop editor and preview use the supplied level artwork and tile wide p
   drawPreviewCanvas(preview.canvas, createPreviewState(level), 'keyboard', art);
   assert(preview.images.some(call => call.image.type === 'player'));
   assert(preview.images.some(call => call.image.type === 'goal'));
+  assert(preview.images.some(call => call.image.type === 'checkpoint'),
+    'the preview starts checkpoints in the inactive state');
   assert.equal(preview.images.filter(call => call.image.type === 'ground').length, 16);
+});
+
+test('checkpoints show their active art and respawn at the most recently touched marker', () => {
+  const level = newDraft('checkpoint-runtime');
+  const first = addObject(level, 'checkpoint', 2, 7);
+  const latest = addObject(level, 'checkpoint', 4, 7);
+  addObject(level, 'hazard', 7, 7);
+  assert.equal(validateDraft(level).ok, true);
+  const state = createPreviewState(level);
+  const activationOrder = [];
+  let previousCheckpoint = 0, died = false;
+  for (let frame = 0; frame < 80; frame++) {
+    const previousX = state.x;
+    stepPreview(state, {axis: 1}, .05);
+    if (state.checkpointId && state.checkpointId !== previousCheckpoint) {
+      activationOrder.push(state.checkpointId);previousCheckpoint = state.checkpointId;
+    }
+    if (state.checkpointId === latest.id && previousX > state.spawn.x + 100 &&
+        state.x === state.spawn.x) {died = true;break;}
+  }
+  assert.deepEqual(activationOrder, [first.id, latest.id],
+    'each touched marker replaces the saved checkpoint in encounter order');
+  assert(died, 'the hazard should kill the player after both checkpoint activations');
+  assert.equal(state.checkpointId, latest.id);
+  assert(Math.abs(state.x - (latest.x + latest.w / 2 - .65 / 2) * 80) < 1e-6);
+  assert(Math.abs(state.y - (latest.y + latest.h - .85) * 72) < 1e-6);
+  assert.equal(state.vx, 0);assert.equal(state.vy, 0);
+  assert.equal(state.grounded, false);assert.equal(state.jumpHeld, false);
+
+  const inactiveArt = {type:'checkpoint-inactive', naturalWidth:100, naturalHeight:100};
+  const activeArt = {type:'checkpoint-active', naturalWidth:100, naturalHeight:100};
+  const art = {checkpoint:inactiveArt, checkpointActive:activeArt};
+  const editor = recordingCanvas();
+  drawEditorCanvas(editor.canvas, level, 0, 'build', art);
+  assert.equal(editor.images.filter(call => call.image === inactiveArt).length, 2,
+    'editor placements always use the inactive artwork');
+  const preview = recordingCanvas();
+  drawPreviewCanvas(preview.canvas, state, 'keyboard', art);
+  assert.equal(preview.images.filter(call => call.image === activeArt).length, 1,
+    'only the most recently activated checkpoint uses active artwork');
+  assert.equal(preview.images.filter(call => call.image === inactiveArt).length, 1);
+
+  state.y = WORLD_LIMIT * 72 + 10;state.vx = 40;state.vy = 800;state.grounded = true;
+  stepPreview(state, {}, 0);
+  assert.equal(state.x, state.spawn.x);assert.equal(state.y, state.spawn.y);
+  assert.equal(state.vx, 0);assert.equal(state.vy, 0);
+  assert.equal(state.checkpointId, latest.id, 'falling preserves the activated checkpoint');
 });
 
 test('typed trigger settings persist per object and apply group movement, rotation and forever actions', () => {

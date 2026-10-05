@@ -133,6 +133,8 @@ _Static_assert((int)PV_ART_BREAD == (int)SPR_KHLEBUSHEK &&
                (int)PV_ART_LEVEL_TRIGGER_GRAVITY == (int)SPR_LEVEL_TRIGGER_GRAVITY &&
                (int)PV_ART_LEVEL_ORB_ORANGE == (int)SPR_LEVEL_ORB_ORANGE &&
                (int)PV_ART_LEVEL_ORB_YELLOW == (int)SPR_LEVEL_ORB_YELLOW &&
+               (int)PV_ART_LEVEL_CHECKPOINT_INACTIVE == (int)SPR_LEVEL_CHECKPOINT_INACTIVE &&
+               (int)PV_ART_LEVEL_CHECKPOINT_ACTIVE == (int)SPR_LEVEL_CHECKPOINT_ACTIVE &&
                (int)PV_ART_COUNT == (int)SPR_COUNT,
                "LVGL art IDs must match the PNG packer");
 static uint32_t *sprite_pixels[SPR_COUNT];
@@ -443,6 +445,8 @@ static int custom_player_index = -1;
 static int custom_id_map[CUSTOM_ID_MAP_CAP];
 static float custom_player_x, custom_player_y, custom_player_w, custom_player_h;
 static float custom_player_vx, custom_player_vy;
+static float custom_respawn_x, custom_respawn_y;
+static int custom_checkpoint_id;
 static float custom_gravity = 1450.0f;
 static float custom_elapsed_time;
 static int custom_player_grounded, custom_control_axis, custom_jump_request;
@@ -2420,6 +2424,8 @@ static void custom_art_alpha_bounds(int type, int flip_x, int flip_y,
         *left = .05f;*top = .03f;*right = .96f;*bottom = .97f;break;
     case ON_LEVEL_GOAL:
         *left = .04f;*top = .03f;break;
+    case ON_LEVEL_CHECKPOINT:
+        *left = .14f;*right = .75f;break;
     default: break;
     }
     if (flip_x) {
@@ -2542,13 +2548,25 @@ static OnLevelObject *custom_find_id(int id) {
     int index = custom_id_lookup(id);
     return index >= 0 ? &custom_level.objects[index] : NULL;
 }
+static void custom_activate_checkpoint(const OnLevelObject *checkpoint) {
+    if (!checkpoint || checkpoint->type != ON_LEVEL_CHECKPOINT) return;
+    custom_checkpoint_id = checkpoint->id;
+    float player_w_tiles = custom_player_w / CUSTOM_TILE_W;
+    float player_h_tiles = custom_player_h / CUSTOM_TILE_H;
+    custom_respawn_x = custom_world_clamp(
+        checkpoint->x + checkpoint->w * .5f - player_w_tiles * .5f,
+        player_w_tiles) * CUSTOM_TILE_W;
+    custom_respawn_y = custom_world_clamp(
+        checkpoint->y + checkpoint->h - player_h_tiles,
+        player_h_tiles) * CUSTOM_TILE_H;
+}
 static void custom_player_reset(void) {
     if (custom_player_index < 0 || custom_player_index >= custom_object_count) return;
-    OnLevelObject *player = &custom_level.objects[custom_player_index];
-    custom_player_x = player->x * CUSTOM_TILE_W;
-    custom_player_y = player->y * CUSTOM_TILE_H;
+    custom_player_x = custom_respawn_x;
+    custom_player_y = custom_respawn_y;
     custom_player_vx = custom_player_vy = 0;
     custom_player_grounded = 0;
+    custom_control_axis = custom_jump_request = custom_jump_held = 0;
 }
 static int custom_platformer_start(const OnPublishedLevel *source) {
     if (!source || source->object_count < 1 ||
@@ -2579,6 +2597,9 @@ static int custom_platformer_start(const OnPublishedLevel *source) {
     custom_camera_x = custom_camera_y = 0;
     custom_player_w = CUSTOM_TILE_W * 0.65f;
     custom_player_h = CUSTOM_TILE_H * 0.85f;
+    custom_checkpoint_id = 0;
+    custom_respawn_x = custom_level.objects[custom_player_index].x * CUSTOM_TILE_W;
+    custom_respawn_y = custom_level.objects[custom_player_index].y * CUSTOM_TILE_H;
     custom_player_reset();
     custom_level_coins = 0;custom_level_won = 0;custom_level_active = 1;
     custom_control_axis = custom_jump_request = custom_jump_held = 0;
@@ -2588,6 +2609,7 @@ static int custom_platformer_start(const OnPublishedLevel *source) {
 }
 static void custom_platformer_stop(void) {
     custom_level_active = 0;custom_level_won = 0;custom_object_count = 0;
+    custom_checkpoint_id = 0;custom_respawn_x = custom_respawn_y = 0;
     custom_gravity = 1450.0f;custom_elapsed_time = 0;
     custom_group_rotation_count = 0;
     custom_control_axis = custom_jump_request = custom_jump_held = 0;
@@ -2812,29 +2834,45 @@ static void custom_platformer_update(float dt) {
         custom_player_y += custom_player_vy * sub_dt;
         custom_player_grounded = custom_resolve_player_solids();
     }
+    int player_respawned = 0;
     if (custom_player_y > CUSTOM_WORLD_LIMIT * CUSTOM_TILE_H ||
-        custom_player_y + custom_player_h < -CUSTOM_WORLD_LIMIT * CUSTOM_TILE_H)
-        custom_player_reset();
-    if (custom_player_collision_enabled) {
+        custom_player_y + custom_player_h < -CUSTOM_WORLD_LIMIT * CUSTOM_TILE_H) {
+        custom_player_reset();player_respawned = 1;
+    }
+    if (custom_player_collision_enabled && !player_respawned) {
         float player_x, player_y, player_w, player_h;
         custom_player_visible_hitbox(&player_x, &player_y, &player_w, &player_h);
         for (int i = 0; i < custom_object_count; ++i) {
             OnLevelObject *object = &custom_level.objects[i];
-            if (!object->visible || object->type == ON_LEVEL_PLAYER ||
-                object->type == ON_LEVEL_TRIGGER || object->type == ON_LEVEL_PARTICLE ||
-                object->type == ON_LEVEL_ORB_YELLOW ||
-                object->type == ON_LEVEL_ORB_ORANGE ||
+            if (!object->visible ||
+                (object->type != ON_LEVEL_HAZARD && object->type != ON_LEVEL_ENEMY) ||
                 custom_object_collision_disabled(object) ||
                 !custom_player_object_contact(player_x, player_y,
                     player_w, player_h, object, custom_player_vx,
                     custom_player_vy, NULL)) continue;
-            if (object->type == ON_LEVEL_HAZARD || object->type == ON_LEVEL_ENEMY) {
-                custom_player_reset();
-            } else if (object->type == ON_LEVEL_COIN) {
-                object->visible = 0;custom_level_coins++;
-                custom_fire_triggers(ON_TRIGGER_COIN);
-            } else if (object->type == ON_LEVEL_GOAL) {
-                custom_level_won = 1;
+            custom_player_reset();player_respawned = 1;break;
+        }
+        if (!player_respawned) {
+            custom_player_visible_hitbox(&player_x, &player_y, &player_w, &player_h);
+            for (int i = 0; i < custom_object_count; ++i) {
+                OnLevelObject *object = &custom_level.objects[i];
+                if (!object->visible || object->type == ON_LEVEL_PLAYER ||
+                    object->type == ON_LEVEL_TRIGGER || object->type == ON_LEVEL_PARTICLE ||
+                    object->type == ON_LEVEL_ORB_YELLOW ||
+                    object->type == ON_LEVEL_ORB_ORANGE ||
+                    object->type == ON_LEVEL_HAZARD || object->type == ON_LEVEL_ENEMY ||
+                    custom_object_collision_disabled(object) ||
+                    !custom_player_object_contact(player_x, player_y,
+                        player_w, player_h, object, custom_player_vx,
+                        custom_player_vy, NULL)) continue;
+                if (object->type == ON_LEVEL_COIN) {
+                    object->visible = 0;custom_level_coins++;
+                    custom_fire_triggers(ON_TRIGGER_COIN);
+                } else if (object->type == ON_LEVEL_GOAL) {
+                    custom_level_won = 1;
+                } else if (object->type == ON_LEVEL_CHECKPOINT) {
+                    custom_activate_checkpoint(object);
+                }
             }
         }
     }
@@ -2897,6 +2935,10 @@ static void custom_draw_object(const OnLevelObject *o) {
         break;
     case ON_LEVEL_GOAL:
         DRAW_LEVEL_ART(PV_ART_LEVEL_FLAG);break;
+    case ON_LEVEL_CHECKPOINT:
+        DRAW_LEVEL_ART(custom_checkpoint_id == o->id ?
+                       PV_ART_LEVEL_CHECKPOINT_ACTIVE :
+                       PV_ART_LEVEL_CHECKPOINT_INACTIVE);break;
     case ON_LEVEL_TRIGGER:
         break; /* Trigger textures are editor-only; triggers stay hidden in play. */
     }
@@ -3615,8 +3657,11 @@ float game_debug_cooldown(int plant) {
 }
 float game_debug_custom_player_x(void) {return custom_player_x;}
 float game_debug_custom_player_y(void) {return custom_player_y;}
+float game_debug_custom_player_vx(void) {return custom_player_vx;}
 float game_debug_custom_player_vy(void) {return custom_player_vy;}
+int game_debug_custom_player_grounded(void) {return custom_player_grounded;}
 float game_debug_custom_gravity(void) {return custom_gravity;}
+int game_debug_custom_checkpoint_id(void) {return custom_checkpoint_id;}
 int game_debug_custom_object(int id, OnLevelObject *out) {
     if (!out) return 0;
     OnLevelObject *object = custom_find_id(id);

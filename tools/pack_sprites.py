@@ -44,6 +44,8 @@ IMAGES = [
     ("LEVEL_TRIGGER_GRAVITY", "assets/art/Триггер-гравитации.png"),
     ("LEVEL_ORB_ORANGE", "assets/art/Оранжевый opб.png"),
     ("LEVEL_ORB_YELLOW", "assets/art/Жёлтый орб.png"),
+    ("LEVEL_CHECKPOINT_INACTIVE", "assets/art/Чекпоинт-выключен.png"),
+    ("LEVEL_CHECKPOINT_ACTIVE", "assets/art/Чекпоинт-включён.png"),
 ]
 
 

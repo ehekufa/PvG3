@@ -87,7 +87,8 @@ enum {
     U_WORKSHOP_NUDGE_BASE = 1520, U_WORKSHOP_SCALE_BASE = 1530,
     U_WORKSHOP_ROTATE_BASE = 1540, U_WORKSHOP_FLIP_BASE = 1550,
     U_WORKSHOP_ORB_VARIANT_BASE = 1560,
-    U_WORKSHOP_PARTICLE_BASE = 1570
+    U_WORKSHOP_PARTICLE_BASE = 1570,
+    U_WORKSHOP_GOAL_VARIANT_BASE = 1580
 };
 
 static lv_display_t *display;
@@ -160,6 +161,7 @@ static int workshop_player_selected, workshop_goal_selected, workshop_ground_sel
 static int workshop_tool, workshop_palette_type = ON_LEVEL_BLOCK;
 static int workshop_block_variant = ON_LEVEL_BLOCK;
 static int workshop_orb_variant = ON_LEVEL_ORB_YELLOW;
+static int workshop_goal_variant = ON_LEVEL_GOAL;
 static int workshop_trigger_kind = ON_TRIGGER_KIND_MOVE;
 static int workshop_camera_x, workshop_camera_y;
 static float workshop_ground_x, workshop_ground_y = 8, workshop_ground_w = 16,
@@ -796,6 +798,7 @@ static void workshop_reset_draft(void) {
     workshop_palette_type = ON_LEVEL_BLOCK;
     workshop_block_variant = ON_LEVEL_BLOCK;
     workshop_orb_variant = ON_LEVEL_ORB_YELLOW;
+    workshop_goal_variant = ON_LEVEL_GOAL;
     workshop_trigger_kind = ON_TRIGGER_KIND_MOVE;
     workshop_camera_x = workshop_camera_y = 0;
     workshop_ground_x = 0;workshop_ground_y = 8;
@@ -947,6 +950,8 @@ static int workshop_point_in_object(float px, float py, float x, float y,
         left = .05f;top = .03f;right = .96f;bottom = .97f;break;
     case ON_LEVEL_GOAL:
         left = .04f;top = .03f;break;
+    case ON_LEVEL_CHECKPOINT:
+        left = .14f;right = .75f;break;
     default: break;
     }
     return nx >= left && nx <= right && ny >= top && ny <= bottom;
@@ -1052,9 +1057,17 @@ static void workshop_load_selected_properties(int object) {
             workshop_palette_type = ON_LEVEL_ORB_YELLOW;
             workshop_orb_variant = workshop_objects[object].type;
         }
+        if (workshop_objects[object].type == ON_LEVEL_GOAL ||
+            workshop_objects[object].type == ON_LEVEL_CHECKPOINT) {
+            workshop_palette_type = ON_LEVEL_GOAL;
+            workshop_goal_variant = workshop_objects[object].type;
+        }
     } else if (object == -2) workshop_group_id = 1;
-    else if (object == -3) workshop_group_id = 2;
-    else if (object == -4) workshop_group_id = 3;
+    else if (object == -3) {
+        workshop_group_id = 2;
+        workshop_palette_type = ON_LEVEL_GOAL;
+        workshop_goal_variant = ON_LEVEL_GOAL;
+    } else if (object == -4) workshop_group_id = 3;
 }
 
 static void workshop_place_object(int type, int col, int row) {
@@ -1124,7 +1137,9 @@ static void workshop_cell_tap(int cell) {
         int type = workshop_palette_type == ON_LEVEL_BLOCK ?
                    workshop_block_variant :
                    workshop_palette_type == ON_LEVEL_ORB_YELLOW ?
-                   workshop_orb_variant : workshop_palette_type;
+                   workshop_orb_variant :
+                   workshop_palette_type == ON_LEVEL_GOAL ?
+                   workshop_goal_variant : workshop_palette_type;
         workshop_place_object(type, col, row);
     } else if (workshop_tool == WS_TOOL_EDIT) {
         workshop_select_only(found);
@@ -1361,6 +1376,7 @@ static const char *workshop_object_name(int type) {
     case ON_LEVEL_ENEMY: return "Гусь";
     case ON_LEVEL_PLAYER: return "Игрок";
     case ON_LEVEL_GOAL: return "Финиш";
+    case ON_LEVEL_CHECKPOINT: return "Чекпоинт";
     default: return "Триггер";
     }
 }
@@ -1406,6 +1422,7 @@ static int workshop_object_art(int type, int trigger_kind) {
     case ON_LEVEL_ENEMY: return PV_ART_DUCK;
     case ON_LEVEL_PLAYER: return PV_ART_BREAD;
     case ON_LEVEL_GOAL: return PV_ART_LEVEL_FLAG;
+    case ON_LEVEL_CHECKPOINT: return PV_ART_LEVEL_CHECKPOINT_INACTIVE;
     case ON_LEVEL_TRIGGER:
         return trigger_kind == ON_TRIGGER_KIND_ROTATE ? PV_ART_LEVEL_TRIGGER_ROTATE :
                trigger_kind == ON_TRIGGER_KIND_FOREVER ? PV_ART_LEVEL_TRIGGER_FOREVER :
@@ -2629,6 +2646,8 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
                                 workshop_tool == WS_TOOL_BUILD;
     int show_orb_variants = workshop_palette_type == ON_LEVEL_ORB_YELLOW &&
                             workshop_tool == WS_TOOL_BUILD;
+    int show_goal_variants = workshop_palette_type == ON_LEVEL_GOAL &&
+                             workshop_tool == WS_TOOL_BUILD;
     if (show_block_variants) {
         label(root, 769, 394, 448, 27, "ВАРИАНТЫ БЛОКОВ", 0,
               WS_YELLOW, LV_TEXT_ALIGN_LEFT);
@@ -2666,10 +2685,22 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
                             U_WORKSHOP_ORB_VARIANT_BASE + i,
                             workshop_orb_variant == orb_types[i] ? WS_CYAN : BUTTON_GRAY);
     }
+    if (show_goal_variants) {
+        label(root, 769, 394, 448, 27, "ЦЕЛИ", 0,
+              WS_YELLOW, LV_TEXT_ALIGN_LEFT);
+        static const int goal_types[] = {ON_LEVEL_GOAL, ON_LEVEL_CHECKPOINT};
+        static const char *const goal_names[] = {"Финиш", "Чекпоинт"};
+        static const int goal_x[] = {760, 998};
+        for (int i = 0; i < 2; ++i)
+            workshop_button(root, goal_x[i], 420, 222, 38, goal_names[i], 0,
+                            U_WORKSHOP_GOAL_VARIANT_BASE + i,
+                            workshop_goal_variant == goal_types[i] ? WS_CYAN : BUTTON_GRAY);
+    }
     char camera_label[48];
     snprintf(camera_label, sizeof camera_label, "Карта X %d  Y %d",
              workshop_camera_x, workshop_camera_y);
-    int camera_y = (show_block_variants || show_trigger_variants || show_orb_variants) ? 507 : 414;
+    int camera_y = (show_block_variants || show_trigger_variants ||
+                    show_orb_variants || show_goal_variants) ? 507 : 414;
     label(root, 768, camera_y, 214, 38, camera_label, 0,
           WS_CREAM, LV_TEXT_ALIGN_LEFT);
     workshop_arrow_button(root, 984, camera_y - 3, 52, 45,
@@ -2685,7 +2716,7 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
         ON_LEVEL_ENEMY, ON_LEVEL_PLAYER, ON_LEVEL_GOAL, ON_LEVEL_TRIGGER,
         ON_LEVEL_ORB_YELLOW};
     const char *palette_names[] = {"Блоки", "Шипы", "Монета", "Гусь",
-        "Игрок", "Финиш", "Триггер", "Орбы"};
+        "Игрок", "Цели", "Триггер", "Орбы"};
     for (int i = 0; i < 8; ++i) {
         int x = 39 + i * 86;
         int art_id = workshop_object_art(palette_types[i], workshop_trigger_kind);
@@ -3213,6 +3244,8 @@ static uint32_t state_signature(int phase, const OnNetView *v) {
         h = mix(h, &workshop_tool, sizeof workshop_tool);
         h = mix(h, &workshop_palette_type, sizeof workshop_palette_type);
         h = mix(h, &workshop_block_variant, sizeof workshop_block_variant);
+        h = mix(h, &workshop_orb_variant, sizeof workshop_orb_variant);
+        h = mix(h, &workshop_goal_variant, sizeof workshop_goal_variant);
         h = mix(h, &workshop_trigger_kind, sizeof workshop_trigger_kind);
         h = mix(h, &workshop_camera_x, sizeof workshop_camera_x);
         h = mix(h, &workshop_camera_y, sizeof workshop_camera_y);
@@ -3527,6 +3560,8 @@ static void pressed(lv_event_t *ev) {
             workshop_block_variant = ON_LEVEL_BLOCK;
         if (workshop_palette_type == ON_LEVEL_ORB_YELLOW)
             workshop_orb_variant = ON_LEVEL_ORB_YELLOW;
+        if (workshop_palette_type == ON_LEVEL_GOAL)
+            workshop_goal_variant = ON_LEVEL_GOAL;
         workshop_tool = WS_TOOL_BUILD;
         dirty = 1;return;
     }
@@ -3551,6 +3586,12 @@ static void pressed(lv_event_t *ev) {
         code < U_WORKSHOP_ORB_VARIANT_BASE + 2) {
         static const int variants[] = {ON_LEVEL_ORB_YELLOW, ON_LEVEL_ORB_ORANGE};
         workshop_orb_variant = variants[code - U_WORKSHOP_ORB_VARIANT_BASE];
+        dirty = 1;return;
+    }
+    if (code >= U_WORKSHOP_GOAL_VARIANT_BASE &&
+        code < U_WORKSHOP_GOAL_VARIANT_BASE + 2) {
+        static const int variants[] = {ON_LEVEL_GOAL, ON_LEVEL_CHECKPOINT};
+        workshop_goal_variant = variants[code - U_WORKSHOP_GOAL_VARIANT_BASE];
         dirty = 1;return;
     }
     if (code >= U_WORKSHOP_PARTICLE_BASE &&
@@ -3936,7 +3977,9 @@ int lvgl_ui_init(void) {
                            PV_ART_LEVEL_TRIGGER_GRAVITY,
                            PV_ART_LEVEL_FLAG, PV_ART_LEVEL_SPIKE,
                            PV_ART_LEVEL_SLOPE, PV_ART_LEVEL_ORB_ORANGE,
-                           PV_ART_LEVEL_ORB_YELLOW};
+                           PV_ART_LEVEL_ORB_YELLOW,
+                           PV_ART_LEVEL_CHECKPOINT_INACTIVE,
+                           PV_ART_LEVEL_CHECKPOINT_ACTIVE};
     for (size_t j = 0; j < sizeof art_ids / sizeof art_ids[0]; j++) {
         int id = art_ids[j], w = 0, h = 0;
         const uint32_t *original = game_art_rgba(id, &w, &h);
