@@ -88,7 +88,8 @@ enum {
     U_WORKSHOP_ROTATE_BASE = 1540, U_WORKSHOP_FLIP_BASE = 1550,
     U_WORKSHOP_ORB_VARIANT_BASE = 1560,
     U_WORKSHOP_PARTICLE_BASE = 1570,
-    U_WORKSHOP_GOAL_VARIANT_BASE = 1580
+    U_WORKSHOP_GOAL_VARIANT_BASE = 1580,
+    U_WORKSHOP_PORTAL_VARIANT_BASE = 1590
 };
 
 static lv_display_t *display;
@@ -104,7 +105,7 @@ static int active_phase = -1, page = 0, chosen_map = 1, search_open;
 static int custom_level_page;
 static int pointer_down, captured, touch_x, touch_y, dirty;
 #define CUSTOM_TOUCH_MAX 10
-typedef struct {int id, active, axis, jump, trigger;} CustomTouch;
+typedef struct {int id, active, axis, jump, up, down, trigger;} CustomTouch;
 static CustomTouch custom_touches[CUSTOM_TOUCH_MAX];
 /* A packet is dragged over the author's board. LVGL draws the packet and its
  * ghost; game.c still validates the drop, so invalid water/occupied cells and
@@ -162,6 +163,7 @@ static int workshop_tool, workshop_palette_type = ON_LEVEL_BLOCK;
 static int workshop_block_variant = ON_LEVEL_BLOCK;
 static int workshop_orb_variant = ON_LEVEL_ORB_YELLOW;
 static int workshop_goal_variant = ON_LEVEL_GOAL;
+static int workshop_portal_variant = ON_LEVEL_PORTAL_NORMAL;
 static int workshop_trigger_kind = ON_TRIGGER_KIND_MOVE;
 static int workshop_camera_x, workshop_camera_y;
 static float workshop_ground_x, workshop_ground_y = 8, workshop_ground_w = 16,
@@ -809,6 +811,7 @@ static void workshop_reset_draft(void) {
     workshop_block_variant = ON_LEVEL_BLOCK;
     workshop_orb_variant = ON_LEVEL_ORB_YELLOW;
     workshop_goal_variant = ON_LEVEL_GOAL;
+    workshop_portal_variant = ON_LEVEL_PORTAL_NORMAL;
     workshop_trigger_kind = ON_TRIGGER_KIND_MOVE;
     workshop_camera_x = workshop_camera_y = 0;
     workshop_ground_x = 0;workshop_ground_y = 8;
@@ -962,6 +965,10 @@ static int workshop_point_in_object(float px, float py, float x, float y,
         left = .04f;top = .03f;break;
     case ON_LEVEL_CHECKPOINT:
         left = .14f;right = .75f;break;
+    case ON_LEVEL_PORTAL_NORMAL:
+        left = .16f;right = .77f;break;
+    case ON_LEVEL_PORTAL_JETPACK:
+        left = .17f;right = .76f;break;
     default: break;
     }
     return nx >= left && nx <= right && ny >= top && ny <= bottom;
@@ -1072,6 +1079,11 @@ static void workshop_load_selected_properties(int object) {
             workshop_palette_type = ON_LEVEL_GOAL;
             workshop_goal_variant = workshop_objects[object].type;
         }
+        if (workshop_objects[object].type == ON_LEVEL_PORTAL_NORMAL ||
+            workshop_objects[object].type == ON_LEVEL_PORTAL_JETPACK) {
+            workshop_palette_type = ON_LEVEL_PORTAL_NORMAL;
+            workshop_portal_variant = workshop_objects[object].type;
+        }
     } else if (object == -2) workshop_group_id = 1;
     else if (object == -3) {
         workshop_group_id = 2;
@@ -1149,7 +1161,9 @@ static void workshop_cell_tap(int cell) {
                    workshop_palette_type == ON_LEVEL_ORB_YELLOW ?
                    workshop_orb_variant :
                    workshop_palette_type == ON_LEVEL_GOAL ?
-                   workshop_goal_variant : workshop_palette_type;
+                   workshop_goal_variant :
+                   workshop_palette_type == ON_LEVEL_PORTAL_NORMAL ?
+                   workshop_portal_variant : workshop_palette_type;
         workshop_place_object(type, col, row);
     } else if (workshop_tool == WS_TOOL_EDIT) {
         workshop_select_only(found);
@@ -1387,6 +1401,8 @@ static const char *workshop_object_name(int type) {
     case ON_LEVEL_PLAYER: return "Игрок";
     case ON_LEVEL_GOAL: return "Финиш";
     case ON_LEVEL_CHECKPOINT: return "Чекпоинт";
+    case ON_LEVEL_PORTAL_NORMAL: return "Обычный портал";
+    case ON_LEVEL_PORTAL_JETPACK: return "Портал Jetpack";
     default: return "Триггер";
     }
 }
@@ -1433,6 +1449,8 @@ static int workshop_object_art(int type, int trigger_kind) {
     case ON_LEVEL_PLAYER: return PV_ART_BREAD;
     case ON_LEVEL_GOAL: return PV_ART_LEVEL_FLAG;
     case ON_LEVEL_CHECKPOINT: return PV_ART_LEVEL_CHECKPOINT_INACTIVE;
+    case ON_LEVEL_PORTAL_NORMAL: return PV_ART_LEVEL_PORTAL_NORMAL;
+    case ON_LEVEL_PORTAL_JETPACK: return PV_ART_LEVEL_PORTAL_JETPACK;
     case ON_LEVEL_TRIGGER:
         return trigger_kind == ON_TRIGGER_KIND_ROTATE ? PV_ART_LEVEL_TRIGGER_ROTATE :
                trigger_kind == ON_TRIGGER_KIND_FOREVER ? PV_ART_LEVEL_TRIGGER_FOREVER :
@@ -2658,6 +2676,8 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
                             workshop_tool == WS_TOOL_BUILD;
     int show_goal_variants = workshop_palette_type == ON_LEVEL_GOAL &&
                              workshop_tool == WS_TOOL_BUILD;
+    int show_portal_variants = workshop_palette_type == ON_LEVEL_PORTAL_NORMAL &&
+                               workshop_tool == WS_TOOL_BUILD;
     if (show_block_variants) {
         label(root, 769, 394, 448, 27, "ВАРИАНТЫ БЛОКОВ", 0,
               WS_YELLOW, LV_TEXT_ALIGN_LEFT);
@@ -2706,11 +2726,27 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
                             U_WORKSHOP_GOAL_VARIANT_BASE + i,
                             workshop_goal_variant == goal_types[i] ? WS_CYAN : BUTTON_GRAY);
     }
+    if (show_portal_variants) {
+        label(root, 769, 394, 448, 27, "ВАРИАНТЫ ПОРТАЛА", 0,
+              WS_YELLOW, LV_TEXT_ALIGN_LEFT);
+        static const int portal_types[] = {
+            ON_LEVEL_PORTAL_NORMAL, ON_LEVEL_PORTAL_JETPACK
+        };
+        static const char *const portal_names[] = {"Обычный", "Jetpack"};
+        static const int portal_x[] = {760, 998};
+        for (int i = 0; i < 2; ++i)
+            workshop_button(root, portal_x[i], 420, 222, 38,
+                            portal_names[i], 0,
+                            U_WORKSHOP_PORTAL_VARIANT_BASE + i,
+                            workshop_portal_variant == portal_types[i] ?
+                            WS_CYAN : BUTTON_GRAY);
+    }
     char camera_label[48];
     snprintf(camera_label, sizeof camera_label, "Карта X %d  Y %d",
              workshop_camera_x, workshop_camera_y);
     int camera_y = (show_block_variants || show_trigger_variants ||
-                    show_orb_variants || show_goal_variants) ? 507 : 414;
+                    show_orb_variants || show_goal_variants ||
+                    show_portal_variants) ? 507 : 414;
     label(root, 768, camera_y, 214, 38, camera_label, 0,
           WS_CREAM, LV_TEXT_ALIGN_LEFT);
     workshop_arrow_button(root, 984, camera_y - 3, 52, 45,
@@ -2724,21 +2760,21 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
 
     const int palette_types[] = {ON_LEVEL_BLOCK, ON_LEVEL_HAZARD, ON_LEVEL_COIN,
         ON_LEVEL_ENEMY, ON_LEVEL_PLAYER, ON_LEVEL_GOAL, ON_LEVEL_TRIGGER,
-        ON_LEVEL_ORB_YELLOW};
+        ON_LEVEL_ORB_YELLOW, ON_LEVEL_PORTAL_NORMAL};
     const char *palette_names[] = {"Блоки", "Шипы", "Монета", "Гусь",
-        "Игрок", "Цели", "Триггер", "Орбы"};
-    for (int i = 0; i < 8; ++i) {
-        int x = 39 + i * 86;
+        "Игрок", "Цели", "Триггер", "Орбы", "Порталы"};
+    for (int i = 0; i < 9; ++i) {
+        int x = 39 + i * 76;
         int art_id = workshop_object_art(palette_types[i], workshop_trigger_kind);
-        workshop_button(root, x, 565, 80, 62, "", 0,
+        workshop_button(root, x, 565, 72, 62, "", 0,
                         U_WORKSHOP_PALETTE_BASE + i,
                         workshop_palette_type == palette_types[i] ? WS_CYAN : BUTTON_GRAY);
-        if (art_id >= 0) art(root, art_id, x + 40, 583, 26);
-        label(root, x + 1, 599, 78, 24, palette_names[i], 0,
+        if (art_id >= 0) art(root, art_id, x + 36, 581, 24);
+        label(root, x + 1, 600, 70, 22, palette_names[i], 0,
               BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
     }
     workshop_button(root, 724, 565, 38, 62, "P", 2,
-                    U_WORKSHOP_PALETTE_BASE + 8,
+                    U_WORKSHOP_PALETTE_BASE + 9,
                     workshop_palette_type == ON_LEVEL_PARTICLE ? WS_CYAN : BUTTON_GRAY);
     label(root, 43, 637, 193, 28, "ДВИГАТЬ ОБЪЕКТЫ", 0,
           WS_YELLOW, LV_TEXT_ALIGN_LEFT);
@@ -3090,18 +3126,17 @@ static void custom_platformer_screen(lv_obj_t *root) {
     lv_obj_set_style_bg_opa(root, LV_OPA_TRANSP, 0);
     lv_obj_t *bar = box(root, 0, 0, GAME_W, 103, 0, BUTTON_GRAY, 0);
     lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
-    char title[ON_LEVEL_TITLE_SIZE + 28];
-    snprintf(title, sizeof title, "ID %s  ·  %s", "", "");
     OnNetView view;
     on_net_view(&view);
-    snprintf(title, sizeof title, "ID %s  ·  %s",
-             view.loaded_level_id[0] ? view.loaded_level_id : "—",
-             view.loaded_level_title[0] ? view.loaded_level_title : "Уровень");
+    const char *title = view.loaded_level_title[0] ?
+        view.loaded_level_title : "Уровень";
     label(root, 27, 18, 750, 66, title, 2, INK, LV_TEXT_ALIGN_LEFT);
-    label(root, 790, 18, 228, 34, "Кнопки · мультитач", 1, MUTED,
+    label(root, 790, 18, 228, 34, "Кнопки · WASD", 1, MUTED,
           LV_TEXT_ALIGN_CENTER);
-    label(root, 790, 52, 228, 32, "Орб · прыжок в зоне", 0, MUTED,
-          LV_TEXT_ALIGN_CENTER);
+    label(root, 790, 52, 228, 32,
+          game_custom_jetpack_mode() ? "Jetpack · ↑/W, ↓/S" :
+                                      "Прыжок · Space / ↑",
+          0, MUTED, LV_TEXT_ALIGN_CENTER);
     button(root, 1033, 21, 215, 62, "К уровням", 2,
            U_CUSTOM_BACK);
 
@@ -3119,12 +3154,27 @@ static void custom_platformer_screen(lv_obj_t *root) {
     lv_obj_set_style_border_color(trigger, C(000000), 0);
     label(trigger, 5, 21, 118, 56, "ДЕЙСТВИЕ", 1, BUTTON_TEXT,
           LV_TEXT_ALIGN_CENTER);
-    lv_obj_t *jump = box(root, 1081, 525, 169, 169, 84, BUTTON_GRAY, 1);
-    lv_obj_set_style_border_width(jump, 3, 0);
-    lv_obj_set_style_border_color(jump, C(000000), 0);
-    vector_arrow(jump, 47, 13, 0);
-    label(jump, 4, 102, 161, 44, "ПРЫЖОК", 1, BUTTON_TEXT,
-          LV_TEXT_ALIGN_CENTER);
+    if (!game_custom_jetpack_mode()) {
+        lv_obj_t *jump = box(root, 1081, 525, 169, 169, 84, BUTTON_GRAY, 1);
+        lv_obj_set_style_border_width(jump, 3, 0);
+        lv_obj_set_style_border_color(jump, C(000000), 0);
+        vector_arrow(jump, 47, 13, 0);
+        label(jump, 4, 102, 161, 44, "ПРЫЖОК", 1, BUTTON_TEXT,
+              LV_TEXT_ALIGN_CENTER);
+    } else {
+        lv_obj_t *up = box(root, 1081, 525, 82, 169, 12, BUTTON_GRAY, 1);
+        lv_obj_t *down = box(root, 1168, 525, 82, 169, 12, BUTTON_GRAY, 1);
+        lv_obj_set_style_border_width(up, 3, 0);
+        lv_obj_set_style_border_width(down, 3, 0);
+        lv_obj_set_style_border_color(up, C(000000), 0);
+        lv_obj_set_style_border_color(down, C(000000), 0);
+        vector_arrow(up, 4, 9, 0);
+        vector_arrow(down, 4, 9, 2);
+        label(up, 1, 91, 80, 54, "ВВЕРХ", 0, BUTTON_TEXT,
+              LV_TEXT_ALIGN_CENTER);
+        label(down, 1, 91, 80, 54, "ВНИЗ", 0, BUTTON_TEXT,
+              LV_TEXT_ALIGN_CENTER);
+    }
 }
 
 static void lobby_screen(lv_obj_t *root, const OnNetView *v) {
@@ -3256,6 +3306,7 @@ static uint32_t state_signature(int phase, const OnNetView *v) {
         h = mix(h, &workshop_block_variant, sizeof workshop_block_variant);
         h = mix(h, &workshop_orb_variant, sizeof workshop_orb_variant);
         h = mix(h, &workshop_goal_variant, sizeof workshop_goal_variant);
+        h = mix(h, &workshop_portal_variant, sizeof workshop_portal_variant);
         h = mix(h, &workshop_trigger_kind, sizeof workshop_trigger_kind);
         h = mix(h, &workshop_camera_x, sizeof workshop_camera_x);
         h = mix(h, &workshop_camera_y, sizeof workshop_camera_y);
@@ -3326,6 +3377,8 @@ static uint32_t state_signature(int phase, const OnNetView *v) {
     } else if (phase == GAME_CUSTOM_PLAY) {
         h = mix(h, v->loaded_level_id, strlen(v->loaded_level_id));
         h = mix(h, v->loaded_level_title, strlen(v->loaded_level_title));
+        int jetpack = game_custom_jetpack_mode();
+        h = mix(h, &jetpack, sizeof jetpack);
     } else if (phase == GAME_ONLINE_MATCH) {
         OnMatch s;
         int role, selected;float secs;
@@ -3561,10 +3614,10 @@ static void pressed(lv_event_t *ev) {
         dirty = 1;return;
     }
     if (code >= U_WORKSHOP_PALETTE_BASE &&
-        code < U_WORKSHOP_PALETTE_BASE + 9) {
+        code < U_WORKSHOP_PALETTE_BASE + 10) {
         static const int types[] = {ON_LEVEL_BLOCK, ON_LEVEL_HAZARD, ON_LEVEL_COIN,
             ON_LEVEL_ENEMY, ON_LEVEL_PLAYER, ON_LEVEL_GOAL, ON_LEVEL_TRIGGER,
-            ON_LEVEL_ORB_YELLOW, ON_LEVEL_PARTICLE};
+            ON_LEVEL_ORB_YELLOW, ON_LEVEL_PORTAL_NORMAL, ON_LEVEL_PARTICLE};
         workshop_palette_type = types[code - U_WORKSHOP_PALETTE_BASE];
         if (workshop_palette_type == ON_LEVEL_BLOCK)
             workshop_block_variant = ON_LEVEL_BLOCK;
@@ -3572,6 +3625,8 @@ static void pressed(lv_event_t *ev) {
             workshop_orb_variant = ON_LEVEL_ORB_YELLOW;
         if (workshop_palette_type == ON_LEVEL_GOAL)
             workshop_goal_variant = ON_LEVEL_GOAL;
+        if (workshop_palette_type == ON_LEVEL_PORTAL_NORMAL)
+            workshop_portal_variant = ON_LEVEL_PORTAL_NORMAL;
         workshop_tool = WS_TOOL_BUILD;
         dirty = 1;return;
     }
@@ -3602,6 +3657,15 @@ static void pressed(lv_event_t *ev) {
         code < U_WORKSHOP_GOAL_VARIANT_BASE + 2) {
         static const int variants[] = {ON_LEVEL_GOAL, ON_LEVEL_CHECKPOINT};
         workshop_goal_variant = variants[code - U_WORKSHOP_GOAL_VARIANT_BASE];
+        dirty = 1;return;
+    }
+    if (code >= U_WORKSHOP_PORTAL_VARIANT_BASE &&
+        code < U_WORKSHOP_PORTAL_VARIANT_BASE + 2) {
+        static const int variants[] = {
+            ON_LEVEL_PORTAL_NORMAL, ON_LEVEL_PORTAL_JETPACK
+        };
+        workshop_portal_variant =
+            variants[code - U_WORKSHOP_PORTAL_VARIANT_BASE];
         dirty = 1;return;
     }
     if (code >= U_WORKSHOP_PARTICLE_BASE &&
@@ -3989,7 +4053,11 @@ int lvgl_ui_init(void) {
                            PV_ART_LEVEL_SLOPE, PV_ART_LEVEL_ORB_ORANGE,
                            PV_ART_LEVEL_ORB_YELLOW,
                            PV_ART_LEVEL_CHECKPOINT_INACTIVE,
-                           PV_ART_LEVEL_CHECKPOINT_ACTIVE};
+                           PV_ART_LEVEL_CHECKPOINT_ACTIVE,
+                           PV_ART_LEVEL_PORTAL_NORMAL,
+                           PV_ART_LEVEL_PORTAL_JETPACK,
+                           PV_ART_JETPACK_ACTIVE,
+                           PV_ART_JETPACK_INACTIVE};
     for (size_t j = 0; j < sizeof art_ids / sizeof art_ids[0]; j++) {
         int id = art_ids[j], w = 0, h = 0;
         const uint32_t *original = game_art_rgba(id, &w, &h);
@@ -4116,21 +4184,25 @@ static CustomTouch *custom_touch_allocate(int id) {
 }
 
 static void custom_controls_sync(void) {
-    int left = 0, right = 0, jump = 0, trigger = 0;
+    int left = 0, right = 0, jump = 0, up = 0, down = 0, trigger = 0;
     for (int i = 0; i < CUSTOM_TOUCH_MAX; ++i) {
         const CustomTouch *touch = &custom_touches[i];
         if (!touch->active) continue;
         left |= touch->axis < 0;
         right |= touch->axis > 0;
         jump |= touch->jump;
+        up |= touch->up;
+        down |= touch->down;
         trigger |= touch->trigger;
     }
     game_custom_control((int)right - (int)left, jump, trigger);
+    game_custom_vertical_control((int)up - (int)down);
 }
 
 static void custom_controls_clear(void) {
     memset(custom_touches, 0, sizeof custom_touches);
     game_custom_control(0, 0, 0);
+    game_custom_vertical_control(0);
 }
 
 int lvgl_ui_touch_pointer(int pointer_id, int x, int y, int down) {
@@ -4152,13 +4224,21 @@ int lvgl_ui_touch_pointer(int pointer_id, int x, int y, int down) {
         int new_press = !touch;
         if (!touch) touch = custom_touch_allocate(pointer_id);
         if (touch) {
+            int jetpack = game_custom_jetpack_mode();
             int left_button = y >= 525 && y < 695 && x >= 58 && x < 158;
             int right_button = y >= 525 && y < 695 && x >= 178 && x < 278;
-            int jump_button = x >= 1081 && x < 1250 && y >= 525 && y < 695;
+            int jump_button = !jetpack && x >= 1081 && x < 1250 &&
+                              y >= 525 && y < 695;
+            int up_button = jetpack && x >= 1081 && x < 1163 &&
+                            y >= 525 && y < 695;
+            int down_button = jetpack && x >= 1168 && x < 1250 &&
+                              y >= 525 && y < 695;
             int trigger_button = x >= 910 && x < 1038 && y >= 567 && y < 666;
             touch->axis = left_button ? -1 : right_button ? 1 : 0;
-            touch->jump = jump_button ||
-                          (new_press && !left_button && !right_button && !trigger_button);
+            touch->jump = !jetpack && (jump_button ||
+                (new_press && !left_button && !right_button && !trigger_button));
+            touch->up = up_button;
+            touch->down = down_button;
             touch->trigger = trigger_button;
         }
     }

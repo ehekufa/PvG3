@@ -36,6 +36,10 @@ EXPECTED = {
     "LEVEL_ORB_YELLOW": "assets/art/Жёлтый орб.png",
     "LEVEL_CHECKPOINT_INACTIVE": "assets/art/Чекпоинт-выключен.png",
     "LEVEL_CHECKPOINT_ACTIVE": "assets/art/Чекпоинт-включён.png",
+    "LEVEL_PORTAL_NORMAL": "assets/art/Портал-обычный.png",
+    "LEVEL_PORTAL_JETPACK": "assets/art/Портал-джетпака.png",
+    "JETPACK_ACTIVE": "assets/art/джетпак-активен.png",
+    "JETPACK_INACTIVE": "assets/art/Джетпак-отключён.png",
 }
 
 assert len(IMAGES) == len(EXPECTED) == len(dict(IMAGES)), "Unexpected extra/missing sprite"
@@ -53,6 +57,10 @@ EXPECTED_ALPHA_BOUNDS = {
     "LEVEL_FLAG": (2, 3, 50, 100),
     "LEVEL_CHECKPOINT_INACTIVE": (14, 0, 75, 100),
     "LEVEL_CHECKPOINT_ACTIVE": (14, 0, 75, 100),
+    "LEVEL_PORTAL_NORMAL": (16, 0, 77, 100),
+    "LEVEL_PORTAL_JETPACK": (17, 0, 76, 100),
+    "JETPACK_ACTIVE": (10, 10, 85, 97),
+    "JETPACK_INACTIVE": (10, 10, 85, 85),
 }
 for name, expected in EXPECTED_ALPHA_BOUNDS.items():
     w, h, pixels = png_pixels(ROOT / EXPECTED[name])
@@ -67,10 +75,12 @@ for name in ("DUCK_CONE", "DUCK_BUCKET", "COIN", "LEVEL_TRIGGER",
              "LEVEL_TRIGGER_ROTATE", "LEVEL_TRIGGER_FOREVER",
              "LEVEL_TRIGGER_INVISIBILITY", "LEVEL_TRIGGER_NO_COLLISION",
              "LEVEL_TRIGGER_GRAVITY", "LEVEL_ORB_ORANGE", "LEVEL_ORB_YELLOW",
-             "LEVEL_CHECKPOINT_INACTIVE", "LEVEL_CHECKPOINT_ACTIVE"):
+             "LEVEL_CHECKPOINT_INACTIVE", "LEVEL_CHECKPOINT_ACTIVE",
+             "LEVEL_PORTAL_NORMAL", "LEVEL_PORTAL_JETPACK",
+             "JETPACK_ACTIVE", "JETPACK_INACTIVE"):
     _, _, pixels = png_pixels(ROOT / EXPECTED[name])
     assert pixels[0] == 0, (name, "expected transparent top-left corner")
 _, _, slope_pixels = png_pixels(ROOT / EXPECTED["LEVEL_SLOPE"])
 assert slope_pixels[0] >> 24 <= 16, "slope artwork should fade at its transparent corner"
 
-print("OK: thirty-one named sprites, including block, slope, platform, flag, spike, six trigger variants, both orbs and both checkpoint states")
+print("OK: thirty-five named sprites, including both portal types and both Jetpack states")

@@ -314,11 +314,16 @@ static void assert_platformer_art(void) {
                        PV_ART_LEVEL_SPIKE, PV_ART_LEVEL_SLOPE,
                        PV_ART_LEVEL_ORB_ORANGE, PV_ART_LEVEL_ORB_YELLOW,
                        PV_ART_LEVEL_CHECKPOINT_INACTIVE,
-                       PV_ART_LEVEL_CHECKPOINT_ACTIVE};
+                       PV_ART_LEVEL_CHECKPOINT_ACTIVE,
+                       PV_ART_LEVEL_PORTAL_NORMAL,
+                       PV_ART_LEVEL_PORTAL_JETPACK,
+                       PV_ART_JETPACK_ACTIVE, PV_ART_JETPACK_INACTIVE};
     const int widths[] = {100, 100, 100, 100, 100, 100, 100, 100, 50,
-                          100, 100, 100, 100, 100, 100};
+                          100, 100, 100, 100, 100, 100,
+                          100, 100, 100, 100};
     const int heights[] = {100, 50, 100, 100, 100, 100, 100, 100, 100,
-                           100, 100, 100, 100, 100, 100};
+                           100, 100, 100, 100, 100, 100,
+                           100, 100, 100, 100};
     for (size_t i = 0; i < sizeof ids / sizeof ids[0]; ++i) {
         int width = 0, height = 0, visible = 0;
         const uint32_t *pixels = game_art_rgba(ids[i], &width, &height);
@@ -785,6 +790,111 @@ static void native_trigger_runtime_regression(void) {
     game_custom_level_exit();
 }
 
+static void native_jetpack_portal_regression(void) {
+    static OnPublishedLevel level;
+    memset(&level, 0, sizeof level);
+    snprintf(level.id, sizeof level.id, "%s", "2");
+    snprintf(level.title, sizeof level.title, "%s", "Jetpack portal test");
+    level.width = 16;level.height = 10;level.object_count = 6;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+        .x=0,.y=8,.w=16,.h=2,.visible=1,.number=3};
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
+        .x=1,.y=7,.w=.65f,.h=.85f,.visible=1,.number=1};
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_PORTAL_NORMAL,
+        .x=1,.y=7,.w=1,.h=1,.visible=1,.number=4};
+    level.objects[4] = (OnLevelObject){.id=5,.type=ON_LEVEL_PORTAL_JETPACK,
+        .x=1,.y=7,.w=1,.h=1,.visible=1,.number=5};
+    level.objects[5] = (OnLevelObject){.id=6,.type=ON_LEVEL_PORTAL_NORMAL,
+        .x=4,.y=7,.w=1,.h=1,.visible=1,.number=6};
+
+    game_workshop_open();game_workshop_open_details();game_workshop_open_editor();
+    assert(game_workshop_preview(&level));
+    assert(!game_custom_jetpack_mode());
+    game_tick(.01f, NULL);
+    assert(game_custom_jetpack_mode() && game_debug_custom_jetpack_mode());
+    assert(!game_debug_custom_jetpack_active());
+    game_set_lvgl_ui(1);
+    lvgl_ui_frame(.016f, ui_pixels);
+    assert(lvgl_ui_test_label_present("Jetpack portal test"));
+    assert(!lvgl_ui_test_label_present("ID 2  ·  Jetpack portal test"));
+    assert(lvgl_ui_test_label_present("Jetpack · ↑/W, ↓/S"));
+    float parked_y = game_debug_custom_player_y();
+    game_tick(.05f, NULL);
+    assert(!game_debug_custom_jetpack_active());
+    assert(fabsf(game_debug_custom_player_y() - parked_y) < .001f);
+    assert(fabsf(game_debug_custom_player_vy()) < .001f);
+
+    game_custom_vertical_control(1);
+    game_tick(.05f, NULL);
+    float raised_y = game_debug_custom_player_y();
+    assert(raised_y < parked_y - 10.0f && game_debug_custom_player_vy() < 0);
+    assert(game_debug_custom_jetpack_active());
+    game_custom_vertical_control(0);
+    game_tick(.05f, NULL);
+    assert(fabsf(game_debug_custom_player_y() - raised_y) < .001f);
+    assert(!game_debug_custom_jetpack_active());
+    game_custom_vertical_control(-1);
+    game_tick(.05f, NULL);
+    assert(game_debug_custom_player_y() > raised_y + 10.0f);
+    assert(game_debug_custom_player_vy() > 0 && game_debug_custom_jetpack_active());
+    game_custom_vertical_control(0);
+    game_tick(.05f, NULL);
+    assert(!game_debug_custom_jetpack_active());
+    assert(!game_debug_custom_player_facing_left());
+
+    /* Vertical, jump and action controls never change horizontal facing. */
+    game_custom_vertical_control(1);
+    game_tick(.05f, NULL);
+    assert(!game_debug_custom_player_facing_left());
+    game_custom_vertical_control(0);
+    game_custom_control(-1, 0, 0);
+    game_tick(.05f, NULL);
+    assert(game_debug_custom_player_facing_left());
+    game_custom_control(0, 0, 1);
+    game_tick(.05f, NULL);
+    assert(game_debug_custom_player_facing_left());
+    game_custom_control(0, 0, 0);
+    game_custom_control(1, 0, 0);
+    game_tick(.05f, NULL);
+    assert(!game_debug_custom_player_facing_left());
+    game_custom_control(0, 0, 0);
+
+    /* Native screen controls continuously drive both vertical directions. */
+    assert(lvgl_ui_touch_pointer(41, 1120, 591, 1));
+    game_tick(.05f, NULL);
+    assert(game_debug_custom_player_vy() < 0 && game_debug_custom_jetpack_active());
+    assert(lvgl_ui_touch_pointer(41, 1120, 591, 0));
+    game_tick(.05f, NULL);
+    assert(fabsf(game_debug_custom_player_vy()) < .001f &&
+           !game_debug_custom_jetpack_active());
+    assert(lvgl_ui_touch_pointer(42, 1200, 591, 1));
+    game_tick(.05f, NULL);
+    assert(game_debug_custom_player_vy() > 0 && game_debug_custom_jetpack_active());
+    assert(lvgl_ui_touch_pointer(42, 1200, 591, 0));
+    game_tick(.05f, NULL);
+
+    /* A normal portal changes form once; overlapping it cannot switch back. */
+    game_custom_control(1, 0, 0);
+    for (int i = 0; i < 32; ++i) game_tick(.05f, NULL);
+    game_custom_control(0, 0, 0);
+    assert(!game_custom_jetpack_mode());
+    lvgl_ui_frame(.016f, ui_pixels);
+    assert(lvgl_ui_test_label_present("Прыжок · Space / ↑"));
+    for (int i = 0; i < 3; ++i) game_tick(.05f, NULL);
+    assert(!game_custom_jetpack_mode());
+
+    /* Leaving and re-entering the Jetpack portal selects Jetpack again. */
+    game_custom_control(-1, 0, 0);
+    for (int i = 0; i < 32; ++i) game_tick(.05f, NULL);
+    game_custom_control(0, 0, 0);
+    assert(game_custom_jetpack_mode());
+    game_tick(.05f, NULL);
+    assert(game_custom_jetpack_mode() && !game_debug_custom_jetpack_active());
+    game_custom_level_exit();
+}
+
 static int run_lvgl_test(void) {
     static uint8_t before[20000], after[20000];
     size_t bytes = game_save_size();assert(bytes < sizeof before);
@@ -792,6 +902,7 @@ static int run_lvgl_test(void) {
     assert_platformer_art();
     assert(lvgl_ui_init());
     native_trigger_runtime_regression();
+    native_jetpack_portal_regression();
     game_init();assert(game_save_export(after, bytes) && !memcmp(before, after, bytes));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_ROTATE));
@@ -803,6 +914,10 @@ static int run_lvgl_test(void) {
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_ORB_YELLOW));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_CHECKPOINT_INACTIVE));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_CHECKPOINT_ACTIVE));
+    assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_PORTAL_NORMAL));
+    assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_PORTAL_JETPACK));
+    assert(lvgl_ui_test_art_loaded(PV_ART_JETPACK_ACTIVE));
+    assert(lvgl_ui_test_art_loaded(PV_ART_JETPACK_INACTIVE));
     game_set_lvgl_ui(1);
     ui_snapshot("menu");
     assert(ui_pixels[60 * GAME_W + 545] == 0xFFFFFFFFu); /* campaign */
@@ -904,7 +1019,7 @@ static int run_lvgl_test(void) {
 #endif
     ui_snapshot("workshop_direct_transform");
 
-    ui_tap(595, 596); /* trigger category; movement is the default */
+    ui_tap(531, 596); /* trigger category; movement is the default */
     ui_tap(294, 247); /* place a movement trigger */
     ui_tap(835, 361); /* configure X and Y separately */
     ui_tap(640, 343); /* X: replace 1 with 9999 */
@@ -956,7 +1071,7 @@ static int run_lvgl_test(void) {
            editor_probe.objects[editor_probe.object_count - 1].trigger_event ==
            ON_TRIGGER_START);
 #endif
-    ui_tap(595, 596); /* trigger category */
+    ui_tap(531, 596); /* trigger category */
     ui_tap(990, 480); /* gravity trigger */
     ui_tap(520, 370); /* place it away from the finish */
 #ifdef PVG3_LVGL_TEST
@@ -984,7 +1099,7 @@ static int run_lvgl_test(void) {
            editor_probe.objects[editor_probe.object_count - 1].trigger_value == 100.0f);
 #endif
     ui_tap(640, 628); /* save the slider value */
-    ui_tap(680, 596); /* orb category (yellow is the default) */
+    ui_tap(607, 596); /* orb category (yellow is the default) */
     ui_tap(565, 414); /* place a yellow orb */
 #ifdef PVG3_LVGL_TEST
     assert(lvgl_ui_test_workshop_level(&editor_probe));
@@ -1038,13 +1153,28 @@ static int run_lvgl_test(void) {
            on_level_particle_valid(&editor_probe.objects[editor_probe.object_count - 1].emitter));
 #endif
     ui_tap(640, 659);ui_snapshot("workshop_particle_settings_closed");
-    ui_tap(508, 596); /* goals group contains both the finish and checkpoints */
+    ui_tap(455, 596); /* goals group contains both the finish and checkpoints */
     ui_tap(1108, 439); /* checkpoint variant */
     ui_tap(675, 220); /* place a checkpoint on an empty map cell */
 #ifdef PVG3_LVGL_TEST
     assert(lvgl_ui_test_workshop_level(&editor_probe));
     assert(editor_probe.objects[editor_probe.object_count - 1].type ==
            ON_LEVEL_CHECKPOINT);
+#endif
+    ui_tap(683, 596); /* portals category */
+    ui_tap(1108, 439); /* select the Jetpack portal */
+    ui_tap(675, 270); /* place it on the next map row */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[editor_probe.object_count - 1].type ==
+           ON_LEVEL_PORTAL_JETPACK);
+#endif
+    ui_tap(870, 439); /* the normal portal leaves Jetpack form */
+    ui_tap(675, 320);
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[editor_probe.object_count - 1].type ==
+           ON_LEVEL_PORTAL_NORMAL);
 #endif
     ui_tap(80, 596); /* reselect blocks category and choose its square variant */
     ui_tap(834, 439);
@@ -1091,6 +1221,8 @@ static int run_lvgl_test(void) {
            strstr(uploaded_level_body, "\"value\":100.0000") &&
            strstr(uploaded_level_body, "\"type\":\"orb-yellow\"") &&
            strstr(uploaded_level_body, "\"type\":\"orb-orange\"") &&
+           strstr(uploaded_level_body, "\"type\":\"portal-normal\"") &&
+           strstr(uploaded_level_body, "\"type\":\"portal-jetpack\"") &&
            strstr(uploaded_level_body, "\"type\":\"particle\"") &&
            strstr(uploaded_level_body, "\"emitter\":{\"enabled\":true") &&
            strstr(uploaded_level_body, "\"continuous\":false") &&
@@ -1103,6 +1235,10 @@ static int run_lvgl_test(void) {
            strstr(uploaded_level_body, "\"w\":1.1000") &&
            strstr(uploaded_level_body, "\"angle\":45.000"));
     ui_snapshot("workshop_published");
+    char editor_id_label[48];
+    snprintf(editor_id_label, sizeof editor_id_label, "ID %s",
+             published.level_publish_id);
+    assert(lvgl_ui_test_label_present(editor_id_label));
     ui_tap(1158, 50);assert(game_phase() == GAME_CUSTOM_PLAY);
     ui_snapshot("workshop_preview");
     ui_tap(1140, 55);assert(game_phase() == GAME_WORKSHOP_EDIT);

@@ -29,33 +29,36 @@ const TRIGGER_ACTIONS = Object.freeze({
 export const LEVEL_TYPES = Object.freeze([
   'block', 'ground', 'hazard', 'coin', 'enemy', 'player', 'goal', 'trigger', 'slope',
   'orb-yellow', 'orb-orange', 'particle', 'checkpoint',
+  'portal-normal', 'portal-jetpack',
 ]);
 export const TYPE_LABELS = Object.freeze({
   block: 'Блок', ground: 'Платформа', hazard: 'Шипы', coin: 'Монета',
   enemy: 'Гусь', player: 'Игрок', goal: 'Финиш', trigger: 'Триггер', slope: 'Склон',
   'orb-yellow': 'Жёлтый орб', 'orb-orange': 'Оранжевый орб',
   particle: 'Эмиттер частиц', checkpoint: 'Чекпоинт',
+  'portal-normal': 'Обычный портал', 'portal-jetpack': 'Портал Jetpack',
 });
 const TYPE_SIZES = Object.freeze({
   block: [1, 1], ground: [2, 1], hazard: [1, 1], coin: [.55, .55],
   enemy: [.8, .8], player: [.65, .85], goal: [1, 2], trigger: [1, 1], slope: [1, 1],
   'orb-yellow': [.7, .7], 'orb-orange': [.7, .7], particle: [1, 1],
-  checkpoint: [1, 1],
+  checkpoint: [1, 1], 'portal-normal': [1, 1], 'portal-jetpack': [1, 1],
 });
 const DEFAULT_COLORS = Object.freeze({
   block: '#55c8ea', ground: '#65a845', hazard: '#e56c5b', coin: '#ffc54e',
   enemy: '#9560bd', player: '#5ab7e8', goal: '#69d16c', trigger: '#f27652',
   slope: '#e56c5b', 'orb-yellow': '#fff400', 'orb-orange': '#ff8a16',
   particle: '#68f0d8', checkpoint: '#b6d8ff',
+  'portal-normal': '#cccccc', 'portal-jetpack': '#2f2f2f',
 });
 const TYPE_TO_ID = Object.freeze({
   block: 0, ground: 1, hazard: 2, coin: 3, enemy: 4,
   player: 5, goal: 6, trigger: 7, slope: 8, 'orb-yellow': 9, 'orb-orange': 10,
-  particle: 11, checkpoint: 12,
+  particle: 11, checkpoint: 12, 'portal-normal': 13, 'portal-jetpack': 14,
 });
 const TYPE_NAMES = Object.freeze([
   'block', 'ground', 'hazard', 'coin', 'enemy', 'player', 'goal', 'trigger', 'slope',
-  'orb-yellow', 'orb-orange', 'particle', 'checkpoint',
+  'orb-yellow', 'orb-orange', 'particle', 'checkpoint', 'portal-normal', 'portal-jetpack',
 ]);
 // Normalized opaque artwork bounds, measured from alpha in the supplied PNGs.
 const ART_ALPHA_BOUNDS = Object.freeze({
@@ -64,6 +67,8 @@ const ART_ALPHA_BOUNDS = Object.freeze({
   coin: Object.freeze([.05, .03, .96, .97]),
   goal: Object.freeze([.04, .03, 1, 1]),
   checkpoint: Object.freeze([.14, 0, .75, 1]),
+  'portal-normal': Object.freeze([.16, 0, .77, 1]),
+  'portal-jetpack': Object.freeze([.17, 0, .76, 1]),
 });
 const FULL_ART_BOUNDS = Object.freeze([0, 0, 1, 1]);
 // Silhouettes of Склон.png and Шип.png; transparent canvas corners are not solid.
@@ -235,7 +240,9 @@ function artBounds(type, flipX = false, flipY = false) {
 }
 function playerVisibleHitbox(state, player) {
   const fullW = player.w * TILE_W, fullH = player.h * TILE_H;
-  const [left, top, right, bottom] = artBounds('player', player.flipX, player.flipY);
+  const flipX = typeof state.facingLeft === 'boolean' ?
+    state.facingLeft : objectFlipX(player);
+  const [left, top, right, bottom] = artBounds('player', flipX, player.flipY);
   return {x: state.x + fullW * left, y: state.y + fullH * top,
     w: fullW * (right - left), h: fullH * (bottom - top)};
 }
@@ -515,7 +522,8 @@ export function resolveControlMode(preference, coarsePointer) {
 }
 
 export function createTouchButtonState() {
-  const held = {back: new Set(), forward: new Set()};
+  const held = Object.fromEntries(['back', 'forward', 'up', 'down']
+    .map(direction => [direction, new Set()]));
   const pointers = new Map();
   return {
     press(pointerId, direction) {
@@ -527,8 +535,12 @@ export function createTouchButtonState() {
       if (!direction) return false;
       pointers.delete(pointerId);held[direction].delete(pointerId);return true;
     },
-    clear() {held.back.clear();held.forward.clear();pointers.clear();},
+    clear() {
+      for (const pointers of Object.values(held)) pointers.clear();
+      pointers.clear();
+    },
     get axis() {return Number(held.forward.size > 0) - Number(held.back.size > 0);},
+    get vertical() {return Number(held.up.size > 0) - Number(held.down.size > 0);},
   };
 }
 
@@ -543,6 +555,8 @@ export function createPreviewState(level) {
     collected: [], triggerFired: [], triggerActive: [], triggerTimers: Object.create(null),
     invisible: [], noCollision: [], groupRotations: [], jumpHeld: false,
     orbActivated: false, checkpointId: 0,
+    jetpack: false, jetpackActive: false, facingLeft: objectFlipX(player),
+    portalInside: new Set(),
     spawn: {x: player.x * TILE_W, y: player.y * TILE_H}};
   runTriggers(state, 'start');
   return state;
@@ -683,7 +697,10 @@ function activatePreviewCheckpoint(state, player, checkpoint) {
 function resetPreviewPlayer(state) {
   state.x = state.spawn.x;state.y = state.spawn.y;
   state.vx = state.vy = 0;state.grounded = false;
-  state.jumpHeld = false;state.orbActivated = false;
+  const player = state.objects.find(object => object.type === 'player');
+  state.facingLeft = player ? objectFlipX(player) : false;
+  state.jumpHeld = false;state.orbActivated = false;state.jetpackActive = false;
+  state.portalInside?.clear();
 }
 function resolvePreviewPlayer(state, player, solids) {
   let grounded = false;
@@ -825,6 +842,30 @@ function runForeverTriggers(state, dt) {
     } else state.triggerTimers[trigger.id] = elapsed;
   }
 }
+function updatePreviewPortals(state, player, allowActivation) {
+  const box = playerVisibleHitbox(state, player);
+  const previousInside = state.portalInside || new Set();
+  const nextInside = new Set();
+  let changedForm = false;
+  for (const portal of state.objects) {
+    if (portal.type !== 'portal-normal' && portal.type !== 'portal-jetpack') continue;
+    const touching = allowActivation && portal.visible !== false &&
+      !state.noCollision.includes(portal.id) &&
+      !!playerObjectContact(box.x, box.y, box.w, box.h, portal, state.vx, state.vy);
+    if (!touching) continue;
+    nextInside.add(portal.id);
+    if (previousInside.has(portal.id) || changedForm) continue;
+    const jetpack = portal.type === 'portal-jetpack';
+    if (state.jetpack !== jetpack) {
+      state.jetpack = jetpack;
+      state.jetpackActive = false;
+      state.vy = 0;state.grounded = false;
+      changedForm = true;
+    }
+  }
+  state.portalInside = nextInside;
+}
+
 export function stepPreview(state, input = {}, dt = 1 / 60) {
   if (!state || state.won) return state;
   dt = clamp(Number(dt) || 0, 0, .05);
@@ -837,20 +878,30 @@ export function stepPreview(state, input = {}, dt = 1 / 60) {
   const solids = playerCollisionEnabled ? state.objects.filter(o =>
     o.visible && !state.noCollision.includes(o.id) &&
     ['block', 'ground', 'slope'].includes(o.type)) : [];
-  state.vx = (input.axis || 0) * 250;
+  const horizontal = clamp(Number(input.axis) || 0, -1, 1);
+  state.vx = horizontal * 250;
+  if (horizontal < 0) state.facingLeft = true;
+  else if (horizontal > 0) state.facingLeft = false;
+  const vertical = clamp(Number(input.vertical) || 0, -1, 1);
+  const jetpackVelocity = vertical === 0 ? 0 : -vertical * 250;
   const jumpPressed = !!input.jump && !state.jumpHeld;
   state.jumpHeld = !!input.jump;
-  if (jumpPressed && !activatePreviewOrb(state, player) && state.grounded) {
+  if (state.jetpack) {
+    state.vy = jetpackVelocity;
+  } else if (jumpPressed && !activatePreviewOrb(state, player) && state.grounded) {
     state.vy = -570;state.grounded = false;
   }
+  state.jetpackActive = state.jetpack &&
+    (state.vx !== 0 || vertical !== 0);
   const gravity = Number.isFinite(state.gravity) ? state.gravity : 1450;
-  const predictedVy = Math.min(780, state.vy + gravity * dt);
+  const predictedVy = state.jetpack ? state.vy : Math.min(780, state.vy + gravity * dt);
   const displacement = Math.max(Math.abs(state.vx * dt), Math.abs(predictedVy * dt));
   const substeps = clamp(Math.ceil(displacement / 4), 1, 16);
   const subDt = dt / substeps;
   state.grounded = false;
   for (let step = 0; step < substeps; step++) {
-    state.vy = Math.min(780, state.vy + gravity * subDt);
+    if (state.jetpack) state.vy = jetpackVelocity;
+    else state.vy = Math.min(780, state.vy + gravity * subDt);
     state.x = clamp(state.x + state.vx * subDt,
       -WORLD_LIMIT * TILE_W, WORLD_LIMIT * TILE_W - pw);
     state.y += state.vy * subDt;
@@ -885,6 +936,8 @@ export function stepPreview(state, input = {}, dt = 1 / 60) {
         activatePreviewCheckpoint(state, player, object);
     }
   }
+  updatePreviewPortals(state, player, playerCollisionEnabled && !playerRespawned);
+  state.jetpackActive = state.jetpack && (state.vx !== 0 || vertical !== 0);
   runTriggers(state, 'touch');
   if (input.trigger) runTriggers(state, 'manual');
   runForeverTriggers(state, dt);
@@ -915,9 +968,26 @@ function drawWorkshopArt(ctx, art, type, x, y, w, h, triggerKind = 'move') {
         Math.min(tileW, w - dx), Math.min(tileH, h - dy));
   return true;
 }
-function drawWorkshopObject(ctx, art, object, x, y, w, h, checkpointActive = false) {
+function drawWorkshopImage(ctx, image, x, y, w, h, angle, flipX, flipY) {
+  if (!image?.naturalWidth) return false;
+  if (!angle && !flipX && !flipY) {
+    ctx.drawImage(image, x, y, w, h);
+    return true;
+  }
+  ctx.save();ctx.translate(x + w / 2, y + h / 2);ctx.rotate(angle);
+  ctx.scale(flipX ? -1 : 1, flipY ? -1 : 1);
+  ctx.drawImage(image, -w / 2, -h / 2, w, h);
+  ctx.restore();
+  return true;
+}
+function drawWorkshopObject(ctx, art, object, x, y, w, h, checkpointActive = false,
+                            playerArt = null, playerFacingLeft = null) {
   const angle = ((object.angle || 0) % 360) * Math.PI / 180;
-  const flipX = objectFlipX(object), flipY = object.flipY === true;
+  const flipX = object.type === 'player' && typeof playerFacingLeft === 'boolean' ?
+    playerFacingLeft : objectFlipX(object);
+  const flipY = object.flipY === true;
+  if (object.type === 'player' && drawWorkshopImage(
+      ctx, playerArt, x, y, w, h, angle, flipX, flipY)) return true;
   const artType = object.type === 'checkpoint' && checkpointActive ?
     'checkpointActive' : object.type;
   if (!angle && !flipX && !flipY)
@@ -1205,7 +1275,10 @@ export function drawPreviewCanvas(canvas, state, control = 'keyboard', art = {})
   if (player && player.visible !== false && !state.invisible?.includes(player.id)) {
     const x = state.x - cameraX, y = state.y - cameraY;
     const w = playerW, h = playerH;
-    if (!drawWorkshopObject(ctx, art, player, x, y, w, h)) {
+    const jetpackArt = state.jetpack ?
+      art?.[state.jetpackActive ? 'jetpackActive' : 'jetpackInactive'] : null;
+    if (!drawWorkshopObject(ctx, art, player, x, y, w, h, false, jetpackArt,
+                            state.facingLeft)) {
       ctx.fillStyle = player.color || DEFAULT_COLORS.player;
       ctx.fillRect(x, y, w, h);
       ctx.fillStyle = '#fff';ctx.fillRect(x + w * .2, y + h * .22, 8, 9);ctx.fillRect(x + w * .62, y + h * .22, 8, 9);
@@ -1214,7 +1287,10 @@ export function drawPreviewCanvas(canvas, state, control = 'keyboard', art = {})
   }
   ctx.fillStyle = '#14283c';ctx.fillRect(0, 0, canvas.width, 64);
   ctx.fillStyle = '#fff';ctx.font = '22px PTSans, sans-serif';
-  ctx.fillText(`Монеты: ${state.coins} · ${control === 'keyboard' ? 'A/D, пробел' : 'экранные кнопки'}`, 24, 41);
+  const controlHint = state.jetpack ?
+    control === 'keyboard' ? 'A/D, ↑/W, ↓/S' : 'кнопки ↑/↓' :
+    control === 'keyboard' ? 'A/D, пробел' : 'экранные кнопки';
+  ctx.fillText(`Монеты: ${state.coins} · ${controlHint}`, 24, 41);
   if (state.won) {
     ctx.fillStyle = 'rgba(0,0,0,.62)';ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = '#fff';ctx.font = 'bold 48px PTSans, sans-serif';ctx.textAlign = 'center';

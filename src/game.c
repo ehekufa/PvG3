@@ -135,6 +135,10 @@ _Static_assert((int)PV_ART_BREAD == (int)SPR_KHLEBUSHEK &&
                (int)PV_ART_LEVEL_ORB_YELLOW == (int)SPR_LEVEL_ORB_YELLOW &&
                (int)PV_ART_LEVEL_CHECKPOINT_INACTIVE == (int)SPR_LEVEL_CHECKPOINT_INACTIVE &&
                (int)PV_ART_LEVEL_CHECKPOINT_ACTIVE == (int)SPR_LEVEL_CHECKPOINT_ACTIVE &&
+               (int)PV_ART_LEVEL_PORTAL_NORMAL == (int)SPR_LEVEL_PORTAL_NORMAL &&
+               (int)PV_ART_LEVEL_PORTAL_JETPACK == (int)SPR_LEVEL_PORTAL_JETPACK &&
+               (int)PV_ART_JETPACK_ACTIVE == (int)SPR_JETPACK_ACTIVE &&
+               (int)PV_ART_JETPACK_INACTIVE == (int)SPR_JETPACK_INACTIVE &&
                (int)PV_ART_COUNT == (int)SPR_COUNT,
                "LVGL art IDs must match the PNG packer");
 static uint32_t *sprite_pixels[SPR_COUNT];
@@ -449,8 +453,11 @@ static float custom_respawn_x, custom_respawn_y;
 static int custom_checkpoint_id;
 static float custom_gravity = 1450.0f;
 static float custom_elapsed_time;
-static int custom_player_grounded, custom_control_axis, custom_jump_request;
-static int custom_jump_held, custom_trigger_request, custom_trigger_held;
+static int custom_player_grounded, custom_control_axis, custom_control_vertical;
+static int custom_player_facing_left;
+static int custom_jump_request, custom_jump_held, custom_trigger_request, custom_trigger_held;
+static int custom_jetpack_mode, custom_jetpack_active;
+static uint8_t custom_portal_inside[ON_LEVEL_OBJECT_CAP];
 static uint8_t custom_trigger_fired[ON_LEVEL_OBJECT_CAP];
 static uint8_t custom_trigger_active[ON_LEVEL_OBJECT_CAP];
 static float custom_trigger_timers[ON_LEVEL_OBJECT_CAP];
@@ -554,6 +561,14 @@ void game_custom_control(int horizontal, int jump, int trigger) {
     if (trigger && !custom_trigger_held) custom_trigger_request = 1;
     custom_jump_held = !!jump;
     custom_trigger_held = !!trigger;
+}
+void game_custom_vertical_control(int vertical) {
+    if (vertical < -1) vertical = -1;
+    if (vertical > 1) vertical = 1;
+    custom_control_vertical = vertical;
+}
+int game_custom_jetpack_mode(void) {
+    return custom_level_active && custom_jetpack_mode;
 }
 
 static float spawn_t;
@@ -1465,7 +1480,10 @@ void game_input_press(int x, int y) {
 
 void game_input_release(int x, int y) {
     (void)x;(void)y;
-    if (phase == PH_CUSTOM_PLAY) game_custom_control(0, 0, 0);
+    if (phase == PH_CUSTOM_PLAY) {
+        game_custom_control(0, 0, 0);
+        game_custom_vertical_control(0);
+    }
 }
 
 int game_legacy_plant_drag(int screen_phase, int from_x, int from_y,
@@ -2426,6 +2444,10 @@ static void custom_art_alpha_bounds(int type, int flip_x, int flip_y,
         *left = .04f;*top = .03f;break;
     case ON_LEVEL_CHECKPOINT:
         *left = .14f;*right = .75f;break;
+    case ON_LEVEL_PORTAL_NORMAL:
+        *left = .16f;*right = .77f;break;
+    case ON_LEVEL_PORTAL_JETPACK:
+        *left = .17f;*right = .76f;break;
     default: break;
     }
     if (flip_x) {
@@ -2444,7 +2466,7 @@ static void custom_player_visible_hitbox(float *x, float *y,
                                   &custom_level.objects[custom_player_index] : NULL;
     float left, top, right, bottom;
     custom_art_alpha_bounds(ON_LEVEL_PLAYER,
-                            player ? player->flip_x : 0,
+                            player ? custom_player_facing_left : 0,
                             player ? player->flip_y : 0,
                             &left, &top, &right, &bottom);
     *x = custom_player_x + custom_player_w * left;
@@ -2560,13 +2582,49 @@ static void custom_activate_checkpoint(const OnLevelObject *checkpoint) {
         checkpoint->y + checkpoint->h - player_h_tiles,
         player_h_tiles) * CUSTOM_TILE_H;
 }
+static void custom_update_portals(int allow_activation) {
+    float player_x, player_y, player_w, player_h;
+    custom_player_visible_hitbox(&player_x, &player_y, &player_w, &player_h);
+    int form_changed = 0;
+    for (int i = 0; i < custom_object_count; ++i) {
+        OnLevelObject *portal = &custom_level.objects[i];
+        if (portal->type != ON_LEVEL_PORTAL_NORMAL &&
+            portal->type != ON_LEVEL_PORTAL_JETPACK) {
+            custom_portal_inside[i] = 0;
+            continue;
+        }
+        int touching = allow_activation && portal->visible &&
+            !custom_object_collision_disabled(portal) &&
+            custom_player_object_contact(player_x, player_y, player_w, player_h,
+                portal, custom_player_vx, custom_player_vy, NULL);
+        if (!touching) {
+            custom_portal_inside[i] = 0;
+            continue;
+        }
+        int entered = !custom_portal_inside[i];
+        custom_portal_inside[i] = 1;
+        if (!entered || form_changed) continue;
+        int jetpack = portal->type == ON_LEVEL_PORTAL_JETPACK;
+        if (custom_jetpack_mode == jetpack) continue;
+        custom_jetpack_mode = jetpack;
+        custom_jetpack_active = 0;
+        custom_player_vy = 0;
+        custom_player_grounded = 0;
+        custom_jump_request = 0;
+        form_changed = 1;
+    }
+}
+
 static void custom_player_reset(void) {
     if (custom_player_index < 0 || custom_player_index >= custom_object_count) return;
     custom_player_x = custom_respawn_x;
     custom_player_y = custom_respawn_y;
     custom_player_vx = custom_player_vy = 0;
-    custom_player_grounded = 0;
-    custom_control_axis = custom_jump_request = custom_jump_held = 0;
+    custom_player_facing_left = !!custom_level.objects[custom_player_index].flip_x;
+    custom_player_grounded = 0;custom_jetpack_active = 0;
+    custom_control_axis = custom_control_vertical = 0;
+    memset(custom_portal_inside, 0, sizeof custom_portal_inside);
+    custom_jump_request = custom_jump_held = 0;
 }
 static int custom_platformer_start(const OnPublishedLevel *source) {
     if (!source || source->object_count < 1 ||
@@ -2590,6 +2648,8 @@ static int custom_platformer_start(const OnPublishedLevel *source) {
     memset(custom_trigger_timers, 0, sizeof custom_trigger_timers);
     memset(custom_collision_disabled, 0, sizeof custom_collision_disabled);
     memset(custom_invisible, 0, sizeof custom_invisible);
+    memset(custom_portal_inside, 0, sizeof custom_portal_inside);
+    custom_jetpack_mode = custom_jetpack_active = 0;
     custom_gravity = 1450.0f;custom_elapsed_time = 0;
     custom_player_collision_enabled = 1;
     custom_group_rotation_count = 0;
@@ -2602,7 +2662,8 @@ static int custom_platformer_start(const OnPublishedLevel *source) {
     custom_respawn_y = custom_level.objects[custom_player_index].y * CUSTOM_TILE_H;
     custom_player_reset();
     custom_level_coins = 0;custom_level_won = 0;custom_level_active = 1;
-    custom_control_axis = custom_jump_request = custom_jump_held = 0;
+    custom_control_axis = custom_control_vertical = 0;
+    custom_jump_request = custom_jump_held = 0;
     custom_trigger_request = custom_trigger_held = 0;
     custom_fire_triggers(ON_TRIGGER_START);
     return 1;
@@ -2612,8 +2673,12 @@ static void custom_platformer_stop(void) {
     custom_checkpoint_id = 0;custom_respawn_x = custom_respawn_y = 0;
     custom_gravity = 1450.0f;custom_elapsed_time = 0;
     custom_group_rotation_count = 0;
-    custom_control_axis = custom_jump_request = custom_jump_held = 0;
+    custom_control_axis = custom_control_vertical = 0;
+    custom_player_facing_left = 0;
+    custom_jump_request = custom_jump_held = 0;
     custom_trigger_request = custom_trigger_held = 0;
+    custom_jetpack_mode = custom_jetpack_active = 0;
+    memset(custom_portal_inside, 0, sizeof custom_portal_inside);
 }
 int game_workshop_preview(const OnPublishedLevel *level) {
     if (phase != PH_WORKSHOP_EDIT || !custom_platformer_start(level)) return 0;
@@ -2812,11 +2877,21 @@ static void custom_platformer_update(float dt) {
     if (dt > .05f) dt = .05f;
     custom_elapsed_time += dt;
     custom_player_vx = (float)custom_control_axis * 250.0f;
-    if (custom_jump_request && !custom_activate_orb() && custom_player_grounded) {
+    if (custom_control_axis < 0) custom_player_facing_left = 1;
+    else if (custom_control_axis > 0) custom_player_facing_left = 0;
+    float jetpack_velocity = custom_control_vertical ?
+        -(float)custom_control_vertical * 250.0f : 0.0f;
+    if (custom_jetpack_mode) {
+        custom_player_vy = jetpack_velocity;
+    } else if (custom_jump_request && !custom_activate_orb() &&
+               custom_player_grounded) {
         custom_player_vy = -570.0f;custom_player_grounded = 0;
     }
     custom_jump_request = 0;
-    float predicted_vy = fminf(780.0f, custom_player_vy + custom_gravity * dt);
+    custom_jetpack_active = custom_jetpack_mode &&
+        (custom_control_axis != 0 || custom_control_vertical != 0);
+    float predicted_vy = custom_jetpack_mode ? custom_player_vy :
+        fminf(780.0f, custom_player_vy + custom_gravity * dt);
     float displacement = fmaxf(fabsf(custom_player_vx * dt),
                                 fabsf(predicted_vy * dt));
     int substeps = (int)ceilf(displacement / 4.0f);
@@ -2825,7 +2900,11 @@ static void custom_platformer_update(float dt) {
     float sub_dt = dt / (float)substeps;
     custom_player_grounded = 0;
     for (int step = 0; step < substeps; ++step) {
-        custom_player_vy = fminf(780.0f, custom_player_vy + custom_gravity * sub_dt);
+        if (custom_jetpack_mode)
+            custom_player_vy = jetpack_velocity;
+        else
+            custom_player_vy = fminf(780.0f,
+                custom_player_vy + custom_gravity * sub_dt);
         custom_player_x += custom_player_vx * sub_dt;
         if (custom_player_x < -CUSTOM_WORLD_LIMIT * CUSTOM_TILE_W)
             custom_player_x = -CUSTOM_WORLD_LIMIT * CUSTOM_TILE_W;
@@ -2876,6 +2955,9 @@ static void custom_platformer_update(float dt) {
             }
         }
     }
+    custom_update_portals(custom_player_collision_enabled && !player_respawned);
+    custom_jetpack_active = custom_jetpack_mode &&
+        (custom_control_axis != 0 || custom_control_vertical != 0);
     custom_fire_triggers(ON_TRIGGER_TOUCH);
     if (custom_trigger_request) custom_fire_triggers(ON_TRIGGER_MANUAL);
     custom_trigger_request = 0;
@@ -2939,6 +3021,10 @@ static void custom_draw_object(const OnLevelObject *o) {
         DRAW_LEVEL_ART(custom_checkpoint_id == o->id ?
                        PV_ART_LEVEL_CHECKPOINT_ACTIVE :
                        PV_ART_LEVEL_CHECKPOINT_INACTIVE);break;
+    case ON_LEVEL_PORTAL_NORMAL:
+        DRAW_LEVEL_ART(PV_ART_LEVEL_PORTAL_NORMAL);break;
+    case ON_LEVEL_PORTAL_JETPACK:
+        DRAW_LEVEL_ART(PV_ART_LEVEL_PORTAL_JETPACK);break;
     case ON_LEVEL_TRIGGER:
         break; /* Trigger textures are editor-only; triggers stay hidden in play. */
     }
@@ -3063,18 +3149,20 @@ static void custom_platformer_draw(void) {
         const OnLevelObject *player = &custom_level.objects[custom_player_index];
         player_visible = player->visible && !custom_object_is_invisible(player);
         player_angle = player->angle;
-        player_flip_x = player->flip_x;
+        player_flip_x = custom_player_facing_left;
         player_flip_y = player->flip_y;
     }
     if (custom_level_active && player_visible) {
         int px = (int)lrintf(custom_player_x - custom_camera_x);
         int py = (int)lrintf(custom_player_y - custom_camera_y);
+        int player_art = !custom_jetpack_mode ? PV_ART_BREAD :
+            custom_jetpack_active ? PV_ART_JETPACK_ACTIVE : PV_ART_JETPACK_INACTIVE;
         if (fabsf(player_angle) >= .01f)
-            sprite_draw_rotated_flipped(PV_ART_BREAD, px, py,
+            sprite_draw_rotated_flipped(player_art, px, py,
                 (int)custom_player_w, (int)custom_player_h, player_angle,
                 player_flip_x, player_flip_y);
         else
-            sprite_draw_flipped(PV_ART_BREAD, px, py,
+            sprite_draw_flipped(player_art, px, py,
                 (int)custom_player_w, (int)custom_player_h,
                 player_flip_x, player_flip_y);
     }
@@ -3082,7 +3170,7 @@ static void custom_platformer_draw(void) {
     rect(0, 100, GAME_W - 1, 102, COL(0, 0, 0));
     draw_text(24, 19, 3, COL(17, 17, 17), custom_level.title);
     char label_text[48];
-    snprintf(label_text, sizeof label_text, "ID %s   МОНЕТЫ %d", custom_level.id, custom_level_coins);
+    snprintf(label_text, sizeof label_text, "МОНЕТЫ %d", custom_level_coins);
     draw_text(26, 64, 2, COL(68, 68, 68), label_text);
     if (custom_level_won) {
         rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(20, 20, 20), 170);
@@ -3660,8 +3748,11 @@ float game_debug_custom_player_y(void) {return custom_player_y;}
 float game_debug_custom_player_vx(void) {return custom_player_vx;}
 float game_debug_custom_player_vy(void) {return custom_player_vy;}
 int game_debug_custom_player_grounded(void) {return custom_player_grounded;}
+int game_debug_custom_player_facing_left(void) {return custom_player_facing_left;}
 float game_debug_custom_gravity(void) {return custom_gravity;}
 int game_debug_custom_checkpoint_id(void) {return custom_checkpoint_id;}
+int game_debug_custom_jetpack_mode(void) {return custom_jetpack_mode;}
+int game_debug_custom_jetpack_active(void) {return custom_jetpack_active;}
 int game_debug_custom_object(int id, OnLevelObject *out) {
     if (!out) return 0;
     OnLevelObject *object = custom_find_id(id);

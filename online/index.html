@@ -148,6 +148,7 @@
                   <button type="button" data-ws-type="goal"><img src="../assets/art/Флажок - финиш.png" alt=""><span>Цели</span></button>
                   <button type="button" data-ws-type="trigger"><img src="../assets/art/Триггер-движения.png" alt=""><span>Триггер</span></button>
                   <button type="button" data-ws-type="orb"><img src="../assets/art/Жёлтый орб.png" alt=""><span>Орбы</span></button>
+                  <button type="button" data-ws-type="portal"><img src="../assets/art/Портал-обычный.png" alt=""><span>Порталы</span></button>
                   <button type="button" data-ws-type="particle"><span class="ws-category-glyph" aria-hidden="true">P</span><span>Частицы</span></button>
                 </div>
                 <div id="ws-palette-items" class="ws-palette-items" aria-live="polite"></div>
@@ -208,7 +209,9 @@
             <div class="ws-touch-controls hidden" id="ws-buttons-controls" aria-label="Экранные кнопки">
               <button type="button" data-ws-hold="back" aria-label="Назад"><span class="ws-control-arrow ws-arrow-back" aria-hidden="true"></span><span>НАЗАД</span></button>
               <button type="button" data-ws-hold="forward" aria-label="Вперёд"><span class="ws-control-arrow ws-arrow-forward" aria-hidden="true"></span><span>ВПЕРЁД</span></button>
-              <button type="button" data-ws-press="jump">ПРЫЖОК</button>
+              <button type="button" data-ws-press="jump" data-ws-normal-control>ПРЫЖОК</button>
+              <button type="button" data-ws-hold="up" data-ws-jetpack-control class="hidden" aria-label="Подъём">↑ ВВЕРХ</button>
+              <button type="button" data-ws-hold="down" data-ws-jetpack-control class="hidden" aria-label="Спуск">↓ ВНИЗ</button>
               <button type="button" data-ws-press="trigger">ДЕЙСТВИЕ</button>
             </div>
           </div>

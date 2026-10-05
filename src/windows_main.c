@@ -26,7 +26,7 @@ static HWND window_handle;
 static int running = 1, focused = 1, ui_ready;
 static int mouse_active, mouse_via_lvgl, legacy_down_phase = -1;
 static int legacy_down_x, legacy_down_y;
-static int key_left, key_right, key_jump, key_trigger;
+static int key_left, key_right, key_space, key_up, key_down, key_trigger;
 static uint32_t game_pixels[GAME_W * GAME_H];
 static uint32_t dib_pixels[GAME_W * GAME_H];
 static BITMAPINFO dib_info;
@@ -298,8 +298,15 @@ static void mouse_cancel(void) {
 }
 
 static void update_custom_keys(void) {
+    if (game_phase() != GAME_CUSTOM_PLAY) {
+        game_custom_control(0, 0, 0);
+        game_custom_vertical_control(0);
+        return;
+    }
     int horizontal = key_left == key_right ? 0 : key_left ? -1 : 1;
-    game_custom_control(horizontal, key_jump, key_trigger);
+    int jetpack = game_custom_jetpack_mode();
+    game_custom_control(horizontal, !jetpack && (key_space || key_up), key_trigger);
+    game_custom_vertical_control(jetpack ? (key_up - key_down) : 0);
 }
 
 static void convert_pixels(void) {
@@ -313,6 +320,7 @@ static void convert_pixels(void) {
 }
 
 static void render_frame(float dt) {
+    update_custom_keys();
     int phase = game_phase();
     int lvgl_screen = ui_ready && !legacy_renderer_phase(phase);
     game_set_lvgl_ui(lvgl_screen);
@@ -405,7 +413,7 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
     case WM_KILLFOCUS:
         focused = 0;
         mouse_cancel();
-        key_left = key_right = key_jump = key_trigger = 0;
+        key_left = key_right = key_space = key_up = key_down = key_trigger = 0;
         update_custom_keys();
         save_all();
         set_music(0);
@@ -426,7 +434,9 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
         if (!(lparam & (1L << 30))) {
             if (wparam == VK_LEFT || wparam == 'A') key_left = 1;
             if (wparam == VK_RIGHT || wparam == 'D') key_right = 1;
-            if (wparam == VK_SPACE || wparam == VK_UP || wparam == 'W') key_jump = 1;
+            if (wparam == VK_SPACE) key_space = 1;
+            if (wparam == VK_UP || wparam == 'W') key_up = 1;
+            if (wparam == VK_DOWN || wparam == 'S') key_down = 1;
             if (wparam == 'E' || wparam == VK_SHIFT) key_trigger = 1;
             update_custom_keys();
         }
@@ -434,7 +444,9 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
     case WM_KEYUP:
         if (wparam == VK_LEFT || wparam == 'A') key_left = 0;
         if (wparam == VK_RIGHT || wparam == 'D') key_right = 0;
-        if (wparam == VK_SPACE || wparam == VK_UP || wparam == 'W') key_jump = 0;
+        if (wparam == VK_SPACE) key_space = 0;
+        if (wparam == VK_UP || wparam == 'W') key_up = 0;
+        if (wparam == VK_DOWN || wparam == 'S') key_down = 0;
         if (wparam == 'E' || wparam == VK_SHIFT) key_trigger = 0;
         update_custom_keys();
         return 0;

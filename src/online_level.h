@@ -28,7 +28,9 @@ enum {
     ON_LEVEL_SLOPE, /* appended to keep all existing published type IDs stable */
     ON_LEVEL_ORB_YELLOW, ON_LEVEL_ORB_ORANGE,
     ON_LEVEL_PARTICLE, /* configurable particle trail */
-    ON_LEVEL_CHECKPOINT /* activates on overlap and remembers a respawn point */
+    ON_LEVEL_CHECKPOINT, /* activates on overlap and remembers a respawn point */
+    ON_LEVEL_PORTAL_NORMAL, /* restores the normal player form */
+    ON_LEVEL_PORTAL_JETPACK /* switches to the jetpack form */
 };
 enum { ON_TRIGGER_TOUCH, ON_TRIGGER_COIN, ON_TRIGGER_MANUAL, ON_TRIGGER_START };
 enum { ON_TRIGGER_TOGGLE, ON_TRIGGER_MOVE, ON_TRIGGER_RECOLOR,

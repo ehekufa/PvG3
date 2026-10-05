@@ -58,7 +58,7 @@ test('new drafts are valid and object placement keeps player and finish unique',
 test('the 20,000-object ceiling is combined across blocks, triggers, coins and every other type', () => {
   const level = newDraft('draft-limit');
   const additionalTypes = ['block', 'ground', 'hazard', 'coin', 'enemy', 'trigger', 'slope',
-    'orb-yellow', 'orb-orange', 'particle', 'checkpoint'];
+    'orb-yellow', 'orb-orange', 'particle', 'checkpoint', 'portal-normal', 'portal-jetpack'];
   level.objects = Array.from({length:MAX_LEVEL_OBJECTS}, (_, index) => {
     const type = index === 0 ? 'player' : index === 1 ? 'goal' : index === 2 ? 'ground' :
       additionalTypes[(index - 3) % additionalTypes.length];
@@ -120,6 +120,8 @@ test('published records round-trip through the browser/native wire schema', () =
   const block = addObject(level, 'block', 6, 6);
   const slope = addObject(level, 'slope', 8, 6);
   const checkpoint = addObject(level, 'checkpoint', 10, 6);
+  const normalPortal = addObject(level, 'portal-normal', 12, 6);
+  const jetpackPortal = addObject(level, 'portal-jetpack', 14, 6);
   const emitter = addObject(level, 'particle', 11, 4);
   emitter.emitter = {...emitter.emitter, continuous:false, gravityEnabled:true,
     rate:13, lifetime:2.4, speed:177, spread:72, size:7, direction:-45, gravity:140};
@@ -135,6 +137,10 @@ test('published records round-trip through the browser/native wire schema', () =
   assert.equal(restored.objects.find(o => o.id === slope.id).type, 'slope');
   assert.equal(restored.objects.find(o => o.id === checkpoint.id).type, 'checkpoint');
   assert.equal(record.project.objects.find(o => o.id === checkpoint.id).type, 'checkpoint');
+  assert.equal(restored.objects.find(o => o.id === normalPortal.id).type, 'portal-normal');
+  assert.equal(restored.objects.find(o => o.id === jetpackPortal.id).type, 'portal-jetpack');
+  assert.equal(record.project.objects.find(o => o.id === normalPortal.id).type, 'portal-normal');
+  assert.equal(record.project.objects.find(o => o.id === jetpackPortal.id).type, 'portal-jetpack');
   assert.equal(restored.objects.find(o => o.id === emitter.id).type, 'particle');
   assert.deepEqual(restored.objects.find(o => o.id === emitter.id).emitter, emitter.emitter);
   assert.deepEqual(record.project.objects.find(o => o.id === emitter.id).emitter,
@@ -292,6 +298,110 @@ test('orbs have no solid body and one jump press in range activates them; orange
   assert.equal(orange.launchSpeed, -1050);
   assert(orange.state.vy < yellow.state.vy);
   assert(orange.state.y < yellow.state.y);
+});
+
+test('portals switch forms on entry and Jetpack idles, moves, and renders active art', () => {
+  const level = newDraft('portal-runtime');
+  const normalAtSpawn = addObject(level, 'portal-normal', 1, 7);
+  const jetpackAtSpawn = addObject(level, 'portal-jetpack', 1, 7);
+  addObject(level, 'portal-normal', 4, 7);
+  assert.equal(validateDraft(level).ok, true);
+  const state = createPreviewState(level);
+  assert.equal(state.jetpack, false);
+  stepPreview(state, {}, .01);
+  assert.equal(state.jetpack, true,
+    'an overlapping Jetpack portal switches from normal form');
+  assert(state.portalInside.has(normalAtSpawn.id));
+  assert(state.portalInside.has(jetpackAtSpawn.id));
+  assert.equal(state.jetpackActive, false);
+
+  const inactiveArt = {type:'jetpack-inactive', naturalWidth:100, naturalHeight:100};
+  const activeArt = {type:'jetpack-active', naturalWidth:100, naturalHeight:100};
+  const normalArt = {type:'portal-normal', naturalWidth:100, naturalHeight:100};
+  const jetpackArt = {type:'portal-jetpack', naturalWidth:100, naturalHeight:100};
+  const art = {player:{type:'player', naturalWidth:100, naturalHeight:100},
+    'portal-normal':normalArt, 'portal-jetpack':jetpackArt,
+    jetpackInactive:inactiveArt, jetpackActive:activeArt};
+  const editor = recordingCanvas();
+  drawEditorCanvas(editor.canvas, level, 0, 'build', art);
+  assert(editor.images.some(call => call.image === normalArt));
+  assert(editor.images.some(call => call.image === jetpackArt));
+  const idlePreview = recordingCanvas();
+  drawPreviewCanvas(idlePreview.canvas, state, 'keyboard', art);
+  assert(idlePreview.images.some(call => call.image === inactiveArt),
+    'the idle player uses the supplied inactive Jetpack artwork');
+  assert(idlePreview.labels.some(label => label.includes('↑/W, ↓/S')),
+    'the preview HUD describes Jetpack controls instead of the jump command');
+
+  stepPreview(state, {}, .05);
+  const parkedX = state.x, parkedY = state.y;
+  assert.equal(state.jetpackActive, false);
+  assert.equal(state.vy, 0);
+  assert.equal(state.x, parkedX);assert.equal(state.y, parkedY);
+  stepPreview(state, {vertical:1}, .05);
+  const raisedY = state.y;
+  assert.equal(state.facingLeft, false,
+    'vertical Jetpack steering does not change horizontal facing');
+  assert(raisedY < parkedY && state.vy < 0 && state.jetpackActive,
+    'up input lifts the player and enables the active Jetpack state');
+  const activePreview = recordingCanvas();
+  drawPreviewCanvas(activePreview.canvas, state, 'keyboard', art);
+  assert(activePreview.images.some(call => call.image === activeArt));
+  stepPreview(state, {}, .05);
+  assert.equal(state.y, raisedY, 'releasing vertical input immediately stops flight');
+  assert.equal(state.vy, 0);assert.equal(state.jetpackActive, false);
+  stepPreview(state, {vertical:-1}, .01);
+  assert.equal(state.facingLeft, false,
+    'downward Jetpack steering leaves the facing unchanged');
+  assert(state.y > raisedY && state.vy > 0 && state.jetpackActive,
+    'down input lowers the player');
+  stepPreview(state, {}, .05);
+  assert.equal(state.jetpackActive, false);
+  assert.equal(state.vy, 0);
+
+  for (let frame = 0; frame < 32; frame++) stepPreview(state, {axis:1}, .05);
+  assert.equal(state.jetpack, false,
+    'the normal portal changes Jetpack back to the ordinary form');
+  stepPreview(state, {}, .05);
+  assert.equal(state.jetpack, false,
+    'remaining inside an ordinary portal cannot toggle the form back');
+  for (let frame = 0; frame < 32; frame++) stepPreview(state, {axis:-1}, .05);
+  assert.equal(state.jetpack, true,
+    're-entering a Jetpack portal from ordinary form enables Jetpack again');
+  stepPreview(state, {}, .05);
+  assert.equal(state.jetpack, true,
+    'staying inside a Jetpack portal cannot switch back to ordinary form');
+  assert.equal(state.jetpackActive, false);
+});
+
+test('player turns only with horizontal movement, not with jump or action input', () => {
+  const level = newDraft('player-facing');
+  const player = level.objects.find(object => object.type === 'player');
+  player.y = 2;
+  const state = createPreviewState(level);
+  const art = {player: {type: 'player', naturalWidth: 100, naturalHeight: 100}};
+
+  assert.equal(state.facingLeft, false);
+  stepPreview(state, {axis: -1}, .01);
+  assert.equal(state.facingLeft, true);
+  const leftPreview = recordingCanvas();
+  drawPreviewCanvas(leftPreview.canvas, state, 'keyboard', art);
+  assert(leftPreview.scales.some(([x]) => x < 0),
+    'walking backward mirrors the player artwork');
+
+  stepPreview(state, {jump: true, trigger: true, vertical: 1}, .01);
+  assert.equal(state.facingLeft, true,
+    'jump, action and vertical inputs do not turn the player');
+  stepPreview(state, {axis: 1}, .01);
+  assert.equal(state.facingLeft, false);
+  const rightPreview = recordingCanvas();
+  drawPreviewCanvas(rightPreview.canvas, state, 'keyboard', art);
+  assert(!rightPreview.scales.some(([x]) => x < 0),
+    'walking forward restores the normal player orientation');
+
+  stepPreview(state, {trigger: true}, .01);
+  assert.equal(state.facingLeft, false,
+    'action input alone keeps the current facing direction');
 });
 
 test('control mode defaults to buttons on touch devices and can be chosen explicitly', () => {
@@ -690,7 +800,7 @@ test('rotation variants rotate objects and legacy forever loops remain bounded',
   assert.equal(state.objects.find(object => object.id === target.id).x, before + 1);
 });
 
-test('multitouch keeps forward/back pointers independent for movement plus jump', () => {
+test('multitouch keeps horizontal and Jetpack vertical pointers independent', () => {
   const controls = createTouchButtonState();
   assert(controls.press(4, 'forward'));
   assert(controls.press(9, 'back'));
@@ -709,8 +819,23 @@ test('multitouch keeps forward/back pointers independent for movement plus jump'
   assert.equal(controls.axis, 1);
   assert.equal(controls.release(21), true);
   assert.equal(controls.axis, 0);
+  assert(controls.press(22, 'up'));
+  assert.equal(controls.vertical, 1);
+  assert(controls.press(23, 'down'));
+  assert.equal(controls.vertical, 0,
+    'opposite vertical holds cancel without losing their pointer ownership');
+  assert.equal(controls.release(23), true);
+  assert.equal(controls.vertical, 1);
+  assert(controls.press(24, 'down'));
+  assert.equal(controls.vertical, 0);
+  assert.equal(controls.release(22), true);
+  assert.equal(controls.vertical, -1);
+  assert.equal(controls.release(24), true);
+  assert.equal(controls.vertical, 0);
+  controls.press(25, 'up');controls.press(26, 'down');
   controls.clear();
   assert.equal(controls.axis, 0);
+  assert.equal(controls.vertical, 0);
   assert.equal(controls.press(1, 'invalid'), false);
 });
 

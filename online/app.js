@@ -37,7 +37,7 @@ let wsDraftFromLocalStorage = false;
 let wsPage = 'home', wsDraft = loadWorkshopDraft(), wsTool = 'build', wsType = 'block';
 let wsDraftReady = Promise.resolve();
 let wsTriggerKind = 'move', wsBlockType = 'block', wsOrbType = 'orb-yellow';
-let wsGoalType = 'goal', wsPaletteSelected = true;
+let wsGoalType = 'goal', wsPortalType = 'portal-normal', wsPaletteSelected = true;
 let wsSelectedId = 0, wsSelectedIds = new Set(), wsClipboard = [];
 let wsDrag = null, wsPanDrag = null, wsCatalogGeneration = 0, wsCatalog = [];
 let wsCamera = {x: 0, y: 0};
@@ -59,6 +59,8 @@ const WS_ART_FILES = {
   triggerGravity: 'Триггер-гравитации.png',
   'orb-orange': 'Оранжевый opб.png', 'orb-yellow': 'Жёлтый орб.png',
   checkpoint: 'Чекпоинт-выключен.png', checkpointActive: 'Чекпоинт-включён.png',
+  'portal-normal': 'Портал-обычный.png', 'portal-jetpack': 'Портал-джетпака.png',
+  jetpackActive: 'джетпак-активен.png', jetpackInactive: 'Джетпак-отключён.png',
 };
 const wsArt = Object.fromEntries(Object.entries(WS_ART_FILES).map(([type, file]) => {
   const image = new Image();
@@ -256,6 +258,9 @@ function renderPaletteOptions() {
   ] : wsType === 'goal' ? [
     {kind: 'goal', label: TYPE_LABELS.goal, art: 'goal'},
     {kind: 'checkpoint', label: TYPE_LABELS.checkpoint, art: 'checkpoint'},
+  ] : wsType === 'portal' ? [
+    {kind: 'portal-normal', label: TYPE_LABELS['portal-normal'], art: 'portal-normal'},
+    {kind: 'portal-jetpack', label: TYPE_LABELS['portal-jetpack'], art: 'portal-jetpack'},
   ] : wsType === 'particle' ? [
     {kind: 'single', label: TYPE_LABELS.particle, glyph: 'P'},
   ] : [{kind: 'single', label: TYPE_LABELS[wsType], art: wsType}];
@@ -266,7 +271,8 @@ function renderPaletteOptions() {
       (wsType === 'trigger' ? wsTriggerKind === option.kind :
         wsType === 'block' ? wsBlockType === option.kind :
         wsType === 'orb' ? wsOrbType === option.kind :
-        wsType === 'goal' ? wsGoalType === option.kind : true);
+        wsType === 'goal' ? wsGoalType === option.kind :
+        wsType === 'portal' ? wsPortalType === option.kind : true);
     if (active) button.classList.add('active');
     const icon = option.glyph ? document.createElement('span') : document.createElement('img');
     if (option.glyph) {
@@ -283,6 +289,7 @@ function renderPaletteOptions() {
       else if (wsType === 'block') wsBlockType = option.kind;
       else if (wsType === 'orb') wsOrbType = option.kind;
       else if (wsType === 'goal') wsGoalType = option.kind;
+      else if (wsType === 'portal') wsPortalType = option.kind;
       wsPaletteSelected = true;
       wsTool = 'build';
       renderWorkshopEditor();
@@ -482,7 +489,8 @@ function wsPointerDown(event) {
     }
     const objectType = wsType === 'block' ? wsBlockType :
       wsType === 'orb' ? wsOrbType :
-      wsType === 'goal' ? wsGoalType : wsType;
+      wsType === 'goal' ? wsGoalType :
+      wsType === 'portal' ? wsPortalType : wsType;
     const placed = addObject(wsDraft, objectType, Math.floor(point.x), Math.floor(point.y), wsTriggerKind);
     if (!placed) {
       showWorkshopMessage(`Достигнут общий лимит ${MAX_LEVEL_OBJECTS} объектов. Удали лишние объекты перед добавлением новых.`);return;
@@ -671,7 +679,8 @@ function updateSelectedTrigger(property, value) {
 function beginNewDraft() {
   if (!confirm('Создать новый уровень вместо текущего черновика? Опубликованные уровни не затрагиваются.')) return;
   wsDraft = newDraft();setWorkshopSelection([]);wsClipboard = [];wsTool = 'build';wsType = 'block';
-  wsTriggerKind = 'move';wsGoalType = 'goal';wsPaletteSelected = true;
+  wsTriggerKind = 'move';wsGoalType = 'goal';wsPortalType = 'portal-normal';
+  wsPaletteSelected = true;
   wsCamera = {x: 0, y: 0};
   saveWorkshopDraft('Создан новый черновик.');setWorkshopPage('editor');
 }
@@ -756,10 +765,24 @@ function startWorkshopPreview(level, title, returnPage, official = false) {
 function drawCurrentPreview() {
   if (wsPreviewState) drawPreviewCanvas($('ws-preview-canvas'), wsPreviewState, wsControlMode, wsArt);
 }
+function updateWorkshopJetpackControls() {
+  const jetpack = !!wsPreviewState?.jetpack;
+  for (const button of document.querySelectorAll('[data-ws-normal-control]'))
+    button.classList.toggle('hidden', jetpack);
+  for (const button of document.querySelectorAll('[data-ws-jetpack-control]'))
+    button.classList.toggle('hidden', !jetpack);
+  $('ws-control-help').textContent = jetpack ?
+    wsControlMode === 'keyboard' ?
+      'A / D — движение, W / ↑ — вверх, S / ↓ — вниз, E — действие. Без ввода Jetpack зависает.' :
+      'Удерживай «Вверх» или «Вниз» для полёта; отпусти — игрок зависнет. «Назад» / «Вперёд» двигают, «Действие» запускает триггеры.' :
+    wsControlMode === 'keyboard' ?
+      'A / D — движение, пробел или W — прыжок, E — действие. Нажатие прыжка или клик по полю активирует орб в зоне.' :
+      'Удерживай «Назад» или «Вперёд» и нажимай «Прыжок»; «Действие» запускает триггеры. Клик/тап в зоне активирует орб.';
+}
 function previewJumpPointerDown(event) {
   if (screen !== 'workshop' || wsPage !== 'preview' || !wsPreviewState) return;
   event.preventDefault();
-  wsJumpQueued = true;
+  if (!wsPreviewState.jetpack) wsJumpQueued = true;
 }
 function applyWorkshopControl(preference) {
   wsControlPreference = ['auto', 'buttons', 'keyboard'].includes(preference) ? preference : 'auto';
@@ -768,10 +791,7 @@ function applyWorkshopControl(preference) {
   wsControlMode = resolveControlMode(wsControlPreference === 'auto' ? '' : wsControlPreference, coarsePointer);
   $('ws-control-select').value = wsControlPreference;
   $('ws-buttons-controls').classList.toggle('hidden', wsControlMode !== 'buttons');
-  $('ws-control-help').textContent = wsControlMode === 'keyboard' ?
-    'A / D — движение, пробел или W — прыжок, E — действие. Нажатие прыжка или клик по полю активирует орб в зоне.' :
-    'Удерживай «Назад» или «Вперёд» и нажимай «Прыжок»; «Действие» запускает триггеры. Клик/тап в зоне активирует орб.';
-  clearWorkshopInput();drawCurrentPreview();
+  clearWorkshopInput();updateWorkshopJetpackControls();drawCurrentPreview();
 }
 function clearWorkshopInput() {
   wsTouchButtons.clear();
@@ -781,17 +801,23 @@ function resetWorkshopPreview() {
   if (!wsPreviewLevel) return;
   wsPreviewState = createPreviewState(wsPreviewLevel);wsWinAnnounced = false;
   $('ws-preview-status').textContent = 'С начала. Доберись до финиша и попробуй собрать монеты.';
-  clearWorkshopInput();drawCurrentPreview();
+  clearWorkshopInput();updateWorkshopJetpackControls();drawCurrentPreview();
 }
 function workshopFrame(dt) {
   if (screen !== 'workshop' || wsPage !== 'preview' || !wsPreviewState) return;
   const axis = wsControlMode === 'buttons' ? wsTouchButtons.axis :
     Number(wsKeys.has('d') || wsKeys.has('arrowright')) - Number(wsKeys.has('a') || wsKeys.has('arrowleft'));
-  const jump = wsJumpQueued || (wsControlMode === 'keyboard' &&
-    (wsKeys.has(' ') || wsKeys.has('arrowup') || wsKeys.has('w')));
+  const vertical = wsPreviewState.jetpack ?
+    wsControlMode === 'buttons' ? wsTouchButtons.vertical :
+      Number(wsKeys.has('arrowup') || wsKeys.has('w')) -
+      Number(wsKeys.has('arrowdown') || wsKeys.has('s')) : 0;
+  const jump = !wsPreviewState.jetpack && (wsJumpQueued ||
+    (wsControlMode === 'keyboard' &&
+      (wsKeys.has(' ') || wsKeys.has('arrowup') || wsKeys.has('w'))));
   const trigger = wsTriggerQueued || (wsControlMode === 'keyboard' && wsKeys.has('e'));
   wsJumpQueued = false;wsTriggerQueued = false;
-  stepPreview(wsPreviewState, {axis, jump, trigger}, dt);
+  stepPreview(wsPreviewState, {axis, vertical, jump, trigger}, dt);
+  updateWorkshopJetpackControls();
   if (wsPreviewState.orbActivated)
     $('ws-preview-status').textContent = 'Орб активирован!';
   drawCurrentPreview();
@@ -1119,6 +1145,7 @@ for (const button of document.querySelectorAll('[data-ws-type]')) button.addEven
   if (wsType === 'block') wsBlockType = 'block';
   if (wsType === 'orb') wsOrbType = 'orb-yellow';
   if (wsType === 'goal') wsGoalType = 'goal';
+  if (wsType === 'portal') wsPortalType = 'portal-normal';
   wsPaletteSelected = false;wsTool = 'build';
   renderWorkshopEditor();
 });
@@ -1223,9 +1250,11 @@ window.addEventListener('keydown', event => {
   }
   if (wsPage !== 'preview' || wsControlMode !== 'keyboard') return;
   const key = event.key.toLowerCase();
-  if (['arrowleft', 'arrowright', 'arrowup', ' ', 'a', 'd', 'w', 'e'].includes(key)) event.preventDefault();
+  if (['arrowleft', 'arrowright', 'arrowup', 'arrowdown', ' ',
+       'a', 'd', 'w', 's', 'e'].includes(key)) event.preventDefault();
   wsKeys.add(key);
-  if (!event.repeat && ['arrowup', ' ', 'w'].includes(key)) wsJumpQueued = true;
+  if (!wsPreviewState?.jetpack && !event.repeat &&
+      ['arrowup', ' ', 'w'].includes(key)) wsJumpQueued = true;
   if (!event.repeat && key === 'e') wsTriggerQueued = true;
 });
 window.addEventListener('keyup', event => wsKeys.delete(event.key.toLowerCase()));

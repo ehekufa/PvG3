@@ -46,6 +46,10 @@ IMAGES = [
     ("LEVEL_ORB_YELLOW", "assets/art/Жёлтый орб.png"),
     ("LEVEL_CHECKPOINT_INACTIVE", "assets/art/Чекпоинт-выключен.png"),
     ("LEVEL_CHECKPOINT_ACTIVE", "assets/art/Чекпоинт-включён.png"),
+    ("LEVEL_PORTAL_NORMAL", "assets/art/Портал-обычный.png"),
+    ("LEVEL_PORTAL_JETPACK", "assets/art/Портал-джетпака.png"),
+    ("JETPACK_ACTIVE", "assets/art/джетпак-активен.png"),
+    ("JETPACK_INACTIVE", "assets/art/Джетпак-отключён.png"),
 ]
 
 

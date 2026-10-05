@@ -50,6 +50,9 @@ void game_custom_levels_refresh(void);
 void game_custom_level_request(const char *id);
 void game_custom_level_exit(void);
 void game_custom_control(int horizontal, int jump, int trigger);
+/* Jetpack-only held axis: +1 ascends, -1 descends, 0 hovers in place. */
+void game_custom_vertical_control(int vertical);
+int game_custom_jetpack_mode(void);
 
 /* The native platformer workshop is a separate editor from the public catalog. */
 void game_workshop_open(void);
@@ -112,8 +115,11 @@ float game_debug_custom_player_y(void);
 float game_debug_custom_player_vx(void);
 float game_debug_custom_player_vy(void);
 int game_debug_custom_player_grounded(void);
+int game_debug_custom_player_facing_left(void);
 float game_debug_custom_gravity(void);
 int game_debug_custom_checkpoint_id(void);
+int game_debug_custom_jetpack_mode(void);
+int game_debug_custom_jetpack_active(void);
 int game_debug_custom_object(int id, OnLevelObject *out);
 int game_debug_custom_object_invisible(int id);
 int game_debug_garden_plant_type(int row, int col);
