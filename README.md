@@ -190,8 +190,10 @@ Firebase Realtime Database
 телефона. В онлайн-разделе есть кнопка **«Открыть мастерскую»**; в нативном
 онлайн-разделе — **«Мастерская»**. Кнопка **«Уровни игроков»** в главном
 меню нативной игры ведёт прямо в общий каталог, откуда тоже можно перейти в
-редактор. Обе мастерские используют отдельный платформерный редактор с сеткой
-16×10, объектами, шестью вариантами триггеров и предпросмотром. Триггер
+редактор. В обоих каталогах уровень с ID `33806` помечен бейджем
+«ОФИЦИАЛЬНЫЙ»; метка также видна в web-предпросмотре. Обе мастерские используют
+отдельный платформерный редактор с сеткой 16×10, объектами, шестью вариантами
+триггеров и предпросмотром. Триггер
 «Гравитация» задаёт силу уровня ползунком от −100 (слабее) до +100 (сильнее),
 а жёлтый и оранжевый орбы — отдельные игровые объекты, не триггеры: у них нет
 твёрдого тела, и они подбрасывают игрока вверх по одному нажатию прыжка, пока
@@ -412,20 +414,20 @@ Actions** и создай четыре **Repository secrets**:
 python3 tools/pack_sprites.py && python3 tools/pack_font.py
 python3 tools/compose_music.py --check
 COMMON="src/game.c src/font.c src/online_rules.c src/online_protocol.c src/online_net.c"
-gcc -std=c11 -O2 -Wall -Wextra -Werror -DON_NET_MANUAL -Isrc \
+clang -std=c11 -O2 -Wall -Wextra -Werror -DON_NET_MANUAL -Isrc \
   $COMMON tools/fake_online_http.c tools/host_test.c -o host_test -lm -pthread
 ./host_test
-gcc -std=c11 -O2 -Wall -Wextra -Werror -DGAME_TEST -DON_NET_MANUAL -Isrc \
+clang -std=c11 -O2 -Wall -Wextra -Werror -DGAME_TEST -DON_NET_MANUAL -Isrc \
   $COMMON tools/fake_online_http.c tools/sim_test.c -o sim_test -lm -pthread
 ./sim_test
-gcc -std=c11 -O2 -Wall -Wextra -Werror -Isrc \
+clang -std=c11 -O2 -Wall -Wextra -Werror -Isrc \
   src/online_rules.c src/online_protocol.c tools/native_online_test.c -o native_online_test -lm
 ./native_online_test
-gcc -std=c11 -O2 -Wall -Wextra -Werror -DON_NET_MANUAL -Isrc \
+clang -std=c11 -O2 -Wall -Wextra -Werror -DON_NET_MANUAL -Isrc \
   $COMMON tools/native_online_integration_test.c -o native_online_integration_test -lm -pthread
 ./native_online_integration_test
 LVGL_SOURCES="$(find src/vendor/lvgl/src -name '*.c' | LC_ALL=C sort)"
-gcc -std=c11 -O1 -D_POSIX_C_SOURCE=200809L -DON_NET_MANUAL \
+clang -std=c11 -O1 -D_POSIX_C_SOURCE=200809L -DON_NET_MANUAL \
   -DPVG3_LVGL_TEST -DGAME_TEST -Isrc -Isrc/vendor/lvgl \
   $COMMON src/lvgl_ui.c tools/native_online_integration_test.c \
   $LVGL_SOURCES -o lvgl_ui_test -lm -pthread
@@ -433,11 +435,11 @@ PVG3_LVGL_TEST=1 ./lvgl_ui_test
 # Снимки интерфейса (PPM в shots/, каталог исключён из git):
 mkdir -p shots && PVG3_LVGL_TEST=1 PVG3_LVGL_SHOTS=1 ./lvgl_ui_test
 
-gcc -std=c11 -O2 -Wall -Wextra -Werror -Isrc \
+clang -std=c11 -O2 -Wall -Wextra -Werror -Isrc \
   src/online_rules.c src/online_protocol.c src/online_net.c \
   tools/native_online_thread_test.c -o native_online_thread_test -lm -pthread
 ./native_online_thread_test
-gcc -std=c11 -O2 -Wall -Wextra -Werror -Isrc \
+clang -std=c11 -O2 -Wall -Wextra -Werror -Isrc \
   src/music_wav.c tools/music_test.c -o music_test -lm
 ./music_test
 node --test online/test/*.test.js

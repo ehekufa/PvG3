@@ -16,17 +16,22 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install MinGW-w64 toolchain
+      - name: Install Clang and MinGW-w64 link libraries
         uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
           update: true
-          install: mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-winpthreads
+          install: >-
+            mingw-w64-ucrt-x86_64-clang
+            mingw-w64-ucrt-x86_64-lld
+            mingw-w64-ucrt-x86_64-binutils
+            mingw-w64-ucrt-x86_64-winpthreads
 
-      - name: Compile Win32 host and WinHTTP adapter with strict warnings
+      - name: Compile Win32 host and WinHTTP adapter with Clang
         shell: msys2 {0}
         run: |
           set -euo pipefail
+          clang --version
           mkdir -p build/windows
           COMMON='-std=c11 -O2 -Wall -Wextra -Werror -pthread -finput-charset=UTF-8 -fexec-charset=UTF-8 -Isrc -Isrc/vendor/lvgl'
           compile_checked() {
@@ -44,13 +49,13 @@ jobs:
             done < "$log_file"
             return 1
           }
-          compile_checked build/windows/windows_main.log gcc $COMMON \
+          compile_checked build/windows/windows_main.log clang $COMMON \
             -c src/windows_main.c -o build/windows/windows_main.o
-          compile_checked build/windows/windows_online_http.log gcc $COMMON \
+          compile_checked build/windows/windows_online_http.log clang $COMMON \
             -c src/windows_online_http.c -o build/windows/windows_online_http.o
-          compile_checked build/windows/online_net.log gcc $COMMON \
+          compile_checked build/windows/online_net.log clang $COMMON \
             -c src/online_net.c -o build/windows/online_net.o
-          compile_checked build/windows/lvgl_ui.log gcc $COMMON \
+          compile_checked build/windows/lvgl_ui.log clang $COMMON \
             -c src/lvgl_ui.c -o build/windows/lvgl_ui.o
 
       - name: Link standalone GUI executable
@@ -58,7 +63,7 @@ jobs:
         run: |
           set -euo pipefail
           LVGL_SOURCES="$(find src/vendor/lvgl/src -name '*.c' | LC_ALL=C sort)"
-          gcc -std=c11 -O2 -mwindows -static -pthread \
+          clang -std=c11 -O2 -mwindows -static -pthread -fuse-ld=lld \
             -finput-charset=UTF-8 -fexec-charset=UTF-8 \
             -Isrc -Isrc/vendor/lvgl \
             src/game.c src/font.c src/lvgl_ui.c src/online_rules.c \

@@ -360,9 +360,13 @@ main { min-width: 0; }
 }
 .ws-catalog-list { display: grid; gap: 9px; margin-top: 15px; }
 .ws-level-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 14px; border: 2px solid var(--outline); border-radius: 5px; color: var(--ink); background: var(--white); }
+.ws-level-card-official { border-color: #b98220; }
 .ws-level-card h3 { margin: 0 0 3px; font-size: 19px; }
 .ws-level-card p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.4; }
+.ws-level-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 2px; }
 .ws-level-card .ws-level-id { color: var(--muted); font-size: 12px; }
+.ws-official-badge { display: inline-flex; align-items: center; padding: 3px 8px; border: 1px solid #b98220; border-radius: 999px; color: #654600; background: #fff1c7; font-size: 10px; font-weight: 800; letter-spacing: .04em; line-height: 1.2; white-space: nowrap; }
+.ws-official-badge-heading { margin-left: 8px; vertical-align: middle; font-size: .58em; }
 .ws-level-card button { min-width: 110px; min-height: 45px; padding: 8px 14px; border-radius: 4px; background: var(--button-gray); font-weight: bold; }
 
 .lobby-top {  display: flex; align-items: end; justify-content: space-between; gap: 28px; }

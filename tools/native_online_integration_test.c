@@ -32,7 +32,9 @@ static const char *FAKE_GUEST = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 static const char *FAKE_HOST = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 static const char *TEST_LEVEL_INDEX =
     "{\"104\":{\"id\":\"104\",\"title\":\"Невероятное приключение через тайный мост к финишу\","
-    "\"description\":\"Найди скрытый мост и монеты, затем доберись до финиша по платформам.\",\"updatedAt\":1}}";
+    "\"description\":\"Найди скрытый мост и монеты, затем доберись до финиша по платформам.\",\"updatedAt\":1},"
+    "\"33806\":{\"id\":\"33806\",\"title\":\"Официальный уровень\","
+    "\"description\":\"Авторский уровень PvG3.\",\"updatedAt\":2}}";
 static const char *TEST_LEVEL =
     "{\"format\":\"PVG3-PUBLISHED-LEVEL\",\"version\":1,\"id\":\"104\","
     "\"title\":\"Невероятное приключение через тайный мост к финишу\","
@@ -1117,11 +1119,13 @@ static int run_lvgl_test(void) {
     ui_tap(1040, 620);assert(game_phase() == GAME_CUSTOM_LEVELS);
     tick_pump(2);ui_snapshot("custom_levels");
     OnNetView catalog = view();
-    assert(catalog.level_count == 2 && !strcmp(catalog.levels[0].id, "104") &&
+    assert(catalog.level_count == 3 && !strcmp(catalog.levels[0].id, "104") &&
            !strcmp(catalog.levels[0].title,
                    "Невероятное приключение через тайный мост к финишу") &&
            !strcmp(catalog.levels[0].description,
-                   "Найди скрытый мост и монеты, затем доберись до финиша по платформам."));
+                   "Найди скрытый мост и монеты, затем доберись до финиша по платформам.") &&
+           !strcmp(catalog.levels[1].id, ON_LEVEL_OFFICIAL_ID));
+    assert(lvgl_ui_test_label_present("ОФИЦИАЛЬНЫЙ"));
     ui_tap(185, 318);tick_pump(3);
     assert(game_phase() == GAME_CUSTOM_PLAY);
     game_tick(.05f, NULL); /* settle on the ground before jumping */

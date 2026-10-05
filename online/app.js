@@ -6,7 +6,7 @@ import {DATABASE, validId, randomPlayerId, listRooms, getRoom, createRoom,
 import {preloadArtwork, drawGame} from './draw.js';
 import {LEVEL_WIDTH, LEVEL_HEIGHT, MAX_LEVEL_OBJECTS, WORLD_LIMIT,
         MIN_OBJECT_SIZE, MAX_OBJECT_WIDTH, MAX_OBJECT_HEIGHT, TILE_W, TILE_H,
-        TYPE_LABELS, TRIGGER_KINDS, TRIGGER_LABELS, newDraft, setTriggerKind,
+        TYPE_LABELS, TRIGGER_KINDS, TRIGGER_LABELS, isOfficialLevel, newDraft, setTriggerKind,
         addObject, findObjectAt, validateDraft, draftFromPublished,
         moveObjects, resizeObjects, rotateObjects, flipObjects, panCamera, copyObjects, pasteObjects,
         createPreviewState, stepPreview,
@@ -687,12 +687,21 @@ function renderWorkshopCatalog(levels) {
     list.append(empty);return;
   }
   for (const level of levels) {
-    const card = document.createElement('article');card.className = 'ws-level-card';
+    const official = isOfficialLevel(level.id);
+    const card = document.createElement('article');
+    card.className = official ? 'ws-level-card ws-level-card-official' : 'ws-level-card';
     const content = document.createElement('div');
+    const meta = document.createElement('div');meta.className = 'ws-level-meta';
     const id = document.createElement('small');id.className = 'ws-level-id';id.textContent = `ID ${level.id}`;
+    meta.append(id);
+    if (official) {
+      const badge = document.createElement('span');badge.className = 'ws-official-badge';
+      badge.textContent = 'ОФИЦИАЛЬНЫЙ';badge.setAttribute('aria-label', 'Официальный уровень');
+      meta.append(badge);
+    }
     const title = document.createElement('h3');title.textContent = level.title;
     const description = document.createElement('p');description.textContent = level.description || 'Авторский платформерный уровень.';
-    content.append(id, title, description);
+    content.append(meta, title, description);
     const button = document.createElement('button');button.type = 'button';button.textContent = 'Играть';
     button.addEventListener('click', () => playPublishedLevel(level.id, button));
     card.append(content, button);list.append(card);
@@ -721,18 +730,24 @@ async function playPublishedLevel(id, button) {
   try {
     const record = await getPublishedLevel(id);
     const level = draftFromPublished(record);
-    startWorkshopPreview(level, record.title, 'catalog');
+    startWorkshopPreview(level, record.title, 'catalog', isOfficialLevel(record.id));
   } catch (error) {
     setCatalogMessage(error.status === 401 || error.status === 403 ?
       'Firebase запретил чтение /levels. Проверь правила базы.' : error.message);
   } finally {button.disabled = false;}
 }
-function startWorkshopPreview(level, title, returnPage) {
+function startWorkshopPreview(level, title, returnPage, official = false) {
   const check = validateDraft(level);
   if (!check.ok) {showWorkshopMessage(check.message);return;}
   wsPreviewLevel = level;wsPreviewState = createPreviewState(level);
   wsPreviewReturn = returnPage;wsWinAnnounced = false;
-  $('ws-preview-title').textContent = title || level.title;
+  const previewTitle = $('ws-preview-title');
+  previewTitle.replaceChildren(document.createTextNode(title || level.title));
+  if (official) {
+    const badge = document.createElement('span');badge.className = 'ws-official-badge ws-official-badge-heading';
+    badge.textContent = 'ОФИЦИАЛЬНЫЙ';badge.setAttribute('aria-label', 'Официальный уровень');
+    previewTitle.append(' ', badge);
+  }
   $('ws-preview-status').textContent = 'Доберись до финиша и попробуй собрать монеты.';
   $('ws-preview-back').textContent = returnPage === 'catalog' ? 'Назад · Каталог' : 'Назад · В редактор';
   clearWorkshopInput();applyWorkshopControl(wsControlPreference);

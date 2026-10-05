@@ -1,5 +1,5 @@
 /* Desktop screenshots: menu, book, Zen Garden, canal/lily, waves and robot.
- * gcc -O2 -Wall -Wextra -Werror -Isrc src/game.c src/font.c \
+ * clang -O2 -Wall -Wextra -Werror -Isrc src/game.c src/font.c \
  *     tools/host_test.c -o host_test -lm && ./host_test
  */
 #include <assert.h>

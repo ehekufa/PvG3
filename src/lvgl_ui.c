@@ -747,8 +747,14 @@ static void custom_levels_screen(lv_obj_t *root, const OnNetView *v) {
             box(card, 13, 15, 90, 47, 10, BUTTON_GRAY, 0);
             label(card, 15, 17, 86, 43, v->levels[index].id, 2, BUTTON_TEXT,
                   LV_TEXT_ALIGN_CENTER);
-            label(card, 119, 7, 410, 32, v->levels[index].title, 2, BUTTON_TEXT,
-                  LV_TEXT_ALIGN_LEFT);
+            int official = on_level_id_is_official(v->levels[index].id);
+            label(card, 119, 7, official ? 258 : 410, 32,
+                  v->levels[index].title, 2, BUTTON_TEXT, LV_TEXT_ALIGN_LEFT);
+            if (official) {
+                box(card, 389, 10, 140, 25, 12, C(FFF1C7), 0);
+                label(card, 391, 10, 136, 25, "ОФИЦИАЛЬНЫЙ", 0,
+                      C(654600), LV_TEXT_ALIGN_CENTER);
+            }
             label(card, 121, 39, 410, 33,
                   v->levels[index].description[0] ? v->levels[index].description :
                                                     "Нажми, чтобы играть в C-игре",
@@ -4011,6 +4017,21 @@ int lvgl_ui_init(void) {
 #ifdef PVG3_LVGL_TEST
 int lvgl_ui_test_art_loaded(int id) {
     return id >= 0 && id < PV_ART_COUNT && pictures[id].data != NULL;
+}
+static int lvgl_ui_test_tree_has_label(lv_obj_t *object, const char *text) {
+    if (!object) return 0;
+    if (lv_obj_check_type(object, &lv_label_class)) {
+        const char *label_text = lv_label_get_text(object);
+        if (label_text && !strcmp(label_text, text)) return 1;
+    }
+    uint32_t children = lv_obj_get_child_count(object);
+    for (uint32_t i = 0; i < children; ++i)
+        if (lvgl_ui_test_tree_has_label(lv_obj_get_child(object, (int32_t)i), text))
+            return 1;
+    return 0;
+}
+int lvgl_ui_test_label_present(const char *text) {
+    return text && lvgl_ui_test_tree_has_label(lv_screen_active(), text);
 }
 int lvgl_ui_test_workshop_level(OnPublishedLevel *level) {
     if (!level) return 0;

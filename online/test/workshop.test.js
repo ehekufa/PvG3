@@ -5,8 +5,17 @@ import {LEVEL_TYPES, TRIGGER_KINDS, WORLD_LIMIT, MAX_LEVEL_OBJECTS,
         moveObjects, resizeObjects, rotateObjects, flipObjects, panCamera, copyObjects, pasteObjects, validateDraft,
         publishedRecord, isPublishedRecord, draftFromPublished, resolveControlMode,
         setTriggerKind, createTouchButtonState, createPreviewState, stepPreview,
-        DEFAULT_PARTICLE_EMITTER, normalizeParticleEmitter, sampleParticleEmitter,
+        DEFAULT_PARTICLE_EMITTER, OFFICIAL_LEVEL_ID, isOfficialLevel,
+        normalizeParticleEmitter, sampleParticleEmitter,
         drawParticleEmitterPreview, drawEditorCanvas, drawPreviewCanvas} from '../workshop.js';
+
+test('only published level ID 33806 receives the official marker', () => {
+  assert.equal(OFFICIAL_LEVEL_ID, '33806');
+  assert.equal(isOfficialLevel('33806'), true);
+  assert.equal(isOfficialLevel(33806), true);
+  assert.equal(isOfficialLevel('33807'), false);
+  assert.equal(isOfficialLevel('133806'), false);
+});
 
 function recordingCanvas() {
   const images = [];

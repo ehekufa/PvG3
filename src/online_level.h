@@ -2,12 +2,18 @@
 #define PVG3_ONLINE_LEVEL_H
 
 #include <stdint.h>
+#include <string.h>
 
 /* Bounded, account-free reader/runtime for already-published user levels.
  * Artwork is referenced by built-in PNG-backed object types; geometry and
  * trigger configuration remain compatible with the existing JSON records. */
 #define ON_LEVEL_ID_SIZE 8       /* decimal 1..999999 plus NUL */
+#define ON_LEVEL_OFFICIAL_ID "33806"
 #define ON_LEVEL_TITLE_SIZE 241 /* 80 UTF-16 code units, worst-case UTF-8 */
+
+static inline int on_level_id_is_official(const char *id) {
+    return id && strcmp(id, ON_LEVEL_OFFICIAL_ID) == 0;
+}
 #define ON_LEVEL_DESCRIPTION_SIZE 481 /* 160 UTF-16 code units, worst-case UTF-8 */
 #define ON_LEVEL_OBJECT_NAME_SIZE 145 /* 48 UTF-16 code units, worst-case UTF-8 */
 #define ON_LEVEL_LIST_CAP 24

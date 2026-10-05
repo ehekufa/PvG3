@@ -389,6 +389,10 @@ static void web_fixture(const char *path) {
            m.duck_count == 1 && m.ducks[0].type == ON_CONE);
 }
 int main(int argc, char **argv) {
+    assert(on_level_id_is_official(ON_LEVEL_OFFICIAL_ID));
+    assert(on_level_id_is_official("33806"));
+    assert(!on_level_id_is_official("33807"));
+    assert(!on_level_id_is_official("133806"));
     match_codec();
     rooms_and_commands();
     published_level_writer();
