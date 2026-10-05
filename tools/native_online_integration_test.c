@@ -1212,7 +1212,7 @@ static int run_lvgl_test(void) {
 #endif
     ui_tap(640, 628); /* save the slider value */
     ui_tap(1046, 480); /* recolor trigger */
-    ui_tap(520, 370); /* place a recolor trigger */
+    ui_tap(565, 370); /* place a recolor trigger on a new cell */
 #ifdef PVG3_LVGL_TEST
     assert(lvgl_ui_test_workshop_level(&editor_probe));
     assert(editor_probe.objects[editor_probe.object_count - 1].trigger_kind ==
@@ -1237,7 +1237,7 @@ static int run_lvgl_test(void) {
            recolor_original);
 #endif
     ui_tap(1162, 480); /* background trigger */
-    ui_tap(565, 370); /* place a background trigger */
+    ui_tap(607, 370); /* place a background trigger on a new cell */
 #ifdef PVG3_LVGL_TEST
     assert(lvgl_ui_test_workshop_level(&editor_probe));
     assert(editor_probe.objects[editor_probe.object_count - 1].trigger_kind ==
