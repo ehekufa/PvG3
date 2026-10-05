@@ -6,6 +6,7 @@
  */
 #include "game.h"
 #include "game_view.h" /* GameOfflineUIState for voiced story lines */
+#include "font.h"
 #include "lvgl_ui.h"
 #include "android_music.h"
 #include "android_online_http.h"
@@ -450,6 +451,14 @@ void android_main(struct android_app *app) {
     app->onInputEvent = on_input;
 
     android_online_set_vm(app->activity ? app->activity->vm : NULL);
+    if (app->activity && app->activity->internalDataPath) {
+        char language_path[PATH_MAX];
+        int length = snprintf(language_path, sizeof language_path,
+                              "%s/pvg3-language.v1",
+                              app->activity->internalDataPath);
+        if (length > 0 && (size_t)length < sizeof language_path)
+            font_set_language_path(language_path);
+    }
     game_init();
     garden_load(app);   /* keep reading the existing pvg3-garden.v1 */
     campaign_load(app);

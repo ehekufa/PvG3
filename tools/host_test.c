@@ -9,7 +9,30 @@
 #include <stdint.h>
 #include <sys/stat.h>
 #include "game.h"
+#include "font.h"
 #include "online_net.h"
+
+static void test_language_preference(void) {
+    const char *path = "pvg3-language-test.preference";
+    if (remove(path) != 0) assert(errno == ENOENT);
+    font_set_language(FONT_LANG_RU);
+    font_set_language_path(path);
+    assert(font_language() == FONT_LANG_RU);
+    font_set_language(FONT_LANG_EN);
+    FILE *file = fopen(path, "rb");
+    assert(file);
+    char saved[4] = {0};
+    assert(fread(saved, 1, 3, file) == 3);
+    assert(fclose(file) == 0);
+    assert(saved[0] == 'e' && saved[1] == 'n' && saved[2] == '\n');
+    font_set_language_path(path);
+    assert(font_language() == FONT_LANG_EN);
+    font_set_language(FONT_LANG_RU);
+    font_set_language_path(path);
+    assert(font_language() == FONT_LANG_RU);
+    font_set_language_path(NULL);
+    assert(remove(path) == 0);
+}
 
 static void write_bmp(const char *path, int w, int h, const uint32_t *rgba) {
     FILE *f = fopen(path, "wb");
@@ -43,6 +66,7 @@ static void write_bmp(const char *path, int w, int h, const uint32_t *rgba) {
 }
 
 int main(void) {
+    test_language_preference();
     if (mkdir("shots", 0755) != 0 && errno != EEXIST) {
         perror("shots");
         return 1;

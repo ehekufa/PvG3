@@ -88,7 +88,9 @@ enum {
     U_WORKSHOP_ORB_VARIANT_BASE = 1560,
     U_WORKSHOP_PARTICLE_BASE = 1570,
     U_WORKSHOP_GOAL_VARIANT_BASE = 1580,
-    U_WORKSHOP_PORTAL_VARIANT_BASE = 1590
+    U_WORKSHOP_PORTAL_VARIANT_BASE = 1590,
+    U_SETTINGS_OPEN = 1700, U_SETTINGS_CLOSE, U_SETTINGS_LANG_RU,
+    U_SETTINGS_LANG_EN
 };
 
 static lv_display_t *display;
@@ -101,6 +103,7 @@ static lv_image_dsc_t mirrored_pictures[PV_ART_COUNT][4];
 static uint32_t *layer;
 static uint8_t *drawbuf;
 static int active_phase = -1, page = 0, chosen_map = 1, search_open;
+static int settings_open;
 static int custom_level_page;
 static int pointer_down, captured, touch_x, touch_y, dirty;
 #define CUSTOM_TOUCH_MAX 10
@@ -244,6 +247,7 @@ static lv_obj_t *box(lv_obj_t *parent, int x, int y, int w, int h, int radius,
 static lv_obj_t *label(lv_obj_t *parent, int x, int y, int w, int h,
                        const char *text, int font_index, lv_color_t color,
                        lv_text_align_t align) {
+    text = font_translate(text);
     lv_obj_t *o = lv_label_create(parent);
     lv_obj_set_pos(o, x, y);
     lv_obj_set_size(o, w, h);
@@ -419,6 +423,7 @@ static void menu_screen(lv_obj_t *root) {
     button(root, 90, 563, 280, 94, "Умная книга", 2, U_MENU_BOOK);
     button(root, 410, 548, 445, 125, "Начать игру", 3, U_MENU_PLAY);
     button(root, 895, 563, 295, 94, "Играть вдвоём", 2, U_MENU_ONLINE);
+    button(root, 1055, 662, 180, 45, "Настройки", 1, U_SETTINGS_OPEN);
 }
 
 static void levels_screen(lv_obj_t *root) {
@@ -3151,13 +3156,14 @@ static void custom_platformer_screen(lv_obj_t *root) {
     on_net_view(&view);
     const char *title = view.loaded_level_title[0] ?
         view.loaded_level_title : "Уровень";
-    label(root, 27, 18, 750, 66, title, 2, INK, LV_TEXT_ALIGN_LEFT);
-    label(root, 790, 18, 228, 34, "Кнопки · WASD", 1, MUTED,
+    label(root, 27, 18, 535, 66, title, 2, INK, LV_TEXT_ALIGN_LEFT);
+    label(root, 570, 18, 225, 34, "Кнопки · WASD", 1, MUTED,
           LV_TEXT_ALIGN_CENTER);
-    label(root, 790, 52, 228, 32,
-          game_custom_jetpack_mode() ? "Jetpack · ↑/W, ↓/S" :
-                                      "Прыжок · Space / ↑",
+    label(root, 570, 52, 225, 32,
+          game_custom_jetpack_mode() ? "Jetpack · Вверх/W, Вниз/S" :
+                                      "Прыжок · Пробел / Вверх",
           0, MUTED, LV_TEXT_ALIGN_CENTER);
+    button(root, 805, 21, 210, 62, "Настройки", 1, U_SETTINGS_OPEN);
     button(root, 1033, 21, 215, 62, "К уровням", 2,
            U_CUSTOM_BACK);
 
@@ -3196,6 +3202,37 @@ static void custom_platformer_screen(lv_obj_t *root) {
         label(down, 1, 91, 80, 54, "ВНИЗ", 0, BUTTON_TEXT,
               LV_TEXT_ALIGN_CENTER);
     }
+}
+
+static void settings_dialog(lv_obj_t *root) {
+    lv_obj_t *shade = button(root, 0, 0, GAME_W, GAME_H, "", 0,
+                             U_SETTINGS_CLOSE);
+    lv_obj_set_style_bg_color(shade, C(000000), 0);
+    lv_obj_set_style_bg_opa(shade, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(shade, 0, 0);
+    lv_obj_set_style_radius(shade, 0, 0);
+
+    box(root, 355, 150, 570, 420, 22, PAPER, 1);
+    label(root, 395, 177, 490, 52, "Настройки", 3, INK,
+          LV_TEXT_ALIGN_CENTER);
+    label(root, 405, 235, 470, 40, "Язык интерфейса", 2, MUTED,
+          LV_TEXT_ALIGN_CENTER);
+    lv_obj_t *russian = button(root, 430, 286, 420, 60, "Русский", 2,
+                               U_SETTINGS_LANG_RU);
+    lv_obj_t *english = button(root, 430, 358, 420, 60, "English", 2,
+                               U_SETTINGS_LANG_EN);
+    button_fill(russian, font_language() == FONT_LANG_RU ?
+                         BUTTON_GRAY : BUTTON_WHITE);
+    button_fill(english, font_language() == FONT_LANG_EN ?
+                         BUTTON_GRAY : BUTTON_WHITE);
+    lv_obj_set_style_border_width(russian,
+        font_language() == FONT_LANG_RU ? 5 : 3, 0);
+    lv_obj_set_style_border_width(english,
+        font_language() == FONT_LANG_EN ? 5 : 3, 0);
+    label(root, 395, 427, 500, 54,
+          "Голубое — небо, зелёное — трава и платформы. Хитбоксы не показаны.",
+          0, MUTED, LV_TEXT_ALIGN_CENTER);
+    button(root, 530, 505, 220, 52, "Закрыть", 1, U_SETTINGS_CLOSE);
 }
 
 static void lobby_screen(lv_obj_t *root, const OnNetView *v) {
@@ -3785,6 +3822,12 @@ static void pressed(lv_event_t *ev) {
                          260 + ((n - 1) / 5) * 190);return;
     }
     switch (code) {
+    case U_SETTINGS_OPEN: settings_open = 1;dirty = 1;break;
+    case U_SETTINGS_CLOSE: settings_open = 0;dirty = 1;break;
+    case U_SETTINGS_LANG_RU:
+        font_set_language(FONT_LANG_RU);dirty = 1;break;
+    case U_SETTINGS_LANG_EN:
+        font_set_language(FONT_LANG_EN);dirty = 1;break;
     case U_MENU_PLAY: game_input_press(640, 600);break;
     case U_MENU_LEVELS: game_input_press(635, 85);break;
     case U_MENU_GARDEN: game_input_press(1040, 83);break;
@@ -4048,6 +4091,7 @@ static void rebuild(int phase, const OnNetView *net) {
     else if (phase == GAME_ONLINE_LOBBY) lobby_screen(screen, net);
     else if (phase == GAME_ONLINE_MATCH) match_screen(screen, net);
     drag_overlay(screen, phase);
+    if (settings_open) settings_dialog(screen);
     memset(layer, 0, (size_t)GAME_W * GAME_H * 4);
     lv_screen_load(screen);
     if (old) lv_obj_del(old);
@@ -4126,6 +4170,7 @@ int lvgl_ui_init(void) {
     drag_ghost = drag_target = NULL;
     drag_notice_left = 0;drag_notice[0] = 0;
     pointer_down = captured = touch_x = touch_y = search_open = dirty = 0;
+    settings_open = 0;
     search_code[0] = local_notice[0] = 0;
     return 1;
 }
@@ -4249,12 +4294,39 @@ static void custom_controls_clear(void) {
     game_custom_vertical_control(0);
 }
 
+static void custom_settings_touch(int x, int y) {
+    if (x >= 430 && x < 850 && y >= 286 && y < 346) {
+        font_set_language(FONT_LANG_RU);
+        dirty = 1;
+    } else if (x >= 430 && x < 850 && y >= 358 && y < 418) {
+        font_set_language(FONT_LANG_EN);
+        dirty = 1;
+    } else if ((x >= 530 && x < 750 && y >= 505 && y < 557) ||
+               x < 355 || x >= 925 || y < 150 || y >= 570) {
+        settings_open = 0;
+        dirty = 1;
+    }
+}
+
 int lvgl_ui_touch_pointer(int pointer_id, int x, int y, int down) {
     if (!display || game_phase() != GAME_CUSTOM_PLAY) return 0;
     if (x < 0) x = 0;
     if (x >= GAME_W) x = GAME_W - 1;
     if (y < 0) y = 0;
     if (y >= GAME_H) y = GAME_H - 1;
+    if (settings_open) {
+        if (down) {
+            custom_controls_clear();
+            custom_settings_touch(x, y);
+        }
+        return 1;
+    }
+    if (down && x >= 805 && x < 1015 && y >= 21 && y < 83) {
+        custom_controls_clear();
+        settings_open = 1;
+        dirty = 1;
+        return 1;
+    }
     if (down && x >= 1030 && y <= 108) {
         custom_controls_clear();
         game_custom_level_exit();
@@ -4398,6 +4470,7 @@ void lvgl_ui_frame(float dt, uint32_t *game_rgba) {
     if (phase != active_phase) {
         drag_notice_left = 0;
         drag_notice[0] = 0;
+        settings_open = 0;
     }
     OnNetView v = {0};
     if (phase == GAME_ONLINE_ROOMS || phase == GAME_ONLINE_LOBBY ||

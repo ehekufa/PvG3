@@ -7,6 +7,7 @@
 #ifdef PVG3_LVGL_TEST
 #include "lvgl_ui.h"
 #include "game_view.h"
+#include "font.h"
 #endif
 
 #include <assert.h>
@@ -889,7 +890,7 @@ static void native_jetpack_portal_regression(void) {
     lvgl_ui_frame(.016f, ui_pixels);
     assert(lvgl_ui_test_label_present("Уровень"));
     assert(!lvgl_ui_test_label_present("ID —  ·  Уровень"));
-    assert(lvgl_ui_test_label_present("Jetpack · ↑/W, ↓/S"));
+    assert(lvgl_ui_test_label_present("Jetpack · Вверх/W, Вниз/S"));
     float parked_y = game_debug_custom_player_y();
     game_tick(.05f, NULL);
     assert(!game_debug_custom_jetpack_active());
@@ -951,7 +952,7 @@ static void native_jetpack_portal_regression(void) {
     game_custom_control(0, 0, 0);
     assert(!game_custom_jetpack_mode());
     lvgl_ui_frame(.016f, ui_pixels);
-    assert(lvgl_ui_test_label_present("Прыжок · Space / ↑"));
+    assert(lvgl_ui_test_label_present("Прыжок · Пробел / Вверх"));
     for (int i = 0; i < 3; ++i) game_tick(.05f, NULL);
     assert(!game_custom_jetpack_mode());
 
@@ -1013,6 +1014,22 @@ static int run_lvgl_test(void) {
     assert(ui_pixels[580 * GAME_W + 100] == 0xFFFFFFFFu); /* book */
     assert(ui_pixels[560 * GAME_W + 420] == 0xFFFFFFFFu); /* start */
     assert(ui_pixels[580 * GAME_W + 905] == 0xFFFFFFFFu); /* online */
+
+    assert(lvgl_ui_test_label_present("Настройки"));
+    ui_tap(1145, 684);
+    assert(lvgl_ui_test_label_present("Язык интерфейса"));
+    assert(lvgl_ui_test_label_present("Русский") &&
+           lvgl_ui_test_label_present("English"));
+    ui_tap(640, 388); /* choose English and keep the settings dialog open */
+    assert(font_language() == FONT_LANG_EN);
+    assert(lvgl_ui_test_label_present("Interface language") &&
+           lvgl_ui_test_label_present("Plants vs. Geese 3") &&
+           lvgl_ui_test_label_present("Settings"));
+    ui_tap(640, 531); /* close settings */
+    ui_tap(1145, 684);
+    ui_tap(640, 316); /* switch back to Russian */
+    assert(font_language() == FONT_LANG_RU);
+    ui_tap(640, 531);
 
     ui_tap(1080, 80);assert(game_phase() == GAME_CUSTOM_LEVELS);tick_pump(2);
     ui_snapshot("menu_player_catalog");
@@ -1433,6 +1450,24 @@ static int run_lvgl_test(void) {
            lvgl_ui_test_label_does_not_wrap(ON_LEVEL_OFFICIAL_ID));
     ui_tap(185, 318);tick_pump(3);
     assert(game_phase() == GAME_CUSTOM_PLAY);
+    lvgl_ui_frame(.016f, ui_pixels);
+    assert(lvgl_ui_test_label_present("Кнопки · WASD"));
+    ui_tap(910, 55); /* settings button in the native platformer HUD */
+    assert(lvgl_ui_test_label_present("Язык интерфейса") &&
+           lvgl_ui_test_label_present(
+               "Голубое — небо, зелёное — трава и платформы. Хитбоксы не показаны."));
+    ui_tap(640, 388); /* English */
+    assert(font_language() == FONT_LANG_EN);
+    assert(lvgl_ui_test_label_present("Controls · WASD") &&
+           lvgl_ui_test_label_present("Back to levels") &&
+           lvgl_ui_test_label_present("ACTION") &&
+           lvgl_ui_test_label_present(
+               "Blue is sky; green is grass and platforms. Hitboxes are not shown."));
+    ui_tap(640, 531); /* close the settings overlay */
+    assert(!lvgl_ui_test_label_present("Interface language"));
+    ui_tap(910, 55);ui_tap(640, 316); /* restore Russian for the other checks */
+    assert(font_language() == FONT_LANG_RU);
+    ui_tap(640, 531);
     game_tick(.05f, NULL); /* settle on the ground before jumping */
     float custom_x = game_debug_custom_player_x();
     float custom_y = game_debug_custom_player_y();

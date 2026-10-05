@@ -10,6 +10,7 @@
 #include <mmsystem.h>
 
 #include "game.h"
+#include "font.h"
 #include "lvgl_ui.h"
 #include "online_net.h"
 
@@ -38,6 +39,7 @@ static wchar_t executable_dir[PATH_CAP];
 static wchar_t save_dir[PATH_CAP];
 static wchar_t campaign_file[PATH_CAP];
 static wchar_t garden_file[PATH_CAP];
+static wchar_t language_file[PATH_CAP];
 static wchar_t music_file[PATH_CAP];
 
 static int legacy_renderer_phase(int phase) {
@@ -106,6 +108,7 @@ static void initialize_paths(void) {
     if (save_dir[0]) {
         join_path(campaign_file, PATH_CAP, save_dir, L"pvg3-campaign.v1");
         join_path(garden_file, PATH_CAP, save_dir, L"pvg3-garden.v1");
+        join_path(language_file, PATH_CAP, save_dir, L"pvg3-language.v1");
     }
     if (executable_dir[0]) {
         int n = swprintf(music_file, PATH_CAP,
@@ -113,6 +116,19 @@ static void initialize_paths(void) {
                          executable_dir);
         if (n <= 0 || n >= PATH_CAP) music_file[0] = 0;
     }
+}
+
+static void load_language_preference(void) {
+    if (!language_file[0]) return;
+    int bytes = WideCharToMultiByte(CP_ACP, 0, language_file, -1,
+                                   NULL, 0, NULL, NULL);
+    if (bytes <= 0) return;
+    char *path = (char *)malloc((size_t)bytes);
+    if (!path) return;
+    if (WideCharToMultiByte(CP_ACP, 0, language_file, -1,
+                            path, bytes, NULL, NULL) > 0)
+        font_set_language_path(path);
+    free(path);
 }
 
 static void campaign_load(void) {
@@ -469,6 +485,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous,
     (void)command_line;
     SetProcessDPIAware();
     initialize_paths();
+    load_language_preference();
 
     game_init();
     campaign_load();

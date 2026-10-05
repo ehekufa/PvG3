@@ -6,11 +6,240 @@
 #include "font.h"
 
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "vendor/stb_truetype.h"
 #include "font_data.h"
+
+
+typedef struct {const char *ru, *en;} FontTranslation;
+
+static const FontTranslation translations[] = {
+    {"Растения против гусей 3", "Plants vs. Geese 3"},
+    {"Кампания", "Campaign"},
+    {"Сад Дзен", "Zen Garden"},
+    {"Уровни игроков", "Player Levels"},
+    {"Хлебушек", "Bread"},
+    {"Дима в маске", "Masked Dima"},
+    {"Кирилл", "Kirill"},
+    {"Умная книга", "Field Guide"},
+    {"Начать игру", "Start Game"},
+    {"Играть вдвоём", "Play Online"},
+    {"Выбери уровень", "Choose a Level"},
+    {"Назад", "Back"},
+    {"Вода", "Water"},
+    {"Финал", "Finale"},
+    {"Уровень 0 · история", "Level 0 · Story"},
+    {"Уровень 0 · история Кирилла", "Level 0 · Kirill's Story"},
+    {"Каталог уровней", "Level Catalog"},
+    {"Настройки", "Settings"},
+    {"Язык интерфейса", "Interface language"},
+    {"Русский", "Russian"},
+    {"English", "English"},
+    {"Закрыть", "Close"},
+    {"Голубое — небо, зелёное — трава и платформы. Хитбоксы не показаны.",
+     "Blue is sky; green is grass and platforms. Hitboxes are not shown."},
+    {"Новый уровень", "New level"},
+    {"Кнопки · WASD", "Controls · WASD"},
+    {"Прыжок · Пробел / Вверх", "Jump · Space / Up"},
+    {"Jetpack · Вверх/W, Вниз/S", "Jetpack · Up/W, Down/S"},
+    {"К уровням", "Back to levels"},
+    {"НАЗАД", "BACK"},
+    {"ВПЕРЁД", "FORWARD"},
+    {"ДЕЙСТВИЕ", "ACTION"},
+    {"ПРЫЖОК", "JUMP"},
+    {"ВВЕРХ", "UP"},
+    {"ВНИЗ", "DOWN"},
+    {"МОНЕТЫ", "COINS"},
+    {"УРОВЕНЬ ПРОЙДЕН!", "LEVEL COMPLETE!"},
+    {"НАЖМИ «К УРОВНЯМ», ЧТОБЫ ВЕРНУТЬСЯ",
+     "PRESS BACK TO LEVELS TO RETURN"},
+    {"ПУБЛИЧНЫЙ КАТАЛОГ УРОВНЕЙ", "PLAYER LEVEL CATALOG"},
+    {"Подключаемся к каталогу…", "Connecting to the catalog…"},
+    {"Выбери уровень, чтобы запустить его в C-игре.",
+     "Choose a level to play."},
+    {"Пока нет опубликованных уровней.", "No published levels yet."},
+    {"ОФИЦИАЛЬНЫЙ", "OFFICIAL"},
+    {"Нажми, чтобы играть в C-игре", "Tap to play."},
+    {"Уровней пока нет", "No levels yet"},
+    {"Опубликованные уровни появятся здесь.",
+     "Published levels will appear here."},
+    {"Мастерская", "Workshop"},
+    {"Обновить", "Refresh"},
+    {"Мастерская · мои уровни", "Workshop · My Levels"},
+    {"ЛОКАЛЬНЫЕ ЧЕРНОВИКИ", "LOCAL DRAFTS"},
+    {"Платформенный уровень · локальный черновик",
+     "Platformer level · local draft"},
+    {"Открыть", "Open"},
+    {"Черновиков пока нет", "No drafts yet"},
+    {"Отдельный платформенный редактор", "Separate platformer editor"},
+    {"+  Новый уровень", "+  New Level"},
+    {"Опубликованный каталог", "Published catalog"},
+    {"Параметры уровня", "Level settings"},
+    {"НАЗВАНИЕ", "TITLE"},
+    {"ОПИСАНИЕ", "DESCRIPTION"},
+    {"Открыть редактор", "Open editor"},
+    {"Публиковать", "Publish"},
+    {"Сохранить", "Save"},
+    {"Предпросмотр", "Preview"},
+    {"УРОВЕНЬ", "LEVEL"},
+    {"РОБОТ", "ROBOT"},
+    {"ВОЛНА", "WAVE"},
+    {"КНИГА", "BOOK"},
+    {"МЕНЮ", "MENU"},
+    {"ДИМА", "DIMA"},
+    {"ХЛЕБУШЕК", "BREAD"},
+    {"КИРИЛЛ", "KIRILL"},
+    {"УРОВНИ 1-10", "LEVELS 1-10"},
+    {"СТАРТ", "START"},
+    {"ОНЛАЙН", "ONLINE"},
+    {"ВЫБОР УРОВНЯ", "LEVEL SELECT"},
+    {"ПРОЙДЕНО: %d / 10", "COMPLETED: %d / 10"},
+    {"УРОВЕНЬ 0: КАТ-СЦЕНА", "LEVEL 0: STORY"},
+    {"КАТАЛОГ УРОВНЕЙ", "LEVEL CATALOG"},
+    {"НАЗАД", "BACK"},
+    {"РАСТЕНИЯ", "PLANTS"},
+    {"ГУСИ", "GEESE"},
+    {"ГАЗОН", "LAWN"},
+    {"В МЕНЮ", "TO MENU"},
+    {"УБРАТЬ", "CLEAR"},
+    {"ВРАГИ", "ENEMIES"},
+    {"ПРОПУСТИТЬ", "SKIP"},
+    {"УРОВЕНЬ ПРОЙДЕН!", "LEVEL COMPLETE!"},
+    {"ВСЯ ВОЛНА ПОБЕЖДЕНА!", "WAVE CLEARED!"},
+    {"СЛЕДУЮЩИЙ УРОВЕНЬ:", "NEXT LEVEL:"},
+    {"ДАЛЬШЕ", "CONTINUE"},
+    {"РОБОТ ОСТАНОВЛЕН!", "ROBOT STOPPED!"},
+    {"ЗАЩИТА ПРОРВАНА!", "DEFENSE BREACHED!"},
+    {"ПОПРОБУЙ ЕЩЁ РАЗ", "TRY AGAIN"},
+    {"ПОВТОРИТЬ", "RETRY"},
+    {"ПОБЕДА!", "VICTORY!"},
+    {"ПОБЕДИЛ СОПЕРНИК", "OPPONENT WINS"},
+    {"ПОБЕДИЛИ РАСТЕНИЯ", "PLANTS WIN"},
+    {"УТКИ ПОБЕДИЛИ", "GEESE WIN"},
+    {"В КОМНАТЫ", "BACK TO ROOMS"},
+    {"МАЛО МОНЕТ", "NOT ENOUGH COINS"},
+    {"КОМНАТЫ", "ROOMS"},
+    {"ПОИСК", "SEARCH"},
+    {"+ СОЗДАТЬ", "+ CREATE"},
+    {"ОБНОВИТЬ", "REFRESH"},
+    {"ПОДКЛЮЧАЕМСЯ...", "CONNECTING..."},
+    {"ЗАГРУЖАЕМ КОМНАТЫ...", "LOADING ROOMS..."},
+    {"ПОКА НЕТ СВОБОДНЫХ КОМНАТ", "NO OPEN ROOMS YET"},
+    {"ВОЙТИ >", "JOIN >"},
+    {"ПОИСК КОМНАТЫ", "FIND A ROOM"},
+    {"КОД ИЗ 6 СИМВОЛОВ", "6-CHARACTER CODE"},
+    {"СТЕРЕТЬ", "DELETE"},
+    {"ВОЙТИ ПО КОДУ", "JOIN BY CODE"},
+    {"КОМНАТА %s", "ROOM %s"},
+    {"ВЫЙТИ", "EXIT"},
+    {"КАРТА: ВОДА", "MAP: WATER"},
+    {"КАРТА: ГАЗОН", "MAP: LAWN"},
+    {"ЗОМБИ", "ZOMBIES"},
+    {"ТВОЯ СТОРОНА", "YOUR SIDE"},
+    {"СТОРОНА СОПЕРНИКА", "OPPONENT'S SIDE"},
+    {"ВЫБРАТЬ СТОРОНУ", "CHOOSE A SIDE"},
+    {"ВЫБЕРИТЕ РАЗНЫЕ СТОРОНЫ", "CHOOSE DIFFERENT SIDES"},
+    {"ЗАКОНЧИТЬ", "FINISH"},
+    {"ОЖИДАЕМ ПОДТВЕРЖДЕНИЯ ХОДА...", "WAITING FOR TURN CONFIRMATION..."},
+    {"ПОБЕДА!", "VICTORY!"},
+    {"ПОБЕДИЛ СОПЕРНИК", "OPPONENT WINS"},
+    {"РАСТЕНИЯ ПОБЕДИЛИ", "PLANTS WIN"},
+    {"УТКИ ПОБЕДИЛИ", "GEESE WIN"},
+    {"Кнопка действия", "Action button"},
+    {"Старт уровня", "Level start"},
+    {"Действие", "Action"},
+    {"Игрок", "Player"},
+    {"Финиш", "Finish"},
+    {"Чекпоинт", "Checkpoint"},
+    {"Монета", "Coin"},
+    {"Блок", "Block"},
+    {"Платформа", "Platform"},
+    {"Утка", "Duck"},
+    {"Триггер", "Trigger"},
+    {"Цвет", "Color"},
+    {"Фон", "Background"},
+    {"Движение", "Movement"},
+    {"Гравитация", "Gravity"},
+    {"Портал Jetpack", "Jetpack Portal"},
+    {"Обычный портал", "Normal Portal"},
+    {"Прыжок", "Jump"},
+    {"Действие", "Action"},
+    {"Сохранить", "Save"},
+    {"Публиковать", "Publish"},
+    {"Предпросмотр", "Preview"}
+};
+
+#define FONT_LANGUAGE_PATH_CAP 4096
+static int selected_language = FONT_LANG_RU;
+static char language_path[FONT_LANGUAGE_PATH_CAP];
+static char translated_text[512];
+
+int font_language(void) { return selected_language; }
+
+void font_set_language_path(const char *path) {
+    if (!path) {
+        language_path[0] = 0;
+        return;
+    }
+    size_t length = strlen(path);
+    if (length >= sizeof language_path) return;
+    memcpy(language_path, path, length + 1);
+    FILE *file = fopen(language_path, "rb");
+    if (!file) return;
+    char saved[8] = {0};
+    size_t count = fread(saved, 1, sizeof saved - 1, file);
+    fclose(file);
+    if (count >= 2 && saved[0] == 'e' && saved[1] == 'n')
+        selected_language = FONT_LANG_EN;
+    else if (count >= 2 && saved[0] == 'r' && saved[1] == 'u')
+        selected_language = FONT_LANG_RU;
+}
+
+void font_set_language(int language) {
+    if (language != FONT_LANG_RU && language != FONT_LANG_EN) return;
+    selected_language = language;
+    if (!language_path[0]) return;
+    char temporary[FONT_LANGUAGE_PATH_CAP + 8];
+    int length = snprintf(temporary, sizeof temporary, "%s.tmp", language_path);
+    if (length <= 0 || (size_t)length >= sizeof temporary) return;
+    FILE *file = fopen(temporary, "wb");
+    if (!file) return;
+    const char *value = language == FONT_LANG_EN ? "en\n" : "ru\n";
+    size_t size = strlen(value);
+    int ok = fwrite(value, 1, size, file) == size;
+    if (fclose(file) != 0) ok = 0;
+    if (ok) {
+        remove(language_path);
+        if (rename(temporary, language_path) != 0) remove(temporary);
+    } else {
+        remove(temporary);
+    }
+}
+
+const char *font_translate(const char *text) {
+    if (!text || selected_language != FONT_LANG_EN) return text;
+    for (size_t i = 0; i < sizeof translations / sizeof translations[0]; ++i)
+        if (!strcmp(text, translations[i].ru)) return translations[i].en;
+    static const struct {const char *ru, *en;} prefixes[] = {
+        {"МОНЕТЫ ", "COINS "},
+        {"Объектов: ", "Objects: "},
+        {"Выбрано объектов: ", "Selected objects: "},
+        {"Палитра ", "Palette "},
+        {"Комната ", "Room "}
+    };
+    for (size_t i = 0; i < sizeof prefixes / sizeof prefixes[0]; ++i) {
+        size_t prefix = strlen(prefixes[i].ru);
+        if (strncmp(text, prefixes[i].ru, prefix)) continue;
+        int count = snprintf(translated_text, sizeof translated_text, "%s%s",
+                             prefixes[i].en, text + prefix);
+        if (count > 0 && (size_t)count < sizeof translated_text)
+            return translated_text;
+    }
+    return text;
+}
 
 const unsigned char *font_ttf_data(size_t *length) {
     if (length) *length = PT_SANS_TTF_SIZE;
@@ -95,6 +324,7 @@ static int advance_px(int size, uint32_t cp) {
 
 int font_width(int size, const char *utf8) {
     if (!font_init() || !utf8 || size < 1 || size > MAX_TEXT_SIZE) return 0;
+    utf8 = font_translate(utf8);
     const unsigned char *p = (const unsigned char *)utf8;
     int width = 0;
     while (*p) width += advance_px(size, supported_codepoint(next_codepoint(&p)));
@@ -124,6 +354,7 @@ static uint32_t alpha_blend(uint32_t dst, uint32_t color, int alpha) {
 void font_draw(uint32_t *rgba, int width, int height,
                int x, int y, int size, uint32_t color, const char *utf8) {
     if (!font_init() || !rgba || !utf8 || size < 1 || size > MAX_TEXT_SIZE) return;
+    utf8 = font_translate(utf8);
     const unsigned char *p = (const unsigned char *)utf8;
     while (*p) {
         uint32_t cp = supported_codepoint(next_codepoint(&p));
