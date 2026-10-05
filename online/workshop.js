@@ -5,7 +5,7 @@
 export const LEVEL_WIDTH = 16;
 export const LEVEL_HEIGHT = 10;
 export const WORLD_LIMIT = 100_000;
-export const OFFICIAL_LEVEL_ID = '33806';
+export const OFFICIAL_LEVEL_ID = '338069';
 export const isOfficialLevel = id => String(id) === OFFICIAL_LEVEL_ID;
 export const TILE_W = 80;
 export const TILE_H = 72;

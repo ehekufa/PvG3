@@ -390,9 +390,9 @@ static void web_fixture(const char *path) {
 }
 int main(int argc, char **argv) {
     assert(on_level_id_is_official(ON_LEVEL_OFFICIAL_ID));
-    assert(on_level_id_is_official("33806"));
-    assert(!on_level_id_is_official("33807"));
-    assert(!on_level_id_is_official("133806"));
+    assert(on_level_id_is_official("338069"));
+    assert(!on_level_id_is_official("338068"));
+    assert(!on_level_id_is_official("1338069"));
     match_codec();
     rooms_and_commands();
     published_level_writer();

@@ -33,7 +33,7 @@ static const char *FAKE_HOST = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 static const char *TEST_LEVEL_INDEX =
     "{\"104\":{\"id\":\"104\",\"title\":\"Невероятное приключение через тайный мост к финишу\","
     "\"description\":\"Найди скрытый мост и монеты, затем доберись до финиша по платформам.\",\"updatedAt\":1},"
-    "\"33806\":{\"id\":\"33806\",\"title\":\"Официальный уровень\","
+    "\"338069\":{\"id\":\"338069\",\"title\":\"Официальный уровень\","
     "\"description\":\"Авторский уровень PvG3.\",\"updatedAt\":2}}";
 static const char *TEST_LEVEL =
     "{\"format\":\"PVG3-PUBLISHED-LEVEL\",\"version\":1,\"id\":\"104\","

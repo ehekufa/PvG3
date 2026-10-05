@@ -9,12 +9,12 @@ import {LEVEL_TYPES, TRIGGER_KINDS, WORLD_LIMIT, MAX_LEVEL_OBJECTS,
         normalizeParticleEmitter, sampleParticleEmitter,
         drawParticleEmitterPreview, drawEditorCanvas, drawPreviewCanvas} from '../workshop.js';
 
-test('only published level ID 33806 receives the official marker', () => {
-  assert.equal(OFFICIAL_LEVEL_ID, '33806');
-  assert.equal(isOfficialLevel('33806'), true);
-  assert.equal(isOfficialLevel(33806), true);
-  assert.equal(isOfficialLevel('33807'), false);
-  assert.equal(isOfficialLevel('133806'), false);
+test('only published level ID 338069 receives the official marker', () => {
+  assert.equal(OFFICIAL_LEVEL_ID, '338069');
+  assert.equal(isOfficialLevel('338069'), true);
+  assert.equal(isOfficialLevel(338069), true);
+  assert.equal(isOfficialLevel('338068'), false);
+  assert.equal(isOfficialLevel('1338069'), false);
 });
 
 function recordingCanvas() {
