@@ -81,7 +81,16 @@ jobs:
             src/game.c src/font.c src/online_rules.c src/online_protocol.c \
             src/online_net.c src/lvgl_ui.c tools/native_online_integration_test.c \
             $LVGL_SOURCES -o lvgl_ui_test -lm -pthread
-          PVG3_LVGL_TEST=1 ./lvgl_ui_test
+          if PVG3_LVGL_TEST=1 ./lvgl_ui_test; then
+            :
+          else
+            status=$?
+            printf '::error title=LVGL integration test failed::exit %s\n' "$status" >&3
+            tail -n 80 /tmp/pvg3-verify.log | sed 's/%/%25/g' | while IFS= read -r line; do
+              printf '::error::%s\n' "$line" >&3
+            done
+            exit "$status"
+          fi
           clang -std=c11 -O2 -Wall -Wextra -Werror -Isrc \
             src/online_rules.c src/online_protocol.c src/online_net.c \
             tools/native_online_thread_test.c -o native_online_thread_test -lm -pthread
