@@ -3183,10 +3183,12 @@ static void custom_platformer_draw(void) {
     custom_draw_particle_effects();
     int player_visible = 1, player_flip_x = 0, player_flip_y = 0;
     float player_angle = 0;
+    uint32_t player_color = 0xffffffu;
     if (custom_player_index >= 0 && custom_player_index < custom_object_count) {
         const OnLevelObject *player = &custom_level.objects[custom_player_index];
         player_visible = player->visible && !custom_object_is_invisible(player);
         player_angle = player->angle;
+        player_color = player->color;
         player_flip_x = custom_player_facing_left;
         player_flip_y = player->flip_y;
     }
@@ -3196,8 +3198,8 @@ static void custom_platformer_draw(void) {
         int player_art = !custom_jetpack_mode ? PV_ART_BREAD :
             custom_jetpack_active ? PV_ART_JETPACK_ACTIVE : PV_ART_JETPACK_INACTIVE;
         uint32_t player_tint = COL(
-            (player->color >> 16) & 255u, (player->color >> 8) & 255u,
-            player->color & 255u);
+            (player_color >> 16) & 255u, (player_color >> 8) & 255u,
+            player_color & 255u);
         if (fabsf(player_angle) >= .01f)
             sprite_draw_rotated_tinted_flipped(player_art, px, py,
                 (int)custom_player_w, (int)custom_player_h, player_angle,
