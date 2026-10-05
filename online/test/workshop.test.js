@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
 import {LEVEL_TYPES, TRIGGER_KINDS, WORLD_LIMIT, MAX_LEVEL_OBJECTS,
         MAX_OBJECT_WIDTH, MAX_OBJECT_HEIGHT, newDraft, addObject, findObjectAt,
         moveObjects, resizeObjects, rotateObjects, flipObjects, panCamera, copyObjects, pasteObjects, validateDraft,
@@ -8,6 +9,41 @@ import {LEVEL_TYPES, TRIGGER_KINDS, WORLD_LIMIT, MAX_LEVEL_OBJECTS,
         DEFAULT_PARTICLE_EMITTER, OFFICIAL_LEVEL_ID, isOfficialLevel,
         normalizeParticleEmitter, sampleParticleEmitter,
         drawParticleEmitterPreview, drawEditorCanvas, drawPreviewCanvas} from '../workshop.js';
+
+test('editor keeps section and control names but omits instructional hints', () => {
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const editor = html.match(/<section class="ws-page hidden" id="ws-editor-page"[\s\S]*?<\/section>/)?.[0];
+  assert.ok(editor, 'web editor section exists');
+  for (const hint of [
+    'Перетаскивай объекты', 'Зелёные стрелки двигают',
+    'Отражение меняет стороны, не угол', 'Настрой скорость, форму и поведение частиц',
+    'Группа делает один оборот в секунду', 'Настройка действует на весь уровень',
+    'Состояние группы остаётся таким',
+  ]) assert.equal(editor.includes(hint), false, `removed editor hint: ${hint}`);
+  assert.equal(editor.includes('title='), false, 'editor buttons have no hover tooltips');
+  assert(editor.includes('КАТЕГОРИИ ОБЪЕКТОВ'));
+  assert(editor.includes('ЗЕРКАЛЬНОЕ ОТРАЖЕНИЕ'));
+  assert(editor.includes('Шаг перемещения'));
+  assert(editor.includes('Слева ↔ справа'));
+  const level = newDraft('hint-check');
+  const block = addObject(level, 'block', 4, 4);block.number = 42;
+  const canvas = recordingCanvas();
+  drawEditorCanvas(canvas.canvas, level, 0, 'delete');
+  assert.equal(canvas.labels.some(label => /Выбери объект|Перетаскивай/.test(label)), false);
+  assert(canvas.labels.includes(String(block.id)), 'object ID is visible in the editor');
+  assert.equal(canvas.labels.includes('42'), false, 'group number is not shown as an object ID');
+  const playCanvas = recordingCanvas();
+  drawPreviewCanvas(playCanvas.canvas, createPreviewState(level));
+  assert.equal(playCanvas.labels.includes(String(block.id)), false,
+    'object IDs stay hidden in gameplay while messages and coin count remain');
+  assert(playCanvas.labels.some(label => label.startsWith('Монеты:')));
+
+  const particleDialog = html.match(/<dialog id="ws-particle-dialog"[\s\S]*?<\/dialog>/)?.[0];
+  assert.ok(particleDialog, 'particle settings dialog exists');
+  assert.equal(particleDialog.includes('Чёрный квадрат показывает'), false);
+  assert.equal(particleDialog.includes('точка их рождения'), false);
+  assert.equal(html.includes('id="ws-control-help"'), false);
+});
 
 test('only published level ID 338069 receives the official marker', () => {
   assert.equal(OFFICIAL_LEVEL_ID, '338069');
@@ -102,7 +138,8 @@ test('world placement is scrollable across large positive and negative coordinat
   for (const kind of TRIGGER_KINDS)
     assert.equal(addObject(level, 'trigger', kind === 'rotate' ? 8 : 7, 5, kind).trigger.kind, kind);
   assert.deepEqual(TRIGGER_KINDS,
-    ['move', 'rotate', 'forever', 'invisibility', 'no-collision', 'gravity']);
+    ['move', 'rotate', 'forever', 'invisibility', 'no-collision', 'gravity',
+      'recolor', 'background']);
   assert.equal(validateDraft(level).ok, true);
 });
 
@@ -223,6 +260,45 @@ test('particle emitters round-trip, stay non-solid and draw P markers plus orb s
   assert.equal(yellow.type, 'orb-yellow');assert.equal(orange.type, 'orb-orange');
 });
 
+test('recolor and background triggers round-trip, target groups, and update the playable preview', () => {
+  const level = newDraft('recolor-background');
+  const first = addObject(level, 'block', 6, 6);
+  first.number = 42;
+  const other = addObject(level, 'block', 8, 6);
+  other.number = 43;
+  const recolor = addObject(level, 'trigger', 100, 100, 'recolor');
+  Object.assign(recolor.trigger, {event:'start', groupId:42, color:'#e547b2'});
+  const background = addObject(level, 'trigger', 102, 100, 'background');
+  Object.assign(background.trigger, {event:'start', color:'#468bd0'});
+
+  assert.equal(validateDraft(level).ok, true);
+  const record = publishedRecord('712', level);
+  const recolorWire = record.project.objects.find(object => object.id === recolor.id).trigger;
+  const backgroundWire = record.project.objects.find(object => object.id === background.id).trigger;
+  assert.deepEqual(recolorWire,
+    {kind:'recolor', event:'start', action:'recolor', groupId:42, color:'#e547b2'});
+  assert.deepEqual(backgroundWire,
+    {kind:'background', event:'start', action:'set-background', color:'#468bd0'});
+  assert.equal(isPublishedRecord(record, '712'), true);
+  const restored = draftFromPublished(record);
+  assert.equal(validateDraft(restored).ok, true);
+  const state = createPreviewState(restored);
+  assert.equal(state.objects.find(object => object.id === first.id).color, '#e547b2');
+  assert.equal(state.objects.find(object => object.id === other.id).color, other.color,
+    'recolor affects only the selected group, including block sprites');
+  assert.equal(state.backgroundColor, '#468bd0');
+  const canvas = recordingCanvas();
+  drawPreviewCanvas(canvas.canvas, state);
+  assert.equal(canvas.rectFills[0].style, '#468bd0',
+    'background trigger color is painted below the gameplay preview');
+
+  const switched = structuredClone(restored);
+  assert.equal(setTriggerKind(switched, background.id, 'recolor'), true);
+  assert.equal(switched.objects.find(object => object.id === background.id).trigger.groupId, 2,
+    'switching from global background mode restores a valid target group');
+  assert.equal(validateDraft(switched).ok, true);
+});
+
 test('gravity triggers round-trip a signed level setting and change preview acceleration', () => {
   const weak = newDraft('gravity-weak');
   weak.objects.find(object => object.type === 'ground').y = 30;
@@ -330,8 +406,9 @@ test('portals switch forms on entry and Jetpack idles, moves, and renders active
   drawPreviewCanvas(idlePreview.canvas, state, 'keyboard', art);
   assert(idlePreview.images.some(call => call.image === inactiveArt),
     'the idle player uses the supplied inactive Jetpack artwork');
-  assert(idlePreview.labels.some(label => label.includes('↑/W, ↓/S')),
-    'the preview HUD describes Jetpack controls instead of the jump command');
+  assert(idlePreview.labels.some(label => label === 'Монеты: 0'));
+  assert.equal(idlePreview.labels.some(label => label.includes('↑/W, ↓/S')), false,
+    'the preview HUD contains no instructional control hints');
 
   stepPreview(state, {}, .05);
   const parkedX = state.x, parkedY = state.y;
@@ -409,6 +486,51 @@ test('control mode defaults to buttons on touch devices and can be chosen explic
   assert.equal(resolveControlMode('', false), 'keyboard');
   assert.equal(resolveControlMode('unknown', true), 'buttons');
   assert.equal(resolveControlMode('buttons', false), 'buttons');
+});
+
+test('web artwork uses cached alpha-preserving tints in both editor and gameplay preview', () => {
+  const level = newDraft('sprite-recolor');
+  const block = addObject(level, 'block', 6, 6);
+  block.color = '#e547b2';
+  const source = {naturalWidth:32, naturalHeight:32};
+  const offscreen = [];
+  const hadDocument = Object.hasOwn(globalThis, 'document');
+  const oldDocument = globalThis.document;
+  globalThis.document = {createElement(name) {
+    assert.equal(name, 'canvas');
+    const operations = [];
+    const canvas = {width:0, height:0, operations, getContext() {
+      return {
+        drawImage(image, ...bounds) {operations.push({type:'image', image, bounds});},
+        fillRect(...bounds) {operations.push({type:'fill', color:this.fillStyle,
+          alpha:this.globalAlpha, composite:this.globalCompositeOperation, bounds});},
+      };
+    }};
+    offscreen.push(canvas);return canvas;
+  }};
+  try {
+    const art = {block:source};
+    const editor = recordingCanvas();
+    drawEditorCanvas(editor.canvas, level, 0, 'build', art);
+    const state = createPreviewState(level);
+    const preview = recordingCanvas();
+    drawPreviewCanvas(preview.canvas, state, 'keyboard', art);
+    assert.equal(offscreen.length, 1, 'one cached tint is shared by both canvases');
+    const tint = offscreen[0];
+    assert.equal(tint.width, source.naturalWidth);
+    assert.equal(tint.height, source.naturalHeight);
+    assert(tint.operations.some(operation => operation.type === 'image' &&
+      operation.image === source));
+    const overlay = tint.operations.find(operation => operation.type === 'fill');
+    assert.equal(overlay.color, '#e547b2');
+    assert.equal(overlay.alpha, .58);
+    assert.equal(overlay.composite, 'source-atop');
+    assert(editor.images.some(call => call.image === tint));
+    assert(preview.images.some(call => call.image === tint));
+  } finally {
+    if (hadDocument) globalThis.document = oldDocument;
+    else delete globalThis.document;
+  }
 });
 
 test('workshop editor and preview use the supplied level artwork and tile wide platforms', () => {

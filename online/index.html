@@ -54,15 +54,13 @@
         <div class="workshop-heading">
           <button class="back-link" id="workshop-online-back" type="button">Назад · В онлайн</button>
           <div><span class="eyebrow">ПЛАТФОРМЕННЫЙ РЕДАКТОР</span>
-            <h1 id="workshop-title">Мастерская</h1>
-            <p class="muted">Создавай, испытывай и публикуй собственные уровни. Черновик сохраняется на этом устройстве.</p></div>
+            <h1 id="workshop-title">Мастерская</h1></div>
         </div>
 
         <section class="ws-page" id="ws-home-page" aria-label="Главная мастерской">
           <div class="ws-home-grid">
             <article class="ws-home-card ws-draft-card">
               <span class="overline">ТВОЙ ПРОЕКТ</span><h2 id="ws-draft-title">Новый уровень</h2>
-              <p id="ws-draft-summary" class="muted">Бесконечная карта · окно просмотра 16 × 10 · игрок и финиш уже на месте.</p>
               <div class="ws-card-actions">
                 <button class="primary-button" id="ws-continue" type="button">Продолжить редактор</button>
                 <button class="small-button" id="ws-new-draft" type="button"><span class="plus icon-plus" aria-hidden="true"></span>Новый уровень</button>
@@ -71,11 +69,9 @@
             </article>
             <article class="ws-home-card ws-catalog-card">
               <span class="overline">ИГРАЙ И ПУБЛИКУЙ</span><h2>Уровни игроков</h2>
-              <p class="muted">Открой каталог опубликованных уровней и испытай их в браузере. Новая публикация появится и в C/native-клиенте.</p>
               <button class="primary-button" id="ws-open-catalog" type="button">Открыть каталог</button>
             </article>
           </div>
-          <p class="ws-safety-note">Публикация общедоступна и не требует аккаунта. Firebase может отклонить запись, если правила базы не разрешают публикацию.</p>
         </section>
 
         <section class="ws-page hidden" id="ws-editor-page" aria-label="Редактор уровня">
@@ -87,14 +83,13 @@
             </div>
           </div>
           <div class="ws-project-fields">
-            <label>Название уровня<input id="ws-title-input" maxlength="80" autocomplete="off" placeholder="Например: Острова над рекой"></label>
-            <label>Краткое описание<textarea id="ws-description-input" maxlength="160" rows="2" placeholder="Что ждёт игрока? (до 160 символов)"></textarea></label>
+            <label>Название уровня<input id="ws-title-input" maxlength="80" autocomplete="off"></label>
+            <label>Краткое описание<textarea id="ws-description-input" maxlength="160" rows="2"></textarea></label>
           </div>
           <div class="ws-editor-layout">
             <div class="ws-board-column">
               <div class="ws-board-heading"><strong>Сцена · окно карты 16 × 10</strong><span id="ws-object-count">0 / 20000 объектов</span></div>
               <div class="canvas-wrap ws-canvas-wrap"><canvas id="ws-editor-canvas" width="1280" height="720" aria-label="Окно бесконечной прокручиваемой карты платформера"></canvas></div>
-              <p class="hint">Перетаскивай объекты в «Выбрать», карту — в «Карта». Зелёные стрелки двигают выбор на полблока (шаг можно изменить); бирюзовые — окно карты. Отражение меняет стороны, не угол. Для группы включи «Мульти» или Shift + нажатие.</p>
               <p class="ws-error hidden" id="ws-editor-message" role="status" aria-live="polite"></p>
             </div>
             <aside class="ws-tools" aria-label="Инструменты редактора">
@@ -107,9 +102,9 @@
                 <div class="ws-transform-move">
                   <label>Шаг перемещения<input id="ws-move-step" type="number" min="0.1" max="100" step="0.1" value="0.5"></label>
                   <div class="ws-nudge-grid" role="group" aria-label="Переместить выбранные объекты">
-                    <span></span><button type="button" data-ws-nudge="up" aria-label="Сдвинуть объекты вверх на полблока" title="Сдвинуть объекты вверх на полблока"><span class="ws-editor-arrow arrow-head-only arrow-up" aria-hidden="true"></span></button><span></span>
-                    <button type="button" data-ws-nudge="left" aria-label="Сдвинуть объекты влево на полблока" title="Сдвинуть объекты влево на полблока"><span class="ws-editor-arrow arrow-head-only arrow-left" aria-hidden="true"></span></button><span class="ws-nudge-center" aria-hidden="true"></span><button type="button" data-ws-nudge="right" aria-label="Сдвинуть объекты вправо на полблока" title="Сдвинуть объекты вправо на полблока"><span class="ws-editor-arrow arrow-head-only arrow-right" aria-hidden="true"></span></button>
-                    <span></span><button type="button" data-ws-nudge="down" aria-label="Сдвинуть объекты вниз на полблока" title="Сдвинуть объекты вниз на полблока"><span class="ws-editor-arrow arrow-head-only arrow-down" aria-hidden="true"></span></button><span></span>
+                    <span></span><button type="button" data-ws-nudge="up" aria-label="Сдвинуть объекты вверх на полблока"><span class="ws-editor-arrow arrow-head-only arrow-up" aria-hidden="true"></span></button><span></span>
+                    <button type="button" data-ws-nudge="left" aria-label="Сдвинуть объекты влево на полблока"><span class="ws-editor-arrow arrow-head-only arrow-left" aria-hidden="true"></span></button><span class="ws-nudge-center" aria-hidden="true"></span><button type="button" data-ws-nudge="right" aria-label="Сдвинуть объекты вправо на полблока"><span class="ws-editor-arrow arrow-head-only arrow-right" aria-hidden="true"></span></button>
+                    <span></span><button type="button" data-ws-nudge="down" aria-label="Сдвинуть объекты вниз на полблока"><span class="ws-editor-arrow arrow-head-only arrow-down" aria-hidden="true"></span></button><span></span>
                   </div>
                 </div>
                 <label>Шаг размера<input id="ws-scale-step" type="number" min="0.1" max="16" step="0.1" value="0.1"></label>
@@ -118,13 +113,13 @@
                 </div>
                 <label>Шаг поворота, °<input id="ws-rotate-step" type="number" min="0.1" max="359.9" step="0.1" value="45"></label>
                 <div class="ws-rotate-actions" role="group" aria-label="Повернуть выделение">
-                  <button type="button" data-ws-rotate="-1" aria-label="Повернуть против часовой стрелки" title="Повернуть против часовой стрелки"><svg class="ws-rotate-icon rotate-ccw" viewBox="0 0 32 32" aria-hidden="true"><path d="M22 5a12 12 0 1 0 5 14"/><path d="M27 11v9h-9"/></svg><span data-ws-rotate-label>-45°</span></button>
-                  <button type="button" data-ws-rotate="1" aria-label="Повернуть по часовой стрелке" title="Повернуть по часовой стрелке"><svg class="ws-rotate-icon rotate-cw" viewBox="0 0 32 32" aria-hidden="true"><path d="M22 5a12 12 0 1 0 5 14"/><path d="M27 11v9h-9"/></svg><span data-ws-rotate-label>+45°</span></button>
+                  <button type="button" data-ws-rotate="-1" aria-label="Повернуть против часовой стрелки"><svg class="ws-rotate-icon rotate-ccw" viewBox="0 0 32 32" aria-hidden="true"><path d="M22 5a12 12 0 1 0 5 14"/><path d="M27 11v9h-9"/></svg><span data-ws-rotate-label>-45°</span></button>
+                  <button type="button" data-ws-rotate="1" aria-label="Повернуть по часовой стрелке"><svg class="ws-rotate-icon rotate-cw" viewBox="0 0 32 32" aria-hidden="true"><path d="M22 5a12 12 0 1 0 5 14"/><path d="M27 11v9h-9"/></svg><span data-ws-rotate-label>+45°</span></button>
                 </div>
                 <span class="overline">ЗЕРКАЛЬНОЕ ОТРАЖЕНИЕ</span>
                 <div class="ws-flip-actions" role="group" aria-label="Отразить выделение">
-                  <button type="button" data-ws-flip="x" aria-label="Отразить слева направо" title="Отразить слева направо"><svg class="ws-flip-icon" viewBox="0 0 32 32" aria-hidden="true"><path class="mirror-axis" d="M16 3v26"/><path d="M12 8 5 16l7 8z"/><path d="m20 8 7 8-7 8z"/></svg><span>Слева ↔ справа</span></button>
-                  <button type="button" data-ws-flip="y" aria-label="Отразить сверху вниз" title="Отразить сверху вниз"><svg class="ws-flip-icon" viewBox="0 0 32 32" aria-hidden="true"><path class="mirror-axis" d="M3 16h26"/><path d="m8 12 8-7 8 7z"/><path d="m8 20 8 7 8-7z"/></svg><span>Сверху ↕ снизу</span></button>
+                  <button type="button" data-ws-flip="x" aria-label="Отразить слева направо"><svg class="ws-flip-icon" viewBox="0 0 32 32" aria-hidden="true"><path class="mirror-axis" d="M16 3v26"/><path d="M12 8 5 16l7 8z"/><path d="m20 8 7 8-7 8z"/></svg><span>Слева ↔ справа</span></button>
+                  <button type="button" data-ws-flip="y" aria-label="Отразить сверху вниз"><svg class="ws-flip-icon" viewBox="0 0 32 32" aria-hidden="true"><path class="mirror-axis" d="M3 16h26"/><path d="m8 12 8-7 8 7z"/><path d="m8 20 8 7 8-7z"/></svg><span>Сверху ↕ снизу</span></button>
                 </div>
               </div>
               <div class="ws-tool-group ws-map-pan-tools">
@@ -132,9 +127,9 @@
                 <div class="ws-transform-move">
                   <label>Шаг карты<input id="ws-pan-step" type="number" min="0.1" max="100" step="0.1" value="1"></label>
                   <div class="ws-nudge-grid ws-pan-grid" role="group" aria-label="Сдвинуть окно карты">
-                    <span></span><button type="button" data-ws-pan="up" aria-label="Сдвинуть карту вверх" title="Сдвинуть карту вверх"><span class="ws-editor-arrow arrow-up" aria-hidden="true"></span></button><span></span>
-                    <button type="button" data-ws-pan="left" aria-label="Сдвинуть карту влево" title="Сдвинуть карту влево"><span class="ws-editor-arrow arrow-left" aria-hidden="true"></span></button><span class="ws-nudge-center" aria-hidden="true"></span><button type="button" data-ws-pan="right" aria-label="Сдвинуть карту вправо" title="Сдвинуть карту вправо"><span class="ws-editor-arrow arrow-right" aria-hidden="true"></span></button>
-                    <span></span><button type="button" data-ws-pan="down" aria-label="Сдвинуть карту вниз" title="Сдвинуть карту вниз"><span class="ws-editor-arrow arrow-down" aria-hidden="true"></span></button><span></span>
+                    <span></span><button type="button" data-ws-pan="up" aria-label="Сдвинуть карту вверх"><span class="ws-editor-arrow arrow-up" aria-hidden="true"></span></button><span></span>
+                    <button type="button" data-ws-pan="left" aria-label="Сдвинуть карту влево"><span class="ws-editor-arrow arrow-left" aria-hidden="true"></span></button><span class="ws-nudge-center" aria-hidden="true"></span><button type="button" data-ws-pan="right" aria-label="Сдвинуть карту вправо"><span class="ws-editor-arrow arrow-right" aria-hidden="true"></span></button>
+                    <span></span><button type="button" data-ws-pan="down" aria-label="Сдвинуть карту вниз"><span class="ws-editor-arrow arrow-down" aria-hidden="true"></span></button><span></span>
                   </div>
                 </div>
               </div>
@@ -160,11 +155,10 @@
                   <div class="ws-number-fields"><label>Ширина<input id="ws-object-width" type="number" min="0.1" max="64" step="0.1"></label><label>Высота<input id="ws-object-height" type="number" min="0.1" max="40" step="0.1"></label><label>Поворот<input id="ws-object-angle" type="number" min="0" max="359.9" step="0.1"></label></div>
                   <label class="ws-color-field">Цвет<input id="ws-object-color" type="color" value="#55c8ea"></label>
                   <div id="ws-particle-fields" class="ws-particle-fields hidden">
-                    <p class="muted">Настрой скорость, форму и поведение частиц в отдельном окне.</p>
                     <button class="small-button" id="ws-particle-settings" type="button">Настроить эмиттер</button>
                   </div>
                   <div id="ws-trigger-fields" class="hidden">
-                  <label>Вид триггера<select id="ws-trigger-kind"><option value="move">Движение</option><option value="rotate">Разворот</option><option value="forever">Вечно</option><option value="invisibility">Невидимость</option><option value="no-collision">Нет столкновения</option><option value="gravity">Гравитация</option></select></label>
+                  <label>Вид триггера<select id="ws-trigger-kind"><option value="move">Движение</option><option value="rotate">Разворот</option><option value="forever">Вечно</option><option value="invisibility">Невидимость</option><option value="no-collision">Нет столкновения</option><option value="gravity">Гравитация</option><option value="recolor">Перекраска</option><option value="background">Фон</option></select></label>
                   <label id="ws-trigger-event-field">Событие<select id="ws-trigger-event"><option value="touch">Касание</option><option value="coin">Подбор монеты</option><option value="manual">Кнопка действия</option><option value="start">Старт уровня</option></select></label>
                   <div id="ws-trigger-motion-fields">
                     <label>Целевая группа<input id="ws-trigger-group" type="number" min="0" max="9999" step="1"></label>
@@ -174,24 +168,25 @@
                     </div>
                     <div id="ws-trigger-rotate-field" class="hidden">
                       <label>Время вращения, с<input id="ws-trigger-duration" type="number" min="1" max="9999" step="1"></label>
-                      <p class="muted">Группа делает один оборот в секунду.</p>
                     </div>
                   </div>
                   <div id="ws-trigger-gravity-field" class="ws-trigger-gravity hidden">
                     <label for="ws-trigger-gravity">Сила гравитации · <output id="ws-trigger-gravity-value">0</output></label>
                     <input id="ws-trigger-gravity" type="range" min="-100" max="100" step="1" value="0">
-                    <p class="muted">−100 — слабее · 0 — обычная · +100 — сильнее. Настройка действует на весь уровень.</p>
+                  </div>
+                  <div id="ws-trigger-color-field" class="ws-color-field hidden ws-trigger-color-field">
+                    <label for="ws-trigger-color"><img class="ws-color-wheel" src="../assets/art/Триггер-цвет.png" alt=""><span id="ws-trigger-color-label">Цвет объектов</span></label>
+                    <input id="ws-trigger-color" type="color" value="#ffc54e">
                   </div>
                   <div id="ws-trigger-forever-fields" class="hidden">
                     <label>Группа<input id="ws-trigger-forever-group" type="number" min="0" max="9999" step="1"></label>
                     <label>Действие<select id="ws-trigger-action"><option value="activate">Активировать</option><option value="unactivate">Деактивировать</option></select></label>
-                    <p class="muted">Состояние группы остаётся таким, пока другой триггер его не изменит.</p>
                   </div>
                   </div>
                 </div>
                 <button class="small-button ws-delete-selected" id="ws-delete-selected" type="button">Удалить выбранное</button>
               </div>
-              <p class="ws-status" id="ws-autosave-status" aria-live="polite">Черновик сохраняется автоматически.</p>
+              <p class="ws-status" id="ws-autosave-status" aria-live="polite"></p>
             </aside>
           </div>
         </section>
@@ -205,7 +200,6 @@
             <label class="ws-control-select">Управление
               <select id="ws-control-select"><option value="auto">Авто</option><option value="buttons">Кнопки</option><option value="keyboard">Клавиатура</option></select>
             </label>
-            <p id="ws-control-help" class="muted">На телефоне доступны экранные кнопки; нажимай направление и прыжок одновременно.</p>
             <div class="ws-touch-controls hidden" id="ws-buttons-controls" aria-label="Экранные кнопки">
               <button type="button" data-ws-hold="back" aria-label="Назад"><span class="ws-control-arrow ws-arrow-back" aria-hidden="true"></span><span>НАЗАД</span></button>
               <button type="button" data-ws-hold="forward" aria-label="Вперёд"><span class="ws-control-arrow ws-arrow-forward" aria-hidden="true"></span><span>ВПЕРЁД</span></button>
@@ -215,7 +209,7 @@
               <button type="button" data-ws-press="trigger">ДЕЙСТВИЕ</button>
             </div>
           </div>
-          <p id="ws-preview-status" class="ws-status" aria-live="polite">Доберись до финиша и попробуй собрать монеты.</p>
+          <p id="ws-preview-status" class="ws-status" aria-live="polite"></p>
         </section>
 
         <section class="ws-page hidden" id="ws-catalog-page" aria-label="Каталог уровней игроков">
@@ -283,7 +277,6 @@
       <aside class="ws-particle-preview-panel">
         <span class="overline">ЖИВОЙ ПРЕДПРОСМОТР</span>
         <canvas id="ws-particle-preview" width="320" height="320" aria-label="Анимированный предпросмотр эмиттера P"></canvas>
-        <p>Чёрный квадрат показывает движение и цвет частиц. Метка P — точка их рождения.</p>
       </aside>
     </div>
     <footer class="ws-particle-dialog-foot">

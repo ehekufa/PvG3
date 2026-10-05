@@ -307,6 +307,7 @@ static int level_action(const JD *d, int token) {
     if (eq(d, token, "invisible")) return ON_TRIGGER_INVISIBLE;
     if (eq(d, token, "no-collision")) return ON_TRIGGER_NO_COLLISION;
     if (eq(d, token, "set-gravity")) return ON_TRIGGER_SET_GRAVITY;
+    if (eq(d, token, "set-background")) return ON_TRIGGER_SET_BACKGROUND;
     return -1;
 }
 static int level_trigger_kind(const JD *d, int token) {
@@ -316,6 +317,8 @@ static int level_trigger_kind(const JD *d, int token) {
     if (eq(d, token, "invisibility")) return ON_TRIGGER_KIND_INVISIBILITY;
     if (eq(d, token, "no-collision")) return ON_TRIGGER_KIND_NO_COLLISION;
     if (eq(d, token, "gravity")) return ON_TRIGGER_KIND_GRAVITY;
+    if (eq(d, token, "recolor")) return ON_TRIGGER_KIND_RECOLOR;
+    if (eq(d, token, "background")) return ON_TRIGGER_KIND_BACKGROUND;
     return -1;
 }
 static int parse_particle_emitter(const JD *d, int object,
@@ -462,7 +465,7 @@ static int parse_level_object(const JD *d, int node, OnLevelObject *out) {
             item.trigger_has_duration = 1;
         }
         if (item.trigger_kind < ON_TRIGGER_KIND_MOVE ||
-            item.trigger_kind > ON_TRIGGER_KIND_GRAVITY ||
+            item.trigger_kind > ON_TRIGGER_KIND_BACKGROUND ||
             item.trigger_event < 0 || item.trigger_action < 0 ||
             (target_token >= 0 && !int_field(d, trigger, "targetId", &item.target_id)) ||
             (value_y_token >= 0 && !float_field(d, trigger, "valueY", &item.trigger_value_y)) ||
@@ -495,6 +498,16 @@ static int parse_level_object(const JD *d, int node, OnLevelObject *out) {
                 item.target_id != 0 || item.trigger_has_duration || value_token < 0 ||
                 item.trigger_value < -100 || item.trigger_value > 100 ||
                 floorf(item.trigger_value) != item.trigger_value || item.trigger_value_y != 0)
+                return 0;
+        } else if (item.trigger_kind == ON_TRIGGER_KIND_RECOLOR) {
+            if (item.trigger_action != ON_TRIGGER_RECOLOR || !item.trigger_has_group ||
+                item.target_id != 0 || item.trigger_has_duration || value_token >= 0 ||
+                value_y_token >= 0 || item.trigger_value != 0 || item.trigger_value_y != 0)
+                return 0;
+        } else if (item.trigger_kind == ON_TRIGGER_KIND_BACKGROUND) {
+            if (item.trigger_action != ON_TRIGGER_SET_BACKGROUND || item.trigger_has_group ||
+                item.target_id != 0 || item.trigger_has_duration || value_token >= 0 ||
+                value_y_token >= 0 || item.trigger_value != 0 || item.trigger_value_y != 0)
                 return 0;
         } else if (!item.trigger_has_group && item.target_id <= 0) {
             return 0;
@@ -930,10 +943,10 @@ static int utf8_units(const char *text, size_t cap, size_t limit) {
 }
 static int published_trigger_valid(const OnLevelObject *o) {
     if (!o || o->trigger_kind < ON_TRIGGER_KIND_MOVE ||
-        o->trigger_kind > ON_TRIGGER_KIND_GRAVITY ||
+        o->trigger_kind > ON_TRIGGER_KIND_BACKGROUND ||
         o->trigger_event < ON_TRIGGER_TOUCH || o->trigger_event > ON_TRIGGER_START ||
         o->trigger_action < ON_TRIGGER_TOGGLE ||
-        o->trigger_action > ON_TRIGGER_SET_GRAVITY ||
+        o->trigger_action > ON_TRIGGER_SET_BACKGROUND ||
         o->target_id < 0 || o->target_id > 1000000 ||
         (o->trigger_has_group != 0 && o->trigger_has_group != 1) ||
         (o->trigger_has_group &&
@@ -967,6 +980,14 @@ static int published_trigger_valid(const OnLevelObject *o) {
             !o->trigger_has_duration && o->trigger_value >= -100 &&
             o->trigger_value <= 100 && floorf(o->trigger_value) == o->trigger_value &&
             o->trigger_value_y == 0;
+    if (o->trigger_kind == ON_TRIGGER_KIND_RECOLOR)
+        return o->trigger_action == ON_TRIGGER_RECOLOR && o->trigger_has_group &&
+            o->target_id == 0 && !o->trigger_has_duration &&
+            o->trigger_value == 0 && o->trigger_value_y == 0;
+    if (o->trigger_kind == ON_TRIGGER_KIND_BACKGROUND)
+        return o->trigger_action == ON_TRIGGER_SET_BACKGROUND && !o->trigger_has_group &&
+            o->target_id == 0 && !o->trigger_has_duration &&
+            o->trigger_value == 0 && o->trigger_value_y == 0;
     if (!o->trigger_has_group && o->target_id <= 0) return 0;
     return (o->trigger_kind == ON_TRIGGER_KIND_INVISIBILITY &&
             o->trigger_action == ON_TRIGGER_INVISIBLE) ||
@@ -1026,10 +1047,11 @@ size_t on_protocol_published_level_json(const OnPublishedLevel *level,
     static const char *const events[] = {"touch", "coin", "manual", "start"};
     static const char *const actions[] = {
         "toggle", "move", "recolor", "number", "rotate", "activate", "unactivate",
-        "invisible", "no-collision", "set-gravity"
+        "invisible", "no-collision", "set-gravity", "set-background"
     };
     static const char *const trigger_kinds[] = {
-        "move", "rotate", "forever", "invisibility", "no-collision", "gravity"
+        "move", "rotate", "forever", "invisibility", "no-collision", "gravity",
+        "recolor", "background"
     };
     static const char *const names[] = {
         "Блок", "Платформа", "Шипы", "Монета", "Гусь", "Игрок", "Финиш", "Триггер",

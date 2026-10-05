@@ -97,7 +97,7 @@ static void published_level_writer(void) {
     snprintf(level.id, sizeof level.id, "%s", "23817");
     snprintf(level.title, sizeof level.title, "%s", "Проверка \"уровня\"");
     snprintf(level.description, sizeof level.description, "%s", "Маршрут и триггер.");
-    level.width = 16;level.height = 10;level.object_count = 17;
+    level.width = 16;level.height = 10;level.object_count = 19;
     level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
         .x=0,.y=8,.w=16,.h=2,.color=0x65a845u,.visible=1};
     snprintf(level.objects[0].name, sizeof level.objects[0].name, "%s", "Платформа");
@@ -160,6 +160,15 @@ static void published_level_writer(void) {
         .x=6,.y=6,.w=1,.h=1,.color=0xccccccu,.visible=1};
     level.objects[16] = (OnLevelObject){.id=17,.type=ON_LEVEL_PORTAL_JETPACK,
         .x=7,.y=6,.w=1,.h=1,.color=0x2f2f2fu,.visible=1};
+    level.objects[17] = (OnLevelObject){.id=18,.type=ON_LEVEL_TRIGGER,
+        .x=32,.y=-20,.w=1,.h=1,.color=0xf27652u,.visible=1,
+        .trigger_kind=ON_TRIGGER_KIND_RECOLOR,.trigger_event=ON_TRIGGER_START,
+        .trigger_action=ON_TRIGGER_RECOLOR,.trigger_group_id=42,
+        .trigger_has_group=1,.trigger_color=0x8f31d4u};
+    level.objects[18] = (OnLevelObject){.id=19,.type=ON_LEVEL_TRIGGER,
+        .x=34,.y=-20,.w=1,.h=1,.color=0xf27652u,.visible=1,
+        .trigger_kind=ON_TRIGGER_KIND_BACKGROUND,.trigger_event=ON_TRIGGER_START,
+        .trigger_action=ON_TRIGGER_SET_BACKGROUND,.trigger_color=0x3456abu};
     char body[8192], index[1024];
     size_t size = on_protocol_published_level_json(&level, body, sizeof body);
     assert(size && strstr(body, "PVG3-PUBLISHED-LEVEL") &&
@@ -177,6 +186,9 @@ static void published_level_writer(void) {
            strstr(body, "\"type\":\"slope\"") &&
            strstr(body, "\"kind\":\"gravity\"") &&
            strstr(body, "\"action\":\"set-gravity\"") &&
+           strstr(body, "\"kind\":\"recolor\"") &&
+           strstr(body, "\"kind\":\"background\"") &&
+           strstr(body, "\"action\":\"set-background\"") &&
            strstr(body, "\"value\":-65.0000") &&
            strstr(body, "\"type\":\"orb-yellow\"") &&
            strstr(body, "\"type\":\"orb-orange\"") &&
@@ -191,7 +203,7 @@ static void published_level_writer(void) {
            strstr(body, "\"speed\":177") &&
            strstr(body, "\"flipX\":true") && strstr(body, "\"flipY\":true") &&
            on_protocol_published_level(body, "23817", &decoded));
-    assert(!strcmp(decoded.title, level.title) && decoded.object_count == 17);
+    assert(!strcmp(decoded.title, level.title) && decoded.object_count == 19);
     assert(decoded.objects[3].trigger_kind == ON_TRIGGER_KIND_MOVE &&
            decoded.objects[3].trigger_value == 9999 &&
            decoded.objects[3].trigger_value_y == -9999 &&
@@ -242,6 +254,19 @@ static void published_level_writer(void) {
            decoded.objects[10].trigger_event == ON_TRIGGER_MANUAL &&
            decoded.objects[10].trigger_value == -65 &&
            !decoded.objects[10].trigger_has_group && decoded.objects[10].target_id == 0);
+    assert(decoded.objects[17].trigger_kind == ON_TRIGGER_KIND_RECOLOR &&
+           decoded.objects[17].trigger_action == ON_TRIGGER_RECOLOR &&
+           decoded.objects[17].trigger_event == ON_TRIGGER_START &&
+           decoded.objects[17].trigger_group_id == 42 &&
+           decoded.objects[17].trigger_has_group &&
+           decoded.objects[17].target_id == 0 &&
+           decoded.objects[17].trigger_color == 0x8f31d4u);
+    assert(decoded.objects[18].trigger_kind == ON_TRIGGER_KIND_BACKGROUND &&
+           decoded.objects[18].trigger_action == ON_TRIGGER_SET_BACKGROUND &&
+           decoded.objects[18].trigger_event == ON_TRIGGER_START &&
+           !decoded.objects[18].trigger_has_group &&
+           decoded.objects[18].target_id == 0 &&
+           decoded.objects[18].trigger_color == 0x3456abu);
     assert(decoded.objects[11].type == ON_LEVEL_ORB_YELLOW &&
            !strcmp(decoded.objects[11].name, "Жёлтый орб") &&
            decoded.objects[12].type == ON_LEVEL_ORB_ORANGE &&

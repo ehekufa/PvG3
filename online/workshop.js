@@ -16,15 +16,17 @@ export const MAX_OBJECT_WIDTH = LEVEL_WIDTH * 4;
 export const MAX_OBJECT_HEIGHT = LEVEL_HEIGHT * 4;
 export const TRIGGER_KINDS = Object.freeze([
   'move', 'rotate', 'forever', 'invisibility', 'no-collision', 'gravity',
+  'recolor', 'background',
 ]);
 export const TRIGGER_LABELS = Object.freeze({
   move: 'Движение', rotate: 'Разворот', forever: 'Вечно',
   invisibility: 'Невидимость', 'no-collision': 'Нет столкновения',
-  gravity: 'Гравитация',
+  gravity: 'Гравитация', recolor: 'Перекраска', background: 'Фон',
 });
 const TRIGGER_ACTIONS = Object.freeze({
   move: 'move', rotate: 'rotate', forever: 'activate',
   invisibility: 'invisible', 'no-collision': 'no-collision', gravity: 'set-gravity',
+  recolor: 'recolor', background: 'set-background',
 });
 export const LEVEL_TYPES = Object.freeze([
   'block', 'ground', 'hazard', 'coin', 'enemy', 'player', 'goal', 'trigger', 'slope',
@@ -75,10 +77,7 @@ const FULL_ART_BOUNDS = Object.freeze([0, 0, 1, 1]);
 const SLOPE_VERTICES = Object.freeze([[0, 1], [1, 0], [1, 1]]);
 const SPIKE_VERTICES = Object.freeze([[.5, .03], [1, 1], [0, 1]]);
 const EVENTS = new Set(['touch', 'coin', 'manual', 'start']);
-const ACTIONS = new Set([
-  'toggle', 'move', 'recolor', 'number', 'rotate', 'invisible', 'no-collision',
-  'set-gravity',
-]);
+const LEGACY_TRIGGER_ACTIONS = new Set(['toggle', 'move', 'recolor', 'number', 'rotate']);
 const FOREVER_ACTIONS = new Set(['activate', 'unactivate']);
 const GROUP_ID_MAX = 9999;
 const ROTATION_DURATION_MAX = 9999;
@@ -147,16 +146,28 @@ export function setTriggerKind(level, id, kind) {
   if (!object) return false;
   const trigger = object.trigger ||= {event: 'touch'};
   const previousKind = trigger.kind || 'move';
-  trigger.kind = kind;
-  trigger.action = TRIGGER_ACTIONS[kind];
-  if (kind === 'move' && previousKind !== 'move') {
-    trigger.valueX = 1;trigger.valueY = 0;
-  }
-  if (kind !== 'gravity' && previousKind === 'gravity') {
+  const wasGlobal = previousKind === 'gravity' || previousKind === 'background';
+  const isGlobal = kind === 'gravity' || kind === 'background';
+  if (!isGlobal && wasGlobal) {
     const target = level.objects.find(item => item.type === 'goal') ||
-      level.objects.find(item => item.id !== object.id);
+      level.objects.find(item => item.id !== object.id && item.type !== 'trigger');
     trigger.targetId = target?.id || 0;
     trigger.groupId = Number.isInteger(target?.number) ? target.number : 0;
+  }
+  trigger.kind = kind;
+  trigger.action = TRIGGER_ACTIONS[kind];
+  if (isGlobal) {
+    delete trigger.targetId;delete trigger.groupId;
+  } else if (kind === 'recolor') {
+    if (!Number.isInteger(trigger.groupId)) {
+      const target = level.objects.find(item => item.type === 'goal') ||
+        level.objects.find(item => item.id !== object.id && item.type !== 'trigger');
+      trigger.groupId = Number.isInteger(target?.number) ? target.number : 0;
+    }
+    delete trigger.targetId;
+  }
+  if (kind === 'move' && previousKind !== 'move') {
+    trigger.valueX = 1;trigger.valueY = 0;
   }
   if (kind === 'rotate') {
     if (!Number.isInteger(trigger.duration) || trigger.duration < 1 ||
@@ -167,6 +178,10 @@ export function setTriggerKind(level, id, kind) {
       Math.trunc(trigger.value) : 0;
     trigger.value = clamp(value, -100, 100);
     delete trigger.valueX;delete trigger.valueY;
+    delete trigger.degrees;delete trigger.duration;
+  } else if (kind === 'recolor' || kind === 'background') {
+    if (!rgb(trigger.color)) trigger.color = '#ffc54e';
+    delete trigger.value;delete trigger.valueX;delete trigger.valueY;
     delete trigger.degrees;delete trigger.duration;
   }
   return true;
@@ -199,7 +214,9 @@ export function addObject(level, type, x, y, triggerKind = 'move') {
     const targetGroup = Number.isInteger(target?.number) ? target.number : 0;
     const action = TRIGGER_ACTIONS[kind];
     object.trigger = {kind, event: 'touch', action,
-      ...(kind === 'gravity' ? {} : {targetId: target?.id || 0, groupId: targetGroup}),
+      ...(['gravity', 'background'].includes(kind) ? {} :
+        kind === 'recolor' ? {groupId: targetGroup} :
+          {targetId: target?.id || 0, groupId: targetGroup}),
       valueX: kind === 'move' ? 1 : 0, valueY: 0,
       duration: kind === 'rotate' ? 3 : 0,
       value: kind === 'move' ? 1 : 0,
@@ -405,21 +422,27 @@ export function validateDraft(level) {
       const foreverConfigured = kind === 'forever' && validGroup;
       const specialKind = kind === 'invisibility' || kind === 'no-collision';
       const gravityKind = kind === 'gravity';
+      const recolorKind = kind === 'recolor';
+      const backgroundKind = kind === 'background';
       const fixedAction = kind === 'invisibility' ? 'invisible' : 'no-collision';
       const validAction = gravityKind ? t?.action === 'set-gravity' :
+        recolorKind ? t?.action === 'recolor' :
+        backgroundKind ? t?.action === 'set-background' :
         specialKind ? t?.action === fixedAction :
-        foreverConfigured ? FOREVER_ACTIONS.has(t.action) : ACTIONS.has(t?.action);
+        foreverConfigured ? FOREVER_ACTIONS.has(t.action) : LEGACY_TRIGGER_ACTIONS.has(t?.action);
       const validValues = kind === 'move' ? finite(moveX) && moveX >= -9999 && moveX <= 9999 &&
           finite(moveY) && moveY >= -9999 && moveY <= 9999 :
         kind === 'rotate' ? validRotation :
         kind === 'forever' ? foreverConfigured ||
           (validTarget && finite(t?.value) && t.value >= -100 && t.value <= 100) :
         gravityKind ? Number.isInteger(t?.value) && t.value >= -100 && t.value <= 100 :
-        specialKind;
+        recolorKind || backgroundKind || specialKind;
       if (!t || !TRIGGER_KINDS.includes(kind) || !EVENTS.has(t.event) ||
-          !validAction || (!gravityKind && kind !== 'forever' && !targetConfigured) ||
+          !validAction || (!gravityKind && !backgroundKind && kind !== 'forever' &&
+                           !targetConfigured) ||
           (kind === 'forever' && !foreverConfigured && !validTarget) ||
           (specialKind && !validGroup && !directTargetConfigured) ||
+          (recolorKind && !validGroup) ||
           (t.groupId !== undefined && !validGroup) || !validValues || !rgb(t.color))
         return fail('Настрой триггер: событие, группу, действие и параметры.');
     }
@@ -443,10 +466,10 @@ function recordObject(object) {
     const kind = TRIGGER_KINDS.includes(t.kind) ? t.kind : 'move';
     const trigger = {kind, event: t.event || 'touch', action: t.action || 'move',
       color: t.color || '#ffc54e'};
-    if (kind !== 'gravity') {
+    if (!['gravity', 'background', 'recolor'].includes(kind))
       trigger.targetId = Number.isInteger(t.targetId) ? t.targetId : 0;
-      if (Number.isInteger(t.groupId)) trigger.groupId = t.groupId;
-    }
+    if (!['gravity', 'background'].includes(kind) && Number.isInteger(t.groupId))
+      trigger.groupId = t.groupId;
     if (kind === 'gravity') {
       trigger.value = t.value ?? 0;
     } else if (kind === 'move') {
@@ -551,7 +574,8 @@ export function createPreviewState(level) {
   for (const object of objects)
     if (object.type === 'particle') object.emitter = normalizeParticleEmitter(object.emitter);
   const state = {objects, x: player.x * TILE_W, y: player.y * TILE_H,
-    vx: 0, vy: 0, gravity: 1450, grounded: false, time: 0, coins: 0, won: false,
+    vx: 0, vy: 0, gravity: 1450, backgroundColor: '#8bcce6',
+    grounded: false, time: 0, coins: 0, won: false,
     collected: [], triggerFired: [], triggerActive: [], triggerTimers: Object.create(null),
     invisible: [], noCollision: [], groupRotations: [], jumpHeld: false,
     orbActivated: false, checkpointId: 0,
@@ -731,6 +755,17 @@ function executeTrigger(state, trigger) {
   if (kind === 'gravity') {
     const offset = Number.isInteger(t.value) ? clamp(t.value, -100, 100) : 0;
     state.gravity = 1450 + offset * 10;
+    return;
+  }
+  if (kind === 'background') {
+    if (rgb(t.color)) state.backgroundColor = t.color;
+    return;
+  }
+  if (kind === 'recolor') {
+    if (rgb(t.color) && Number.isInteger(t.groupId))
+      for (const target of state.objects)
+        if (target.type !== 'trigger' && target.number === t.groupId)
+          target.color = t.color;
     return;
   }
   if (kind === 'rotate' && t.duration !== undefined) {
@@ -950,12 +985,35 @@ function triggerArtKey(kind) {
     kind === 'forever' ? 'triggerForever' :
     kind === 'invisibility' ? 'triggerInvisibility' :
     kind === 'no-collision' ? 'triggerNoCollision' :
-    kind === 'gravity' ? 'triggerGravity' : 'triggerMove';
+    kind === 'gravity' ? 'triggerGravity' :
+    kind === 'recolor' || kind === 'background' ? 'triggerColor' : 'triggerMove';
 }
-function drawWorkshopArt(ctx, art, type, x, y, w, h, triggerKind = 'move') {
+const tintedWorkshopArt = new WeakMap();
+function tintWorkshopImage(image, tint) {
+  if (!image?.naturalWidth || !rgb(tint) || typeof document === 'undefined' ||
+      typeof document.createElement !== 'function') return image;
+  let variants = tintedWorkshopArt.get(image);
+  if (!variants) {variants = new Map();tintedWorkshopArt.set(image, variants);}
+  const key = tint.toLowerCase();
+  if (variants.has(key)) return variants.get(key);
+  const canvas = document.createElement('canvas');
+  canvas.width = image.naturalWidth;canvas.height = image.naturalHeight;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return image;
+  ctx.drawImage(image, 0, 0);
+  ctx.globalCompositeOperation = 'source-atop';
+  ctx.globalAlpha = .58;
+  ctx.fillStyle = key;ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.globalAlpha = 1;ctx.globalCompositeOperation = 'source-over';
+  variants.set(key, canvas);
+  return canvas;
+}
+function drawWorkshopArt(ctx, art, type, x, y, w, h, triggerKind = 'move', tint = null) {
   if (type === 'particle') return false;
-  const image = type === 'trigger' ? (art?.[triggerArtKey(triggerKind)] || art?.trigger) : art?.[type];
-  if (!image?.naturalWidth) return false;
+  const source = type === 'trigger' ?
+    (art?.[triggerArtKey(triggerKind)] || art?.trigger) : art?.[type];
+  if (!source?.naturalWidth) return false;
+  const image = tint ? tintWorkshopImage(source, tint) : source;
   if (type !== 'ground') {
     ctx.drawImage(image, x, y, w, h);
     return true;
@@ -969,7 +1027,7 @@ function drawWorkshopArt(ctx, art, type, x, y, w, h, triggerKind = 'move') {
   return true;
 }
 function drawWorkshopImage(ctx, image, x, y, w, h, angle, flipX, flipY) {
-  if (!image?.naturalWidth) return false;
+  if (!(image?.naturalWidth || image?.width)) return false;
   if (!angle && !flipX && !flipY) {
     ctx.drawImage(image, x, y, w, h);
     return true;
@@ -987,16 +1045,17 @@ function drawWorkshopObject(ctx, art, object, x, y, w, h, checkpointActive = fal
     playerFacingLeft : objectFlipX(object);
   const flipY = object.flipY === true;
   if (object.type === 'player' && drawWorkshopImage(
-      ctx, playerArt, x, y, w, h, angle, flipX, flipY)) return true;
+      ctx, playerArt ? tintWorkshopImage(playerArt, object.color) : playerArt,
+      x, y, w, h, angle, flipX, flipY)) return true;
   const artType = object.type === 'checkpoint' && checkpointActive ?
     'checkpointActive' : object.type;
   if (!angle && !flipX && !flipY)
     return drawWorkshopArt(ctx, art, artType, x, y, w, h,
-                           object.trigger?.kind);
+                           object.trigger?.kind, object.color);
   ctx.save();ctx.translate(x + w / 2, y + h / 2);ctx.rotate(angle);
   ctx.scale(flipX ? -1 : 1, flipY ? -1 : 1);
   const drawn = drawWorkshopArt(ctx, art, artType, -w / 2, -h / 2, w, h,
-                                object.trigger?.kind);
+                                object.trigger?.kind, object.color);
   ctx.restore();
   return drawn;
 }
@@ -1014,7 +1073,7 @@ function drawParticleEmitterMarker(ctx, x, y, w, h, color, angle = 0) {
   ctx.restore();
 }
 
-export function drawEditorCanvas(canvas, level, selectedId = 0, tool = 'build', art = {}, camera = {x: 0, y: 0}) {
+export function drawEditorCanvas(canvas, level, selectedId = 0, _tool = 'build', art = {}, camera = {x: 0, y: 0}) {
   const ctx = canvas.getContext('2d');
   const cameraX = clamp(Number(camera?.x) || 0, -WORLD_LIMIT, WORLD_LIMIT - LEVEL_WIDTH);
   const cameraY = clamp(Number(camera?.y) || 0, -WORLD_LIMIT, WORLD_LIMIT - LEVEL_HEIGHT);
@@ -1081,14 +1140,9 @@ export function drawEditorCanvas(canvas, level, selectedId = 0, tool = 'build', 
       }
       ctx.restore();
     }
-    ctx.fillStyle = '#10131d';ctx.font = '14px PTSans, sans-serif';ctx.fillText(String(o.number || ''), x + 4, y + 17);
+    ctx.fillStyle = '#10131d';ctx.font = '14px PTSans, sans-serif';
+    ctx.fillText(String(o.id), x + 4, y + 17);
   }
-  ctx.fillStyle = 'rgba(0,0,0,.55)';ctx.fillRect(8, 8, 400, 30);
-  ctx.fillStyle = '#fff2d8';ctx.font = '16px PTSans, sans-serif';
-  const hint = tool === 'delete' ? 'Выбери объект для удаления' :
-    tool === 'pan' ? 'Перетаскивай, чтобы перемещать бесконечную карту' :
-    `Бесконечная карта · вид ${Math.floor(cameraX)}, ${Math.floor(cameraY)}`;
-  ctx.fillText(hint, 18, 29);
 }
 
 const PREVIEW_PARTICLE_COUNT = 5;
@@ -1228,14 +1282,15 @@ function drawPreviewParticles(ctx, state, cameraX, cameraY, viewWidth, viewHeigh
   }
 }
 
-export function drawPreviewCanvas(canvas, state, control = 'keyboard', art = {}) {
+export function drawPreviewCanvas(canvas, state, _control = 'keyboard', art = {}) {
   const ctx = canvas.getContext('2d');
   const player = state.objects.find(o => o.type === 'player');
   const playerW = (player?.w || .65) * TILE_W, playerH = (player?.h || .85) * TILE_H;
   const cameraX = player ? state.x + playerW / 2 - canvas.width * .4 : 0;
   const cameraY = player ? state.y + playerH / 2 - (canvas.height + 64) * .52 : 0;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = '#8bc7df';ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = rgb(state.backgroundColor) ? state.backgroundColor : '#8bcce6';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = '#eff3d8';
   const cloudX = -((cameraX * .18) % (canvas.width + 300));
   for (const x of [cloudX - 160, cloudX + canvas.width - 100]) {
@@ -1287,10 +1342,7 @@ export function drawPreviewCanvas(canvas, state, control = 'keyboard', art = {})
   }
   ctx.fillStyle = '#14283c';ctx.fillRect(0, 0, canvas.width, 64);
   ctx.fillStyle = '#fff';ctx.font = '22px PTSans, sans-serif';
-  const controlHint = state.jetpack ?
-    control === 'keyboard' ? 'A/D, ↑/W, ↓/S' : 'кнопки ↑/↓' :
-    control === 'keyboard' ? 'A/D, пробел' : 'экранные кнопки';
-  ctx.fillText(`Монеты: ${state.coins} · ${controlHint}`, 24, 41);
+  ctx.fillText(`Монеты: ${state.coins}`, 24, 41);
   if (state.won) {
     ctx.fillStyle = 'rgba(0,0,0,.62)';ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = '#fff';ctx.font = 'bold 48px PTSans, sans-serif';ctx.textAlign = 'center';

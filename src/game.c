@@ -139,6 +139,7 @@ _Static_assert((int)PV_ART_BREAD == (int)SPR_KHLEBUSHEK &&
                (int)PV_ART_LEVEL_PORTAL_JETPACK == (int)SPR_LEVEL_PORTAL_JETPACK &&
                (int)PV_ART_JETPACK_ACTIVE == (int)SPR_JETPACK_ACTIVE &&
                (int)PV_ART_JETPACK_INACTIVE == (int)SPR_JETPACK_INACTIVE &&
+               (int)PV_ART_LEVEL_TRIGGER_COLOR == (int)SPR_LEVEL_TRIGGER_COLOR &&
                (int)PV_ART_COUNT == (int)SPR_COUNT,
                "LVGL art IDs must match the PNG packer");
 static uint32_t *sprite_pixels[SPR_COUNT];
@@ -177,9 +178,22 @@ const uint32_t *game_art_rgba(int id, int *width, int *height) {
     return sprite_pixels[id];
 }
 
-static void sprite_crop_flipped(int id, int x, int y, int w, int h,
-                                int sx, int sy, int sw, int sh,
-                                int flip_x, int flip_y) {
+static uint32_t sprite_tinted_pixel(uint32_t source, uint32_t tint, int opacity) {
+    if (opacity <= 0) return source;
+    if (opacity > 255) opacity = 255;
+    int inverse = 255 - opacity;
+    int r = ((source & 255u) * inverse + (tint & 255u) * opacity + 127) / 255;
+    int g = (((source >> 8) & 255u) * inverse +
+             ((tint >> 8) & 255u) * opacity + 127) / 255;
+    int b = (((source >> 16) & 255u) * inverse +
+             ((tint >> 16) & 255u) * opacity + 127) / 255;
+    return (source & 0xff000000u) | ((uint32_t)b << 16) |
+           ((uint32_t)g << 8) | (uint32_t)r;
+}
+static void sprite_crop_flipped_tinted(int id, int x, int y, int w, int h,
+                                       int sx, int sy, int sw, int sh,
+                                       int flip_x, int flip_y,
+                                       uint32_t tint, int tint_opacity) {
     if (id < 0 || id >= SPR_COUNT || !sprite_pixels[id] || w <= 0 || h <= 0 ||
         sw <= 0 || sh <= 0) return;
     const SpritePacked *sp = &SPRITE_DATA[id];
@@ -196,12 +210,18 @@ static void sprite_crop_flipped(int id, int x, int y, int w, int h,
             int sample_x = (dx - x) * sw / w;
             int src_x = sx + (flip_x ? sw - 1 - sample_x : sample_x);
             if ((unsigned)src_x >= (unsigned)sp->w) continue;
-            uint32_t color = src[src_x];
+            uint32_t color = sprite_tinted_pixel(src[src_x], tint, tint_opacity);
             int alpha = color >> 24;
             if (alpha == 255) dst[dx] = color;
             else if (alpha) dst[dx] = blend(dst[dx], color, alpha);
         }
     }
+}
+static void sprite_crop_flipped(int id, int x, int y, int w, int h,
+                                int sx, int sy, int sw, int sh,
+                                int flip_x, int flip_y) {
+    sprite_crop_flipped_tinted(id, x, y, w, h, sx, sy, sw, sh,
+                               flip_x, flip_y, 0, 0);
 }
 static void sprite_crop(int id, int x, int y, int w, int h,
                         int sx, int sy, int sw, int sh, int flip) {
@@ -211,16 +231,20 @@ static void sprite_draw(int id, int x, int y, int w, int h, int flip) {
     sprite_crop(id, x, y, w, h, 0, 0, SPRITE_DATA[id].w,
                 SPRITE_DATA[id].h, flip);
 }
-static void sprite_draw_flipped(int id, int x, int y, int w, int h,
-                                int flip_x, int flip_y) {
-    sprite_crop_flipped(id, x, y, w, h, 0, 0,
-                        SPRITE_DATA[id].w, SPRITE_DATA[id].h,
-                        flip_x, flip_y);
+static void sprite_draw_tinted_flipped(int id, int x, int y, int w, int h,
+                                       int flip_x, int flip_y,
+                                       uint32_t tint, int tint_opacity) {
+    if (id < 0 || id >= SPR_COUNT) return;
+    sprite_crop_flipped_tinted(id, x, y, w, h, 0, 0,
+        SPRITE_DATA[id].w, SPRITE_DATA[id].h, flip_x, flip_y,
+        tint, tint_opacity);
 }
-static void sprite_draw_rotated_flipped(int id, int x, int y, int w, int h,
-                                        float degrees, int flip_x, int flip_y) {
+static void sprite_draw_rotated_tinted_flipped(int id, int x, int y, int w, int h,
+                                               float degrees, int flip_x, int flip_y,
+                                               uint32_t tint, int tint_opacity) {
     if (fabsf(degrees) < .01f) {
-        sprite_draw_flipped(id, x, y, w, h, flip_x, flip_y);return;
+        sprite_draw_tinted_flipped(id, x, y, w, h, flip_x, flip_y,
+                                  tint, tint_opacity);return;
     }
     if (id < 0 || id >= SPR_COUNT || !sprite_pixels[id] || w <= 0 || h <= 0) return;
     const SpritePacked *sp = &SPRITE_DATA[id];
@@ -246,7 +270,8 @@ static void sprite_draw_rotated_flipped(int id, int x, int y, int w, int h,
         int sx = (int)((local_x + half_w) * sp->w / w);
         int sy = (int)((local_y + half_h) * sp->h / h);
         if ((unsigned)sx >= (unsigned)sp->w || (unsigned)sy >= (unsigned)sp->h) continue;
-        uint32_t color = sprite_pixels[id][sy * sp->w + sx];
+        uint32_t color = sprite_tinted_pixel(
+            sprite_pixels[id][sy * sp->w + sx], tint, tint_opacity);
         int alpha = color >> 24;
         uint32_t *dst = FB + py * GAME_W + px;
         if (alpha == 255) *dst = color;
@@ -444,6 +469,7 @@ static OnMatch online_match;
 static OnNetView online_view;
 static OnPublishedLevel custom_level;
 static int custom_object_count, custom_level_active, custom_level_won, custom_level_coins;
+static uint32_t custom_background_color = 0x8bcce6u;
 static int custom_player_index = -1;
 #define CUSTOM_ID_MAP_CAP 65536
 static int custom_id_map[CUSTOM_ID_MAP_CAP];
@@ -2650,6 +2676,7 @@ static int custom_platformer_start(const OnPublishedLevel *source) {
     memset(custom_invisible, 0, sizeof custom_invisible);
     memset(custom_portal_inside, 0, sizeof custom_portal_inside);
     custom_jetpack_mode = custom_jetpack_active = 0;
+    custom_background_color = 0x8bcce6u;
     custom_gravity = 1450.0f;custom_elapsed_time = 0;
     custom_player_collision_enabled = 1;
     custom_group_rotation_count = 0;
@@ -2678,6 +2705,7 @@ static void custom_platformer_stop(void) {
     custom_jump_request = custom_jump_held = 0;
     custom_trigger_request = custom_trigger_held = 0;
     custom_jetpack_mode = custom_jetpack_active = 0;
+    custom_background_color = 0x8bcce6u;
     memset(custom_portal_inside, 0, sizeof custom_portal_inside);
 }
 int game_workshop_preview(const OnPublishedLevel *level) {
@@ -2753,6 +2781,10 @@ static void custom_update_group_rotations(float dt) {
 }
 static void custom_execute_trigger(OnLevelObject *trigger) {
     if (!trigger || trigger->type != ON_LEVEL_TRIGGER) return;
+    if (trigger->trigger_kind == ON_TRIGGER_KIND_BACKGROUND) {
+        custom_background_color = trigger->trigger_color & 0xffffffu;
+        return;
+    }
     if (trigger->trigger_kind == ON_TRIGGER_KIND_GRAVITY) {
         float offset = fmaxf(-100.0f, fminf(100.0f, trigger->trigger_value));
         custom_gravity = 1450.0f + offset * 10.0f;
@@ -2971,10 +3003,13 @@ static void custom_draw_object(const OnLevelObject *o) {
     int w = (int)lrintf(o->w * CUSTOM_TILE_W), h = (int)lrintf(o->h * CUSTOM_TILE_H);
     if (w < 3 || h < 3) return;
     int rotated = fabsf(o->angle) >= .01f;
+    uint32_t tint = COL((o->color >> 16) & 255u,
+                        (o->color >> 8) & 255u, o->color & 255u);
 #define DRAW_LEVEL_ART(id) do { \
-        if (rotated) sprite_draw_rotated_flipped((id), x, y, w, h, o->angle, \
-                                                  o->flip_x, o->flip_y); \
-        else sprite_draw_flipped((id), x, y, w, h, o->flip_x, o->flip_y); \
+        if (rotated) sprite_draw_rotated_tinted_flipped((id), x, y, w, h, \
+            o->angle, o->flip_x, o->flip_y, tint, 128); \
+        else sprite_draw_tinted_flipped((id), x, y, w, h, \
+            o->flip_x, o->flip_y, tint, 128); \
     } while (0)
     switch (o->type) {
     case ON_LEVEL_BLOCK:
@@ -2989,8 +3024,9 @@ static void custom_draw_object(const OnLevelObject *o) {
                 for (int dx = 0; dx < w; dx += tile_w) {
                     int draw_w = w - dx < tile_w ? w - dx : tile_w;
                     int draw_h = h - dy < tile_h ? h - dy : tile_h;
-                    sprite_draw_flipped(PV_ART_LEVEL_PLATFORM, x + dx, y + dy,
-                                        draw_w, draw_h, o->flip_x, o->flip_y);
+                    sprite_draw_tinted_flipped(PV_ART_LEVEL_PLATFORM,
+                        x + dx, y + dy, draw_w, draw_h, o->flip_x, o->flip_y,
+                        tint, 128);
                 }
         }
         break;
@@ -3007,10 +3043,10 @@ static void custom_draw_object(const OnLevelObject *o) {
         DRAW_LEVEL_ART(PV_ART_LEVEL_ORB_ORANGE);break;
     case ON_LEVEL_ENEMY: {
         int flip_x = !o->flip_x;
-        if (rotated) sprite_draw_rotated_flipped(PV_ART_DUCK, x, y, w, h,
-                                                 o->angle, flip_x, o->flip_y);
-        else sprite_draw_flipped(PV_ART_DUCK, x, y, w, h,
-                                 flip_x, o->flip_y);
+        if (rotated) sprite_draw_rotated_tinted_flipped(PV_ART_DUCK, x, y, w, h,
+            o->angle, flip_x, o->flip_y, tint, 128);
+        else sprite_draw_tinted_flipped(PV_ART_DUCK, x, y, w, h,
+                                        flip_x, o->flip_y, tint, 128);
         break;
     }
     case ON_LEVEL_PLAYER: /* The moving player is rendered separately. */
@@ -3029,7 +3065,6 @@ static void custom_draw_object(const OnLevelObject *o) {
         break; /* Trigger textures are editor-only; triggers stay hidden in play. */
     }
 #undef DRAW_LEVEL_ART
-    if (o->number) draw_int(x + 3, y + 3, 2, COL(255, 255, 255), o->number);
 }
 static void custom_particle_dot(float x, float y, float radius,
                                 uint32_t color, float opacity) {
@@ -3121,7 +3156,10 @@ static void custom_draw_particle_effects(void) {
 static void custom_platformer_draw(void) {
     custom_camera_x = custom_player_x + custom_player_w * .5f - GAME_W * .40f;
     custom_camera_y = custom_player_y + custom_player_h * .5f - 411.0f;
-    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(139, 204, 230));
+    rect(0, 0, GAME_W - 1, GAME_H - 1,
+         COL((custom_background_color >> 16) & 255u,
+             (custom_background_color >> 8) & 255u,
+             custom_background_color & 255u));
     float cloud_scroll_f = fmodf(custom_camera_x * .18f, GAME_W + 300.0f);
     if (cloud_scroll_f < 0) cloud_scroll_f += GAME_W + 300.0f;
     int cloud_scroll = (int)cloud_scroll_f;
@@ -3157,14 +3195,17 @@ static void custom_platformer_draw(void) {
         int py = (int)lrintf(custom_player_y - custom_camera_y);
         int player_art = !custom_jetpack_mode ? PV_ART_BREAD :
             custom_jetpack_active ? PV_ART_JETPACK_ACTIVE : PV_ART_JETPACK_INACTIVE;
+        uint32_t player_tint = COL(
+            (player->color >> 16) & 255u, (player->color >> 8) & 255u,
+            player->color & 255u);
         if (fabsf(player_angle) >= .01f)
-            sprite_draw_rotated_flipped(player_art, px, py,
+            sprite_draw_rotated_tinted_flipped(player_art, px, py,
                 (int)custom_player_w, (int)custom_player_h, player_angle,
-                player_flip_x, player_flip_y);
+                player_flip_x, player_flip_y, player_tint, 128);
         else
-            sprite_draw_flipped(player_art, px, py,
+            sprite_draw_tinted_flipped(player_art, px, py,
                 (int)custom_player_w, (int)custom_player_h,
-                player_flip_x, player_flip_y);
+                player_flip_x, player_flip_y, player_tint, 128);
     }
     rect(0, 0, GAME_W - 1, 102, COL(190, 190, 190));
     rect(0, 100, GAME_W - 1, 102, COL(0, 0, 0));
@@ -3750,6 +3791,7 @@ float game_debug_custom_player_vy(void) {return custom_player_vy;}
 int game_debug_custom_player_grounded(void) {return custom_player_grounded;}
 int game_debug_custom_player_facing_left(void) {return custom_player_facing_left;}
 float game_debug_custom_gravity(void) {return custom_gravity;}
+uint32_t game_debug_custom_background_color(void) {return custom_background_color;}
 int game_debug_custom_checkpoint_id(void) {return custom_checkpoint_id;}
 int game_debug_custom_jetpack_mode(void) {return custom_jetpack_mode;}
 int game_debug_custom_jetpack_active(void) {return custom_jetpack_active;}

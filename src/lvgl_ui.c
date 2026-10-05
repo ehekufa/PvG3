@@ -860,16 +860,10 @@ static void workshop_home_screen(lv_obj_t *root) {
         box(root, 130, 211, 1018, 134, 12, WS_BROWN_LIGHT, 0);
         label(root, 170, 246, 930, 43, "Черновиков пока нет", 3,
               WS_CREAM, LV_TEXT_ALIGN_CENTER);
-        label(root, 170, 293, 930, 32,
-              "Создай уровень или открой опубликованный каталог.", 1,
-              WS_CREAM, LV_TEXT_ALIGN_CENTER);
     }
     box(root, 130, 371, 1018, 118, 12, WS_BROWN_LIGHT, 0);
     label(root, 157, 389, 600, 39, "Отдельный платформенный редактор", 2,
           WS_CREAM, LV_TEXT_ALIGN_LEFT);
-    label(root, 158, 432, 710, 37,
-          "Строй сцену, настраивай объекты, группы, цвет и движение.",
-          1, WS_CREAM, LV_TEXT_ALIGN_LEFT);
     workshop_button(root, 130, 558, 360, 82, "+  Новый уровень", 2,
                     U_WORKSHOP_NEW, WS_GREEN);
     workshop_button(root, 820, 558, 328, 82, "Опубликованный каталог", 1,
@@ -887,15 +881,9 @@ static void workshop_details_screen(lv_obj_t *root) {
                     U_WORKSHOP_EDIT_TITLE, WS_DARK_VALUE);
     label(root, 166, 302, 350, 36, "ОПИСАНИЕ", 1, WS_YELLOW,
           LV_TEXT_ALIGN_LEFT);
-    const char *description_preview = workshop_description[0] ?
-        workshop_description : "Нажми, чтобы добавить описание уровня.";
+    const char *description_preview = workshop_description;
     workshop_button(root, 163, 339, 950, 112, description_preview, 1,
                     U_WORKSHOP_EDIT_DESCRIPTION, WS_DARK_VALUE);
-    label(root, 166, 463, 680, 31,
-          workshop_draft_exists ?
-          "Сохранённый черновик · публичный каталог отдельно" :
-          "Новый черновик · публичный каталог отдельно",
-          0, WS_CREAM, LV_TEXT_ALIGN_LEFT);
     workshop_button(root, 780, 561, 368, 80, "Открыть редактор", 2,
                     U_WORKSHOP_DETAIL_EDIT, WS_GREEN);
     if (workshop_keyboard_active) workshop_draw_keyboard_dialog(root);
@@ -1411,7 +1399,9 @@ static const char *workshop_trigger_name(int kind) {
            kind == ON_TRIGGER_KIND_FOREVER ? "Вечно" :
            kind == ON_TRIGGER_KIND_INVISIBILITY ? "Невидимость" :
            kind == ON_TRIGGER_KIND_NO_COLLISION ? "Нет столкновения" :
-           kind == ON_TRIGGER_KIND_GRAVITY ? "Гравитация" : "Движение";
+           kind == ON_TRIGGER_KIND_GRAVITY ? "Гравитация" :
+           kind == ON_TRIGGER_KIND_RECOLOR ? "Перекраска" :
+           kind == ON_TRIGGER_KIND_BACKGROUND ? "Фон" : "Движение";
 }
 static int workshop_trigger_action_for_kind(int kind) {
     return kind == ON_TRIGGER_KIND_ROTATE ? ON_TRIGGER_ROTATE :
@@ -1419,18 +1409,26 @@ static int workshop_trigger_action_for_kind(int kind) {
            kind == ON_TRIGGER_KIND_INVISIBILITY ? ON_TRIGGER_INVISIBLE :
            kind == ON_TRIGGER_KIND_NO_COLLISION ? ON_TRIGGER_NO_COLLISION :
            kind == ON_TRIGGER_KIND_GRAVITY ? ON_TRIGGER_SET_GRAVITY :
+           kind == ON_TRIGGER_KIND_RECOLOR ? ON_TRIGGER_RECOLOR :
+           kind == ON_TRIGGER_KIND_BACKGROUND ? ON_TRIGGER_SET_BACKGROUND :
            ON_TRIGGER_MOVE;
 }
 static void workshop_set_trigger_kind(WorkshopObject *object, int kind) {
     if (!object || kind < ON_TRIGGER_KIND_MOVE ||
-        kind > ON_TRIGGER_KIND_GRAVITY) return;
+        kind > ON_TRIGGER_KIND_BACKGROUND) return;
     int previous_kind = object->trigger_kind;
     object->trigger_kind = kind;
     object->trigger_action = workshop_trigger_action_for_kind(kind);
+    if (kind != ON_TRIGGER_KIND_BACKGROUND && kind != ON_TRIGGER_KIND_GRAVITY &&
+        (previous_kind == ON_TRIGGER_KIND_BACKGROUND ||
+         previous_kind == ON_TRIGGER_KIND_GRAVITY) && object->trigger_group_id == 0)
+        object->trigger_group_id = 2;
     if (kind == ON_TRIGGER_KIND_ROTATE && object->trigger_duration < 1)
         object->trigger_duration = 3;
     if (kind == ON_TRIGGER_KIND_GRAVITY && previous_kind != ON_TRIGGER_KIND_GRAVITY)
         object->trigger_gravity = 0;
+    if (kind == ON_TRIGGER_KIND_BACKGROUND)
+        object->trigger_group_id = 0;
     if (object->trigger_gravity < -100) object->trigger_gravity = -100;
     if (object->trigger_gravity > 100) object->trigger_gravity = 100;
 }
@@ -1457,6 +1455,8 @@ static int workshop_object_art(int type, int trigger_kind) {
                trigger_kind == ON_TRIGGER_KIND_INVISIBILITY ? PV_ART_LEVEL_TRIGGER_INVISIBILITY :
                trigger_kind == ON_TRIGGER_KIND_NO_COLLISION ? PV_ART_LEVEL_TRIGGER_NO_COLLISION :
                trigger_kind == ON_TRIGGER_KIND_GRAVITY ? PV_ART_LEVEL_TRIGGER_GRAVITY :
+               trigger_kind == ON_TRIGGER_KIND_RECOLOR ||
+               trigger_kind == ON_TRIGGER_KIND_BACKGROUND ? PV_ART_LEVEL_TRIGGER_COLOR :
                PV_ART_LEVEL_TRIGGER;
     default: return -1;
     }
@@ -1518,18 +1518,23 @@ static void workshop_build_preview(OnPublishedLevel *level) {
             .trigger_kind=src->trigger_kind,
             .trigger_event=src->trigger_event,
             .trigger_action=src->trigger_action,
-            .target_id=src->trigger_kind == ON_TRIGGER_KIND_GRAVITY ? 0 :
+            .target_id=src->trigger_kind == ON_TRIGGER_KIND_GRAVITY ||
+                       src->trigger_kind == ON_TRIGGER_KIND_RECOLOR ||
+                       src->trigger_kind == ON_TRIGGER_KIND_BACKGROUND ? 0 :
                        workshop_target_object_id(src->trigger_group_id),
             .trigger_value=src->trigger_kind == ON_TRIGGER_KIND_GRAVITY ?
                            (float)src->trigger_gravity :
-                           src->trigger_kind == ON_TRIGGER_KIND_ROTATE ?
+                           src->trigger_kind == ON_TRIGGER_KIND_ROTATE ||
+                           src->trigger_kind == ON_TRIGGER_KIND_RECOLOR ||
+                           src->trigger_kind == ON_TRIGGER_KIND_BACKGROUND ?
                            0.0f : (float)src->trigger_x,
             .trigger_value_y=src->trigger_kind == ON_TRIGGER_KIND_MOVE ?
                              (float)src->trigger_y : 0.0f,
-            .trigger_color=workshop_colors[workshop_color_set % 4][workshop_color_index % 8],
+            .trigger_color=workshop_colors[src->color_set % 4][src->color_index % 8],
             .trigger_group_id=src->trigger_group_id,
             .trigger_has_group=src->type == ON_LEVEL_TRIGGER &&
-                               src->trigger_kind != ON_TRIGGER_KIND_GRAVITY,
+                               src->trigger_kind != ON_TRIGGER_KIND_GRAVITY &&
+                               src->trigger_kind != ON_TRIGGER_KIND_BACKGROUND,
             .trigger_duration=src->trigger_duration,
             .trigger_has_duration=src->type == ON_LEVEL_TRIGGER &&
                                   src->trigger_kind == ON_TRIGGER_KIND_ROTATE,
@@ -1669,6 +1674,7 @@ static void workshop_draw_color_dialog(lv_obj_t *root) {
     box(root, 196, 79, 888, 72, 12, WS_BROWN_DARK, 0);
     label(root, 225, 93, 830, 46, "Цвет объекта", 3,
           WS_CREAM, LV_TEXT_ALIGN_CENTER);
+    art(root, PV_ART_LEVEL_TRIGGER_COLOR, 245, 115, 44);
     static const char *const sets[] = {
         "Базовая", "Яркая", "Холодная", "Пастель"
     };
@@ -1689,7 +1695,7 @@ static void workshop_draw_color_dialog(lv_obj_t *root) {
         }
     }
     char selected[56];
-    snprintf(selected, sizeof selected, "Палитра %d · выбери цвет",
+    snprintf(selected, sizeof selected, "Палитра %d",
              workshop_color_set + 1);
     label(root, 230, 500, 820, 40, selected, 1,
           WS_CREAM, LV_TEXT_ALIGN_CENTER);
@@ -2123,12 +2129,13 @@ static void workshop_draw_trigger_dialog(lv_obj_t *root) {
               WS_CREAM, LV_TEXT_ALIGN_CENTER);
         workshop_slider(root, 158, 304, 922, 30, -100, 100,
                         o->trigger_gravity, WS_SLIDER_TRIGGER_GRAVITY);
-        label(root, 158, 347, 922, 38,
-              "−100 · слабее       0 · обычная       +100 · сильнее", 1,
-              WS_CREAM, LV_TEXT_ALIGN_CENTER);
-        label(root, 158, 397, 950, 45,
-              "Ползунок задаёт гравитацию всего уровня; орбы действуют отдельно.",
-              1, WS_CREAM, LV_TEXT_ALIGN_CENTER);
+    } else if (o->trigger_kind == ON_TRIGGER_KIND_BACKGROUND) {
+        label(root, 158, 229, 310, 42, "Цвет фона", 2,
+              WS_YELLOW, LV_TEXT_ALIGN_LEFT);
+        snprintf(value, sizeof value, "#%06X",
+                 (unsigned)workshop_colors[o->color_set % 4][o->color_index % 8]);
+        workshop_button(root, 490, 216, 300, 64, value, 2,
+                        U_WORKSHOP_COLOR_PANEL, WS_DARK_VALUE);
     } else {
         label(root, 158, 229, 310, 42,
               o->trigger_kind == ON_TRIGGER_KIND_FOREVER ? "Группа" : "Целевая группа",
@@ -2136,6 +2143,14 @@ static void workshop_draw_trigger_dialog(lv_obj_t *root) {
         snprintf(value, sizeof value, "%d", o->trigger_group_id);
         workshop_button(root, 490, 216, 300, 64, value, 2,
                         U_WORKSHOP_TRIGGER_GROUP_EDIT, WS_DARK_VALUE);
+        if (o->trigger_kind == ON_TRIGGER_KIND_RECOLOR) {
+            label(root, 158, 326, 310, 42, "Цвет объектов", 2,
+                  WS_YELLOW, LV_TEXT_ALIGN_LEFT);
+            snprintf(value, sizeof value, "#%06X",
+                     (unsigned)workshop_colors[o->color_set % 4][o->color_index % 8]);
+            workshop_button(root, 490, 311, 300, 64, value, 2,
+                            U_WORKSHOP_COLOR_PANEL, WS_DARK_VALUE);
+        }
     }
     if (o->trigger_kind == ON_TRIGGER_KIND_MOVE) {
         label(root, 158, 326, 260, 42, "Смещение X", 2,
@@ -2148,17 +2163,12 @@ static void workshop_draw_trigger_dialog(lv_obj_t *root) {
         snprintf(value, sizeof value, "%d", o->trigger_y);
         workshop_button(root, 490, 408, 300, 64, value, 2,
                         U_WORKSHOP_TRIGGER_Y_EDIT, WS_DARK_VALUE);
-        label(root, 810, 322, 300, 94, "Оба смещения задаются\nотдельно, до ±9999.",
-              1, WS_CREAM, LV_TEXT_ALIGN_CENTER);
     } else if (o->trigger_kind == ON_TRIGGER_KIND_ROTATE) {
         label(root, 158, 354, 260, 42, "Время, секунды", 2,
               WS_YELLOW, LV_TEXT_ALIGN_LEFT);
         snprintf(value, sizeof value, "%d с", o->trigger_duration);
         workshop_button(root, 490, 339, 300, 64, value, 2,
                         U_WORKSHOP_TRIGGER_DURATION_EDIT, WS_DARK_VALUE);
-        label(root, 810, 330, 300, 90,
-              "Группа вращается\nсо скоростью 1 оборот/с.",
-              1, WS_CREAM, LV_TEXT_ALIGN_CENTER);
     } else if (o->trigger_kind == ON_TRIGGER_KIND_FOREVER) {
         const char *action = o->trigger_action == ON_TRIGGER_ACTIVATE ?
                              "Активировать навсегда" : "Деактивировать навсегда";
@@ -2166,25 +2176,17 @@ static void workshop_draw_trigger_dialog(lv_obj_t *root) {
               WS_YELLOW, LV_TEXT_ALIGN_LEFT);
         workshop_button(root, 490, 339, 460, 64, action, 1,
                         U_WORKSHOP_TRIGGER_ACTION, WS_CYAN);
-        label(root, 158, 435, 950, 46,
-              "Группа останется в выбранном состоянии до другого триггера.",
-              1, WS_CREAM, LV_TEXT_ALIGN_CENTER);
-    } else if (o->trigger_kind != ON_TRIGGER_KIND_GRAVITY) {
-        const char *description = o->trigger_kind == ON_TRIGGER_KIND_INVISIBILITY ?
-            "Объекты исчезнут с экрана, но сохранят столкновения." :
-            "После события у объектов группы отключится столкновение.";
-        label(root, 158, 354, 950, 76, description, 2,
-              WS_CREAM, LV_TEXT_ALIGN_CENTER);
     }
     label(root, 158, 480, 260, 26, "Вид триггера", 0,
           WS_YELLOW, LV_TEXT_ALIGN_LEFT);
     static const char *const trigger_names[] = {
-        "Движение", "Разворот", "Вечно", "Невидимость", "Нет столкновения", "Гравитация"
+        "Движение", "Разворот", "Вечно", "Невидимость",
+        "Нет столкновения", "Гравитация", "Перекраска", "Фон"
     };
-    static const int trigger_x[] = {158, 364, 570, 776, 982, 982};
-    static const int trigger_y[] = {508, 508, 508, 508, 508, 552};
-    for (int i = 0; i < 6; ++i)
-        workshop_button(root, trigger_x[i], trigger_y[i], 190, 40, trigger_names[i], 0,
+    static const int trigger_x[] = {158, 407, 656, 905, 158, 407, 656, 905};
+    static const int trigger_y[] = {508, 508, 508, 508, 552, 552, 552, 552};
+    for (int i = 0; i < 8; ++i)
+        workshop_button(root, trigger_x[i], trigger_y[i], 220, 40, trigger_names[i], 0,
                         U_WORKSHOP_TRIGGER_BASE + i,
                         o->trigger_kind == i ? WS_CYAN : BUTTON_GRAY);
     workshop_button(root, 500, 596, 280, 64, "ОК", 3,
@@ -2309,10 +2311,6 @@ static void workshop_draw_particle_dialog(lv_obj_t *root) {
     }
     workshop_button(root, 68, 559, 197, 48, "Сбросить настройки", 0,
                     U_WORKSHOP_PARTICLE_BASE + 4, BUTTON_GRAY);
-    label(root, 282, 559, 448, 48,
-          "Скорость, угол, размер и время жизни задают реальную траекторию частиц.",
-          0, WS_CREAM, LV_TEXT_ALIGN_LEFT);
-
     box(root, 765, 120, 452, 480, 9, WS_BROWN_DARK, 0);
     label(root, 788, 133, 405, 34, "ПРЕДПРОСМОТР", 1,
           WS_YELLOW, LV_TEXT_ALIGN_CENTER);
@@ -2329,10 +2327,6 @@ static void workshop_draw_particle_dialog(lv_obj_t *root) {
         workshop_colors[object->color_set % 4][object->color_index % 8]);
     box(root, 973, 401, 44, 44, 22, emitter_color, 0);
     label(root, 973, 400, 44, 46, "P", 1, C(111111), LV_TEXT_ALIGN_CENTER);
-    label(root, 819, 536, 352, 27, "P — точка рождения частиц",
-          0, WS_CREAM, LV_TEXT_ALIGN_CENTER);
-    label(root, 819, 564, 352, 27, "0° вправо · −90° вверх · +90° вниз", 0,
-          WS_CREAM, LV_TEXT_ALIGN_CENTER);
     workshop_button(root, 510, 632, 260, 55, "Готово", 2,
                     U_WORKSHOP_DIALOG_OK, WS_GREEN);
 }
@@ -2381,12 +2375,6 @@ static void workshop_draw_transform_dialog(lv_obj_t *root) {
                              U_WORKSHOP_ROTATE_BASE + 1, BUTTON_GRAY, 1,
                              "+45°", 0);
 
-    char note[96];
-    snprintf(note, sizeof note,
-             "Поворот здесь не меняет триггеры. Выбрано: %d",
-             workshop_selection_count());
-    label(root, 202, 451, 876, 54, note, 1, WS_CREAM,
-          LV_TEXT_ALIGN_CENTER);
     workshop_button(root, 500, 578, 280, 64, "Готово", 3,
                     U_WORKSHOP_DIALOG_OK, WS_GREEN);
 }
@@ -2444,7 +2432,11 @@ static void workshop_draw_world_object(lv_obj_t *root, int gx, int gy, int cell,
                     image_w = target_h * source_w / source_h;
                 lv_obj_t *image = art_flipped(root, art_id, tile_cx, tile_cy,
                                               image_w, art_flip_x, flip_y);
-                if (image) lv_image_set_rotation(image, rotation);
+                if (image) {
+                    lv_obj_set_style_image_recolor(image, color, 0);
+                    lv_obj_set_style_image_recolor_opa(image, LV_OPA_50, 0);
+                    lv_image_set_rotation(image, rotation);
+                }
             }
         } else {
             int target_w = shape_w - 8;
@@ -2459,7 +2451,11 @@ static void workshop_draw_world_object(lv_obj_t *root, int gx, int gy, int cell,
             lv_obj_t *image = art_flipped(root, art_id, (int)lroundf(cx),
                                           (int)lroundf(cy), image_w,
                                           art_flip_x, flip_y);
-            if (image) lv_image_set_rotation(image, rotation);
+            if (image) {
+                lv_obj_set_style_image_recolor(image, color, 0);
+                lv_obj_set_style_image_recolor_opa(image, LV_OPA_50, 0);
+                lv_image_set_rotation(image, rotation);
+            }
         }
     }
     if (selected) {
@@ -2629,30 +2625,40 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
                     U_WORKSHOP_DELETE, workshop_tool == WS_TOOL_DELETE ? WS_CYAN : BUTTON_GRAY);
     label(root, 769, 250, 450, 31, "ВЫБРАННЫЙ ОБЪЕКТ", 1,
           WS_YELLOW, LV_TEXT_ALIGN_LEFT);
-    char object_info[110];
+    char object_info[110], object_position[64];
+    object_position[0] = 0;
     if (workshop_selection_count() > 1) {
         snprintf(object_info, sizeof object_info, "Выбрано объектов: %d",
                  workshop_selection_count());
-    } else if (workshop_selected == -2)
-        snprintf(object_info, sizeof object_info, "Игрок · X %.1f  Y %.1f",
+    } else if (workshop_selected == -2) {
+        snprintf(object_info, sizeof object_info, "Игрок · ID 2");
+        snprintf(object_position, sizeof object_position, "X %.1f · Y %.1f",
                  workshop_player_x, workshop_player_y);
-    else if (workshop_selected == -3)
-        snprintf(object_info, sizeof object_info, "Финиш · X %.1f  Y %.1f",
+    } else if (workshop_selected == -3) {
+        snprintf(object_info, sizeof object_info, "Финиш · ID 3");
+        snprintf(object_position, sizeof object_position, "X %.1f · Y %.1f",
                  workshop_goal_x, workshop_goal_y);
-    else if (workshop_selected == -4)
-        snprintf(object_info, sizeof object_info, "Платформа · X %.1f  Y %.1f",
+    } else if (workshop_selected == -4) {
+        snprintf(object_info, sizeof object_info, "Платформа · ID 1");
+        snprintf(object_position, sizeof object_position, "X %.1f · Y %.1f",
                  workshop_ground_x, workshop_ground_y);
-    else if (workshop_selected >= 0 && workshop_selected < workshop_object_count) {
+    } else if (workshop_selected >= 0 && workshop_selected < workshop_object_count) {
         const WorkshopObject *o = &workshop_objects[workshop_selected];
         if (o->type == ON_LEVEL_TRIGGER)
-            snprintf(object_info, sizeof object_info, "Триггер · %s · X %.1f Y %.1f",
-                     workshop_trigger_name(o->trigger_kind), o->x, o->y);
+            snprintf(object_info, sizeof object_info, "Триггер · %s · ID %d",
+                     workshop_trigger_name(o->trigger_kind), 4 + workshop_selected);
         else
-            snprintf(object_info, sizeof object_info, "%s · X %.1f Y %.1f",
-                     workshop_object_name(o->type), o->x, o->y);
-    } else snprintf(object_info, sizeof object_info, "Выбери категорию и клетку карты");
-    label(root, 770, 282, 446, 42, object_info, 1,
-          WS_CREAM, LV_TEXT_ALIGN_LEFT);
+            snprintf(object_info, sizeof object_info, "%s · ID %d",
+                     workshop_object_name(o->type), 4 + workshop_selected);
+        snprintf(object_position, sizeof object_position, "X %.1f · Y %.1f",
+                 o->x, o->y);
+    } else object_info[0] = 0;
+    if (object_info[0])
+        label(root, 770, 282, 446, 25, object_info, 1,
+              WS_CREAM, LV_TEXT_ALIGN_LEFT);
+    if (object_position[0])
+        label(root, 770, 307, 446, 22, object_position, 0,
+              WS_CREAM, LV_TEXT_ALIGN_LEFT);
     int selected_trigger = workshop_selected >= 0 &&
         workshop_selected < workshop_object_count &&
         workshop_objects[workshop_selected].type == ON_LEVEL_TRIGGER;
@@ -2695,12 +2701,13 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
         label(root, 769, 394, 448, 27, "ВАРИАНТЫ ТРИГГЕРА", 0,
               WS_YELLOW, LV_TEXT_ALIGN_LEFT);
         static const char *const trigger_names[] = {
-            "Движение", "Разворот", "Вечно", "Невидимость", "Без столкн.", "Гравитация"
+            "Движение", "Разворот", "Вечно", "Невидим.",
+            "Без столкн.", "Гравитац.", "Перекрас.", "Фон"
         };
-        static const int trigger_x[] = {760, 916, 1072, 760, 1072, 916};
-        static const int trigger_y[] = {420, 420, 420, 461, 461, 461};
-        for (int i = 0; i < 6; ++i)
-            workshop_button(root, trigger_x[i], trigger_y[i], 148, 38,
+        static const int trigger_x[] = {760, 876, 992, 1108, 760, 876, 992, 1108};
+        static const int trigger_y[] = {420, 420, 420, 420, 461, 461, 461, 461};
+        for (int i = 0; i < 8; ++i)
+            workshop_button(root, trigger_x[i], trigger_y[i], 108, 38,
                             trigger_names[i], 0, U_WORKSHOP_TRIGGER_BASE + i,
                             workshop_trigger_kind == i ? WS_CYAN : BUTTON_GRAY);
     }
@@ -2798,16 +2805,13 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
                            U_WORKSHOP_FLIP_BASE, WS_GREEN, 0);
     workshop_mirror_button(root, 405, 666, 46, 44,
                            U_WORKSHOP_FLIP_BASE + 1, WS_GREEN, 1);
-    label(root, 460, 650, 260, 60,
-          "Зеркало: горизонтально или вертикально.",
-          0, WS_CREAM, LV_TEXT_ALIGN_LEFT);
     const char *publish_status = workshop_notice[0] ? workshop_notice :
         view->level_publish_busy ? "Публикуем уровень в общий каталог…" :
         view->level_publish_notice[0] ? view->level_publish_notice :
-        view->level_publish_id[0] ? "Уровень опубликован. ID показан ниже." :
-        "Зелёные стрелки двигают на 0,5 блока; бирюзовые — окно карты.";
-    label(root, 770, 562, 480, 64, publish_status,
-          1, WS_CREAM, LV_TEXT_ALIGN_CENTER);
+        view->level_publish_id[0] ? "Уровень опубликован." : "";
+    if (publish_status[0])
+        label(root, 770, 562, 480, 64, publish_status,
+              1, WS_CREAM, LV_TEXT_ALIGN_CENTER);
     if (view->level_publish_id[0]) {
         char published_id[48];
         snprintf(published_id, sizeof published_id, "ID %s", view->level_publish_id);
@@ -3638,7 +3642,7 @@ static void pressed(lv_event_t *ev) {
         workshop_block_variant = variants[code - U_WORKSHOP_BLOCK_VARIANT_BASE];
         dirty = 1;return;
     }
-    if (code >= U_WORKSHOP_TRIGGER_BASE && code < U_WORKSHOP_TRIGGER_BASE + 6) {
+    if (code >= U_WORKSHOP_TRIGGER_BASE && code < U_WORKSHOP_TRIGGER_BASE + 8) {
         workshop_trigger_kind = code - U_WORKSHOP_TRIGGER_BASE;
         if (workshop_dialog == WS_DIALOG_TRIGGER && workshop_selected >= 0 &&
             workshop_selected < workshop_object_count &&

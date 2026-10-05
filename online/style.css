@@ -227,10 +227,8 @@ main { min-width: 0; }
 .ws-home-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
 .ws-home-card { min-width: 0; padding: 24px; border: 3px solid var(--outline); border-radius: 6px; background: var(--paper); }
 .ws-home-card h2 { margin: 4px 0 8px; font-size: 30px; }
-.ws-home-card > .muted { min-height: 54px; margin: 0 0 18px; }
 .ws-card-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .ws-card-actions .primary-button { flex: 1 1 220px; width: auto; }
-.ws-safety-note { margin: 14px 0; color: var(--muted); font-size: 14px; line-height: 1.45; }
 .ws-status { min-height: 20px; margin: 9px 0 0; color: var(--muted); font-size: 14px; line-height: 1.4; }
 .ws-page-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 12px 0 16px; }
 .ws-page-toolbar > .small-button { color: var(--button-ink); background: var(--button-white); }
@@ -301,6 +299,8 @@ main { min-width: 0; }
 }
 .ws-properties .ws-color-field { display: flex; align-items: center; justify-content: space-between; }
 .ws-properties .ws-color-field input { width: 58px; height: 38px; padding: 2px; }
+.ws-trigger-color-field label { display: flex; align-items: center; gap: 8px; }
+.ws-color-wheel { width: 28px; height: 28px; object-fit: contain; }
 .ws-delete-selected { margin-top: 2px; color: var(--button-ink); background: var(--button-white); }
 .ws-error { padding: 10px 12px; border: 2px solid var(--outline); border-radius: 4px; color: var(--ink); background: var(--gray-light); line-height: 1.45; }
 .ws-preview-heading { flex: 1; min-width: 0; }

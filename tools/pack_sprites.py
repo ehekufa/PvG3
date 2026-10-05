@@ -50,6 +50,7 @@ IMAGES = [
     ("LEVEL_PORTAL_JETPACK", "assets/art/Портал-джетпака.png"),
     ("JETPACK_ACTIVE", "assets/art/джетпак-активен.png"),
     ("JETPACK_INACTIVE", "assets/art/Джетпак-отключён.png"),
+    ("LEVEL_TRIGGER_COLOR", "assets/art/Триггер-цвет.png"),
 ]
 
 

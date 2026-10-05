@@ -40,6 +40,7 @@ EXPECTED = {
     "LEVEL_PORTAL_JETPACK": "assets/art/Портал-джетпака.png",
     "JETPACK_ACTIVE": "assets/art/джетпак-активен.png",
     "JETPACK_INACTIVE": "assets/art/Джетпак-отключён.png",
+    "LEVEL_TRIGGER_COLOR": "assets/art/Триггер-цвет.png",
 }
 
 assert len(IMAGES) == len(EXPECTED) == len(dict(IMAGES)), "Unexpected extra/missing sprite"
@@ -74,7 +75,8 @@ for name, expected in EXPECTED_ALPHA_BOUNDS.items():
 for name in ("DUCK_CONE", "DUCK_BUCKET", "COIN", "LEVEL_TRIGGER",
              "LEVEL_TRIGGER_ROTATE", "LEVEL_TRIGGER_FOREVER",
              "LEVEL_TRIGGER_INVISIBILITY", "LEVEL_TRIGGER_NO_COLLISION",
-             "LEVEL_TRIGGER_GRAVITY", "LEVEL_ORB_ORANGE", "LEVEL_ORB_YELLOW",
+             "LEVEL_TRIGGER_GRAVITY", "LEVEL_TRIGGER_COLOR",
+             "LEVEL_ORB_ORANGE", "LEVEL_ORB_YELLOW",
              "LEVEL_CHECKPOINT_INACTIVE", "LEVEL_CHECKPOINT_ACTIVE",
              "LEVEL_PORTAL_NORMAL", "LEVEL_PORTAL_JETPACK",
              "JETPACK_ACTIVE", "JETPACK_INACTIVE"):
@@ -82,5 +84,14 @@ for name in ("DUCK_CONE", "DUCK_BUCKET", "COIN", "LEVEL_TRIGGER",
     assert pixels[0] == 0, (name, "expected transparent top-left corner")
 _, _, slope_pixels = png_pixels(ROOT / EXPECTED["LEVEL_SLOPE"])
 assert slope_pixels[0] >> 24 <= 16, "slope artwork should fade at its transparent corner"
+wheel_w, wheel_h, wheel_pixels = png_pixels(ROOT / EXPECTED["LEVEL_TRIGGER_COLOR"])
+assert wheel_w == wheel_h, "color-wheel art should be square"
+wheel_cx, wheel_cy = (wheel_w - 1) / 2, (wheel_h - 1) / 2
+for y in range(wheel_h):
+    for x in range(wheel_w):
+        radius = ((x - wheel_cx) ** 2 + (y - wheel_cy) ** 2) ** .5
+        alpha = wheel_pixels[y * wheel_w + x] >> 24
+        assert radius >= 18 or alpha == 0, "color-wheel center hole should stay transparent"
+        assert radius < 92 or alpha == 0, "color-wheel outside edge should stay transparent"
 
-print("OK: thirty-five named sprites, including both portal types and both Jetpack states")
+print(f"OK: {len(EXPECTED)} named sprites, including clean transparent color-wheel art, both portals and both Jetpack states")

@@ -317,13 +317,14 @@ static void assert_platformer_art(void) {
                        PV_ART_LEVEL_CHECKPOINT_ACTIVE,
                        PV_ART_LEVEL_PORTAL_NORMAL,
                        PV_ART_LEVEL_PORTAL_JETPACK,
-                       PV_ART_JETPACK_ACTIVE, PV_ART_JETPACK_INACTIVE};
+                       PV_ART_JETPACK_ACTIVE, PV_ART_JETPACK_INACTIVE,
+                       PV_ART_LEVEL_TRIGGER_COLOR};
     const int widths[] = {100, 100, 100, 100, 100, 100, 100, 100, 50,
                           100, 100, 100, 100, 100, 100,
-                          100, 100, 100, 100};
+                          100, 100, 100, 100, 256};
     const int heights[] = {100, 50, 100, 100, 100, 100, 100, 100, 100,
                            100, 100, 100, 100, 100, 100,
-                           100, 100, 100, 100};
+                           100, 100, 100, 100, 256};
     for (size_t i = 0; i < sizeof ids / sizeof ids[0]; ++i) {
         int width = 0, height = 0, visible = 0;
         const uint32_t *pixels = game_art_rgba(ids[i], &width, &height);
@@ -790,6 +791,59 @@ static void native_trigger_runtime_regression(void) {
     game_custom_level_exit();
 }
 
+static void native_recolor_background_regression(void) {
+    static OnPublishedLevel level;
+    static uint32_t base_frame[GAME_W * GAME_H];
+    static uint32_t changed_frame[GAME_W * GAME_H];
+    memset(&level, 0, sizeof level);
+    snprintf(level.id, sizeof level.id, "%s", "3");
+    snprintf(level.title, sizeof level.title, "%s", "Recolor and background test");
+    level.width = 16;level.height = 10;level.object_count = 5;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+        .x=0,.y=8,.w=16,.h=2,.color=0x65a845u,.visible=1,.number=3};
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
+        .x=1,.y=7,.w=.65f,.h=.85f,.color=0x5ab7e8u,.visible=1,.number=1};
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.color=0x69d16cu,.visible=1,.number=2};
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_BLOCK,
+        .x=6,.y=6,.w=1,.h=1,.color=0x55c8eau,.visible=1,.number=42};
+    level.objects[4] = (OnLevelObject){.id=5,.type=ON_LEVEL_BLOCK,
+        .x=8,.y=6,.w=1,.h=1,.color=0x55c8eau,.visible=1,.number=43};
+    assert(game_workshop_preview(&level));
+    game_tick(0, base_frame);
+    assert(game_debug_custom_background_color() == 0x8bcce6u);
+    game_custom_level_exit();
+
+    level.object_count = 7;
+    level.objects[5] = (OnLevelObject){.id=6,.type=ON_LEVEL_TRIGGER,
+        .x=100,.y=100,.w=1,.h=1,.visible=1,
+        .trigger_kind=ON_TRIGGER_KIND_RECOLOR,.trigger_event=ON_TRIGGER_START,
+        .trigger_action=ON_TRIGGER_RECOLOR,.target_id=0,
+        .trigger_group_id=42,.trigger_has_group=1,.trigger_color=0xd02da6u};
+    level.objects[6] = (OnLevelObject){.id=7,.type=ON_LEVEL_TRIGGER,
+        .x=102,.y=100,.w=1,.h=1,.visible=1,
+        .trigger_kind=ON_TRIGGER_KIND_BACKGROUND,.trigger_event=ON_TRIGGER_START,
+        .trigger_action=ON_TRIGGER_SET_BACKGROUND,.target_id=0,
+        .trigger_color=0x4c82d0u};
+    assert(game_workshop_preview(&level));
+    OnLevelObject recolored, untouched;
+    assert(game_debug_custom_object(4, &recolored) &&
+           recolored.color == 0xd02da6u);
+    assert(game_debug_custom_object(5, &untouched) &&
+           untouched.color == 0x55c8eau);
+    assert(game_debug_custom_background_color() == 0x4c82d0u);
+    game_tick(0, changed_frame);
+    assert(changed_frame[160 * GAME_W + 20] ==
+           (0xff000000u | (0xd0u << 16) | (0x82u << 8) | 0x4cu));
+    int changed_pixels = 0;
+    for (int y = 285; y < 390; ++y)
+        for (int x = 875; x < 980; ++x)
+            changed_pixels += base_frame[y * GAME_W + x] !=
+                              changed_frame[y * GAME_W + x];
+    assert(changed_pixels > 100); /* recolor must visibly tint block artwork */
+    game_custom_level_exit();
+}
+
 static void native_jetpack_portal_regression(void) {
     static OnPublishedLevel level;
     memset(&level, 0, sizeof level);
@@ -902,6 +956,7 @@ static int run_lvgl_test(void) {
     assert_platformer_art();
     assert(lvgl_ui_init());
     native_trigger_runtime_regression();
+    native_recolor_background_regression();
     native_jetpack_portal_regression();
     game_init();assert(game_save_export(after, bytes) && !memcmp(before, after, bytes));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER));
@@ -910,6 +965,7 @@ static int run_lvgl_test(void) {
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_INVISIBILITY));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_NO_COLLISION));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_GRAVITY));
+    assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_COLOR));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_ORB_ORANGE));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_ORB_YELLOW));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_CHECKPOINT_INACTIVE));
@@ -931,8 +987,12 @@ static int run_lvgl_test(void) {
     ui_snapshot("menu_player_catalog");
     ui_tap(912, 210);assert(game_phase() == GAME_WORKSHOP);
     ui_snapshot("workshop_home");
+    assert(!lvgl_ui_test_label_present("Создай уровень или открой опубликованный каталог."));
+    assert(!lvgl_ui_test_label_present(
+        "Строй сцену, настраивай объекты, группы, цвет и движение."));
     ui_tap(310, 599);assert(game_phase() == GAME_WORKSHOP_DETAILS);
     ui_snapshot("workshop_details");
+    assert(!lvgl_ui_test_label_present("Нажми, чтобы добавить описание уровня."));
     ui_tap(638, 242); /* set the level title with the native virtual keyboard */
     ui_snapshot("workshop_keyboard_open");
     ui_tap(392, 620);ui_tap(392, 620); /* toggle case in both directions */
@@ -947,6 +1007,11 @@ static int run_lvgl_test(void) {
     ui_snapshot("workshop_details_named");
     ui_tap(964, 600);assert(game_phase() == GAME_WORKSHOP_EDIT);
     ui_snapshot("workshop_editor");
+    assert(lvgl_ui_test_label_present("ЗЕРКАЛО"));
+    assert(!lvgl_ui_test_label_present("Зеркало: горизонтально или вертикально."));
+    assert(!lvgl_ui_test_label_present(
+        "Зелёные стрелки двигают на 0,5 блока; бирюзовые — окно карты."));
+    assert(!lvgl_ui_test_label_present("Выбери категорию и клетку карты"));
     ui_tap(191, 205);ui_snapshot("workshop_block_added");
 
     /* Multi-select, move as a group, copy/paste, and delete the temporary
@@ -1000,8 +1065,11 @@ static int run_lvgl_test(void) {
 
     ui_tap(929, 209); /* return to single-select mode */
     ui_tap(191, 205); /* select the retained block */
+    assert(lvgl_ui_test_label_present("Блок · ID 4"));
     ui_tap(1180, 690); /* independent size/rotation dialog */
     ui_snapshot("workshop_transform_dialog");
+    assert(!lvgl_ui_test_label_present(
+        "Поворот здесь не меняет триггеры. Выбрано: 1"));
     ui_tap(809, 187); /* width +0.1 */
     ui_tap(722, 375); /* counterclockwise 45-degree rotation */
 #ifdef PVG3_LVGL_TEST
@@ -1022,6 +1090,8 @@ static int run_lvgl_test(void) {
     ui_tap(531, 596); /* trigger category; movement is the default */
     ui_tap(294, 247); /* place a movement trigger */
     ui_tap(835, 361); /* configure X and Y separately */
+    assert(!lvgl_ui_test_label_present(
+        "Оба смещения задаются\nотдельно, до ±9999."));
     ui_tap(640, 343); /* X: replace 1 with 9999 */
     ui_snapshot("workshop_numeric_keyboard");
     ui_tap(975, 505);ui_tap(640, 505);ui_tap(640, 505);
@@ -1032,26 +1102,32 @@ static int run_lvgl_test(void) {
     ui_tap(975, 390);ui_tap(640, 248); /* choose another target group */
     ui_tap(975, 505);ui_tap(417, 275);ui_tap(194, 390);ui_tap(975, 390);
     ui_tap(640, 628); /* save movement settings */
-    ui_tap(990, 443); /* rotation variant */
+    ui_tap(930, 439); /* rotation variant */
     ui_tap(338, 247); /* place the rotation trigger */
-    ui_tap(835, 361);ui_tap(640, 371); /* edit rotation angle */
+    ui_tap(835, 361); /* open rotation trigger settings */
+    assert(!lvgl_ui_test_label_present(
+        "Группа вращается\nсо скоростью 1 оборот/с."));
+    ui_tap(640, 371); /* edit rotation angle */
     ui_tap(975, 505);ui_tap(975, 505);
     ui_tap(194, 275);ui_tap(640, 275);ui_tap(417, 390);ui_tap(975, 390);
     ui_tap(640, 628);
-    ui_tap(1146, 443); /* forever variant */
+    ui_tap(1046, 439); /* forever variant */
     ui_tap(380, 289); /* place the persistent group action */
-    ui_tap(835, 361);ui_tap(640, 248); /* group input */
+    ui_tap(835, 361); /* open forever-trigger settings */
+    assert(!lvgl_ui_test_label_present(
+        "Группа останется в выбранном состоянии до другого триггера."));
+    ui_tap(640, 248); /* group input */
     ui_tap(975, 505);ui_tap(417, 275);ui_tap(194, 390);ui_tap(975, 390);
     ui_tap(720, 371); /* unactivate forever */
     ui_tap(640, 628); /* save trigger settings */
-    ui_tap(870, 480); /* invisibility variant */
+    ui_tap(1162, 439); /* invisibility variant */
     ui_tap(422, 330); /* place invisibility trigger */
 #ifdef PVG3_LVGL_TEST
     assert(lvgl_ui_test_workshop_level(&editor_probe));
     assert(editor_probe.objects[editor_probe.object_count - 1].trigger_kind ==
            ON_TRIGGER_KIND_INVISIBILITY);
 #endif
-    ui_tap(1108, 480); /* no-collision variant */
+    ui_tap(814, 480); /* no-collision variant */
     ui_tap(472, 330); /* place no-collision trigger */
 #ifdef PVG3_LVGL_TEST
     assert(lvgl_ui_test_workshop_level(&editor_probe));
@@ -1060,8 +1136,12 @@ static int run_lvgl_test(void) {
 #endif
     ui_tap(472, 330); /* select the newly placed no-collision trigger */
     ui_tap(835, 361); /* open trigger settings */
-    ui_tap(870, 528); /* switch the selected trigger to invisibility */
-    ui_tap(1108, 528); /* and back to no-collision */
+    assert(!lvgl_ui_test_label_present(
+        "Объекты исчезнут с экрана, но сохранят столкновения."));
+    assert(!lvgl_ui_test_label_present(
+        "После события у объектов группы отключится столкновение."));
+    ui_tap(1015, 528); /* switch the selected trigger to invisibility */
+    ui_tap(268, 572); /* and back to no-collision */
     ui_tap(878, 173);ui_tap(878, 173);ui_tap(878, 173); /* event: start */
     ui_tap(640, 628); /* close trigger settings */
 #ifdef PVG3_LVGL_TEST
@@ -1072,7 +1152,7 @@ static int run_lvgl_test(void) {
            ON_TRIGGER_START);
 #endif
     ui_tap(531, 596); /* trigger category */
-    ui_tap(990, 480); /* gravity trigger */
+    ui_tap(930, 480); /* gravity trigger */
     ui_tap(520, 370); /* place it away from the finish */
 #ifdef PVG3_LVGL_TEST
     assert(lvgl_ui_test_workshop_level(&editor_probe));
@@ -1084,6 +1164,10 @@ static int run_lvgl_test(void) {
            editor_probe.objects[editor_probe.object_count - 1].target_id == 0);
 #endif
     ui_tap(835, 361); /* open the gravity settings */
+    assert(!lvgl_ui_test_label_present(
+        "−100 · слабее       0 · обычная       +100 · сильнее"));
+    assert(!lvgl_ui_test_label_present(
+        "Ползунок задаёт гравитацию всего уровня; орбы действуют отдельно."));
     ui_tap(158, 319); /* weak gravity is the negative endpoint */
 #ifdef PVG3_LVGL_TEST
     assert(lvgl_ui_test_workshop_level(&editor_probe));
@@ -1099,6 +1183,53 @@ static int run_lvgl_test(void) {
            editor_probe.objects[editor_probe.object_count - 1].trigger_value == 100.0f);
 #endif
     ui_tap(640, 628); /* save the slider value */
+    ui_tap(1046, 480); /* recolor trigger */
+    ui_tap(520, 370); /* place a recolor trigger */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[editor_probe.object_count - 1].trigger_kind ==
+           ON_TRIGGER_KIND_RECOLOR &&
+           editor_probe.objects[editor_probe.object_count - 1].trigger_action ==
+           ON_TRIGGER_RECOLOR &&
+           editor_probe.objects[editor_probe.object_count - 1].trigger_has_group &&
+           editor_probe.objects[editor_probe.object_count - 1].trigger_group_id == 2);
+    uint32_t recolor_original =
+        editor_probe.objects[editor_probe.object_count - 1].trigger_color;
+#endif
+    ui_tap(835, 361); /* open recolor settings */
+    assert(lvgl_ui_test_label_present("Цвет объектов"));
+    ui_tap(640, 343); /* open the color-wheel palette */
+    ui_tap(705, 322); /* select a color swatch */
+    ui_tap(640, 598); /* return to the editor */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[editor_probe.object_count - 1].trigger_kind ==
+           ON_TRIGGER_KIND_RECOLOR &&
+           editor_probe.objects[editor_probe.object_count - 1].trigger_color !=
+           recolor_original);
+#endif
+    ui_tap(1162, 480); /* background trigger */
+    ui_tap(565, 370); /* place a background trigger */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[editor_probe.object_count - 1].trigger_kind ==
+           ON_TRIGGER_KIND_BACKGROUND &&
+           editor_probe.objects[editor_probe.object_count - 1].trigger_action ==
+           ON_TRIGGER_SET_BACKGROUND &&
+           !editor_probe.objects[editor_probe.object_count - 1].trigger_has_group &&
+           editor_probe.objects[editor_probe.object_count - 1].target_id == 0);
+#endif
+    ui_tap(835, 361); /* open background settings */
+    assert(lvgl_ui_test_label_present("Цвет фона"));
+    assert(!lvgl_ui_test_label_present("Целевая группа"));
+    ui_tap(640, 248);ui_tap(705, 322);ui_tap(640, 598);
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[editor_probe.object_count - 1].trigger_kind ==
+           ON_TRIGGER_KIND_BACKGROUND &&
+           editor_probe.objects[editor_probe.object_count - 1].trigger_color ==
+           editor_probe.objects[editor_probe.object_count - 1].color);
+#endif
     ui_tap(607, 596); /* orb category (yellow is the default) */
     ui_tap(565, 414); /* place a yellow orb */
 #ifdef PVG3_LVGL_TEST
@@ -1140,6 +1271,10 @@ static int run_lvgl_test(void) {
            editor_probe.objects[editor_probe.object_count - 1].emitter.enabled);
 #endif
     ui_tap(830, 360);ui_snapshot("workshop_particle_settings");
+    assert(!lvgl_ui_test_label_present("P — точка рождения частиц"));
+    assert(!lvgl_ui_test_label_present("0° вправо · −90° вверх · +90° вниз"));
+    assert(!lvgl_ui_test_label_present(
+        "Скорость, угол, размер и время жизни задают реальную траекторию частиц."));
     ui_tap(490, 220); /* adjust the particles-per-second slider */
     ui_tap(316, 142); /* switch to finite bursts */
     ui_tap(485, 142); /* enable the gravity setting */
@@ -1194,6 +1329,7 @@ static int run_lvgl_test(void) {
     ui_tap(987, 377);ui_snapshot("workshop_group_dialog");
     ui_tap(721, 159);ui_tap(640, 650);
     ui_tap(1145, 377);ui_snapshot("workshop_color_dialog");
+    assert(!lvgl_ui_test_label_present("Палитра 1 · выбери цвет"));
     ui_tap(535, 208);ui_tap(351, 322);
     ui_snapshot("workshop_color_selected");
     ui_tap(640, 598); /* close the color dialog before using the toolbar */
