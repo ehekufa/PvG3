@@ -63,14 +63,20 @@ jobs:
         run: |
           set -euo pipefail
           LVGL_SOURCES="$(find src/vendor/lvgl/src -name '*.c' | LC_ALL=C sort)"
-          clang -std=c11 -O2 -mwindows -static -pthread -fuse-ld=lld \
+          if ! clang -std=c11 -O2 -mwindows -static -pthread -fuse-ld=lld \
             -finput-charset=UTF-8 -fexec-charset=UTF-8 \
             -Isrc -Isrc/vendor/lvgl \
             src/game.c src/font.c src/lvgl_ui.c src/online_rules.c \
             src/online_protocol.c src/online_net.c src/windows_online_http.c \
             src/windows_main.c $LVGL_SOURCES \
             -lwinhttp -lbcrypt -lgdi32 -lwinmm -luser32 -lm \
-            -o build/windows/PvG3.exe
+            -o build/windows/PvG3.exe > build/windows/link.log 2>&1; then
+            tail -n 80 build/windows/link.log | sed 's/%/%25/g' | while IFS= read -r line; do
+              printf '::error::%s\n' "$line"
+            done
+            exit 1
+          fi
+          cat build/windows/link.log
           test -s build/windows/PvG3.exe
           objdump -f build/windows/PvG3.exe | grep 'pei-x86-64'
 

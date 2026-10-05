@@ -27,6 +27,16 @@ jobs:
 
       - name: Verify artwork, licensed font, UI, saves and gameplay (Clang)
         run: |
+          exec > >(tee /tmp/pvg3-verify.log) 2>&1
+          verify_failed() {
+            status=$?
+            echo "::error title=Verification command failed::$BASH_COMMAND"
+            tail -n 30 /tmp/pvg3-verify.log | sed 's/%/%25/g' | while IFS= read -r line; do
+              printf '::error::%s\n' "$line"
+            done
+            exit "$status"
+          }
+          trap verify_failed ERR
           clang --version
           python3 tools/pack_sprites.py
           python3 tools/pack_font.py
