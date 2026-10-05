@@ -32,7 +32,7 @@ jobs:
           verify_failed() {
             local status="$1" command="$2"
             local details
-            details=$(tail -n 80 /tmp/pvg3-verify.log | python3 -c 'import sys; print(sys.stdin.read().replace("%", "%25").replace("\\r", "%0D").replace("\\n", "%0A"), end="")')
+            details=$(tail -n 80 /tmp/pvg3-verify.log | python3 -c 'import sys; s=sys.stdin.read(); print(s.replace("%", "%25").replace(chr(13), "%0D").replace(chr(10), "%0A"), end="")')
             printf '::error title=Verification command failed::%s%%0A%s\n' "$command" "$details" >&3
             exit "$status"
           }
@@ -80,11 +80,11 @@ jobs:
             src/game.c src/font.c src/online_rules.c src/online_protocol.c \
             src/online_net.c src/lvgl_ui.c tools/native_online_integration_test.c \
             $LVGL_SOURCES -o lvgl_ui_test -lm -pthread
-          if PVG3_LVGL_TEST=1 ./lvgl_ui_test; then
+          if PVG3_TRACE_LVGL=1 PVG3_LVGL_TEST=1 ./lvgl_ui_test; then
             :
           else
             status=$?
-            details=$(tail -n 80 /tmp/pvg3-verify.log | python3 -c 'import sys; print(sys.stdin.read().replace("%", "%25").replace("\\r", "%0D").replace("\\n", "%0A"), end="")')
+            details=$(tail -n 80 /tmp/pvg3-verify.log | python3 -c 'import sys; s=sys.stdin.read(); print(s.replace("%", "%25").replace(chr(13), "%0D").replace(chr(10), "%0A"), end="")')
             printf '::error title=LVGL integration test failed::exit %s%%0A%s\n' "$status" "$details" >&3
             exit "$status"
           fi

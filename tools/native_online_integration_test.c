@@ -360,6 +360,10 @@ static void ui_snapshot(const char *name) {
     assert(!fclose(f));
 }
 static void ui_tap(int x, int y) {
+    if (getenv("PVG3_TRACE_LVGL")) {
+        fprintf(stderr, "LVGL TRACE tap %d,%d phase=%d\n", x, y, game_phase());
+        fflush(stderr);
+    }
     int down = lvgl_ui_pointer(x, y, 1);
     if (!down) fprintf(stderr, "LVGL tap DOWN missed at %d,%d in phase %d\n", x, y, game_phase());
     assert(down);ui_snapshot("tap_down");
@@ -960,16 +964,29 @@ static void native_jetpack_portal_regression(void) {
     game_custom_level_exit();
 }
 
+static void lvgl_trace(const char *name) {
+    if (getenv("PVG3_TRACE_LVGL")) {
+        fprintf(stderr, "LVGL TRACE %s\n", name);
+        fflush(stderr);
+    }
+}
 static int run_lvgl_test(void) {
     static uint8_t before[20000], after[20000];
+    lvgl_trace("start");
     size_t bytes = game_save_size();assert(bytes < sizeof before);
     game_init();assert(game_save_export(before, bytes));
+    lvgl_trace("initial game state");
     assert_platformer_art();
     assert(lvgl_ui_init());
+    lvgl_trace("LVGL initialized");
     native_trigger_runtime_regression();
+    lvgl_trace("trigger runtime regression complete");
     native_recolor_background_regression();
+    lvgl_trace("recolor/background regression complete");
     native_jetpack_portal_regression();
+    lvgl_trace("portal regression complete");
     game_init();assert(game_save_export(after, bytes) && !memcmp(before, after, bytes));
+    lvgl_trace("save integrity check complete");
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_ROTATE));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_FOREVER));
