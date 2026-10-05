@@ -10,7 +10,6 @@
 #include "online_particle.h"
 #include "vendor/lvgl/lvgl.h"
 #include "vendor/lvgl/src/draw/lv_draw_triangle.h"
-#include "vendor/lvgl/src/draw/lv_draw_arc.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -184,6 +183,8 @@ static int workshop_layer;
 static int workshop_layer2, workshop_z_order;
 static int workshop_lock_x, workshop_lock_y, workshop_touch = 1;
 static int workshop_spawn, workshop_silent, workshop_target_group;
+static int workshop_ground_color_set, workshop_ground_color_index = 1;
+static int workshop_ground_color_custom;
 static int workshop_color_set, workshop_color_index;
 static int workshop_keyboard_active, workshop_input_kind;
 static int workshop_input_return_dialog, workshop_text_language, workshop_text_upper;
@@ -256,7 +257,6 @@ static lv_obj_t *label(lv_obj_t *parent, int x, int y, int w, int h,
 }
 
 static void pressed(lv_event_t *ev);
-static void vector_refresh_draw(lv_event_t *event);
 static void vector_arrow_head_draw(lv_event_t *event);
 static void vector_mirror_draw(lv_event_t *event);
 static lv_obj_t *workshop_nudge_button(lv_obj_t *parent, int x, int y,
@@ -729,9 +729,9 @@ static void custom_levels_screen(lv_obj_t *root, const OnNetView *v) {
            U_CUSTOM_WORKSHOP);
     lv_obj_t *refresh = button(root, 1015, 185, 193, 54, "", 2,
                                 U_CUSTOM_REFRESH);
+    art(refresh, PV_ART_WORKSHOP_ROTATE, 27, 27, 26);
     label(refresh, 48, 4, 140, 46, "Обновить", 1, BUTTON_TEXT,
           LV_TEXT_ALIGN_CENTER);
-    lv_obj_add_event_cb(refresh, vector_refresh_draw, LV_EVENT_DRAW_MAIN, NULL);
     memset(visible_level_ids, 0, sizeof visible_level_ids);
     int pages = (v->level_count + 7) / 8;
     if (custom_level_page >= pages) custom_level_page = pages > 0 ? pages - 1 : 0;
@@ -835,6 +835,8 @@ static void workshop_reset_draft(void) {
     workshop_lock_x = workshop_lock_y = workshop_spawn = workshop_silent = 0;
     workshop_touch = 1;
     workshop_target_group = 2;
+    workshop_ground_color_set = 0;workshop_ground_color_index = 1;
+    workshop_ground_color_custom = 0;
     workshop_color_set = workshop_color_index = 0;
     workshop_draft_exists = 0;
     workshop_name[0] = 0;workshop_description[0] = 0;
@@ -998,6 +1000,32 @@ static int workshop_selection_count(void) {
         count += workshop_selected_flags[i] != 0;
     return count;
 }
+static int workshop_type_can_manually_recolor(int type) {
+    switch (type) {
+    case ON_LEVEL_BLOCK:
+    case ON_LEVEL_GROUND:
+    case ON_LEVEL_HAZARD:
+    case ON_LEVEL_TRIGGER:
+    case ON_LEVEL_SLOPE:
+    case ON_LEVEL_PARTICLE:
+        return 1;
+    default:
+        return 0;
+    }
+}
+static int workshop_first_recolorable_selected(void) {
+    if (workshop_selected >= 0 && workshop_selected < workshop_object_count &&
+        workshop_selected_flags[workshop_selected] &&
+        workshop_type_can_manually_recolor(
+            workshop_objects[workshop_selected].type)) return workshop_selected;
+    for (int i = workshop_object_count - 1; i >= 0; --i)
+        if (workshop_selected_flags[i] &&
+            workshop_type_can_manually_recolor(workshop_objects[i].type)) return i;
+    return -1;
+}
+static int workshop_selection_can_manually_recolor(void) {
+    return workshop_ground_selected || workshop_first_recolorable_selected() >= 0;
+}
 static void workshop_clear_selection(void) {
     memset(workshop_selected_flags, 0, sizeof workshop_selected_flags);
     workshop_player_selected = workshop_goal_selected = workshop_ground_selected = 0;
@@ -1053,8 +1081,10 @@ static void workshop_load_selected_properties(int object) {
         workshop_layer = workshop_objects[object].layer;
         workshop_layer2 = workshop_objects[object].layer2;
         workshop_z_order = workshop_objects[object].z_order;
-        workshop_color_set = workshop_objects[object].color_set;
-        workshop_color_index = workshop_objects[object].color_index;
+        if (workshop_type_can_manually_recolor(workshop_objects[object].type)) {
+            workshop_color_set = workshop_objects[object].color_set;
+            workshop_color_index = workshop_objects[object].color_index;
+        }
         if (workshop_objects[object].type == ON_LEVEL_TRIGGER)
             workshop_trigger_kind = workshop_objects[object].trigger_kind;
         if (workshop_objects[object].type == ON_LEVEL_ORB_YELLOW ||
@@ -1115,8 +1145,8 @@ static void workshop_place_object(int type, int col, int row) {
     o->layer = workshop_layer;
     o->layer2 = workshop_layer2;
     o->z_order = workshop_z_order;
-    o->color_set = workshop_color_set;
-    o->color_index = workshop_color_index;
+    o->color_set = workshop_type_can_manually_recolor(type) ? workshop_color_set : 0;
+    o->color_index = workshop_type_can_manually_recolor(type) ? workshop_color_index : 0;
     if (type == ON_LEVEL_PARTICLE)
         o->emitter = on_level_particle_default();
     o->trigger_event = ON_TRIGGER_TOUCH;
@@ -1328,8 +1358,8 @@ static void workshop_copy_selection(void) {
             .w=workshop_ground_w,.h=workshop_ground_h,
             .angle=workshop_ground_angle,.group_id=3,
             .layer=workshop_layer,.layer2=workshop_layer2,
-            .z_order=workshop_z_order,.color_set=workshop_color_set,
-            .color_index=workshop_color_index,.trigger_kind=workshop_trigger_kind
+            .z_order=workshop_z_order,.color_set=workshop_ground_color_set,
+            .color_index=workshop_ground_color_index,.trigger_kind=workshop_trigger_kind
         };
     }
     if (workshop_clipboard_count)
@@ -1385,7 +1415,7 @@ static const char *workshop_object_name(int type) {
     case ON_LEVEL_ORB_YELLOW: return "Жёлтый орб";
     case ON_LEVEL_ORB_ORANGE: return "Оранжевый орб";
     case ON_LEVEL_PARTICLE: return "Эмиттер частиц";
-    case ON_LEVEL_ENEMY: return "Гусь";
+    case ON_LEVEL_ENEMY: return "Утка";
     case ON_LEVEL_PLAYER: return "Игрок";
     case ON_LEVEL_GOAL: return "Финиш";
     case ON_LEVEL_CHECKPOINT: return "Чекпоинт";
@@ -1484,7 +1514,11 @@ static void workshop_build_preview(OnPublishedLevel *level) {
                          .angle=workshop_ground_angle,
                          .flip_x=workshop_ground_flip_x,
                          .flip_y=workshop_ground_flip_y,
-                         .color=0x65a845u,.number=3,.visible=1};
+                         .color=workshop_ground_color_custom ?
+                             workshop_colors[workshop_ground_color_set % 4]
+                                                             [workshop_ground_color_index % 8] :
+                             0x65a845u,
+                         .number=3,.visible=1};
     snprintf(o->name, sizeof o->name, "%s", "Платформа");
     o = &level->objects[level->object_count++];
     *o = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
@@ -2578,7 +2612,10 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
     workshop_draw_world_object(map_clip, 0, 0, cell, ON_LEVEL_GROUND,
         workshop_ground_x, workshop_ground_y, workshop_ground_w, workshop_ground_h,
         workshop_ground_angle, workshop_ground_flip_x, workshop_ground_flip_y,
-        PV_ART_LEVEL_PLATFORM, C(476B4E),
+        PV_ART_LEVEL_PLATFORM,
+        workshop_ground_color_custom ?
+            lv_color_hex(workshop_colors[workshop_ground_color_set % 4]
+                                        [workshop_ground_color_index % 8]) : C(476B4E),
         workshop_is_selected(-4));
     workshop_draw_world_object(map_clip, 0, 0, cell, ON_LEVEL_PLAYER,
         workshop_player_x, workshop_player_y, workshop_player_w, workshop_player_h,
@@ -2672,8 +2709,11 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
                     U_WORKSHOP_MOVE_PANEL, selected_particle ? WS_CYAN : BUTTON_GRAY);
     workshop_button(root, 917, 336, 140, 50, "Группа", 0,
                     U_WORKSHOP_GROUP_PANEL, BUTTON_GRAY);
-    workshop_button(root, 1068, 336, 154, 50, "Цвет", 0,
-                    U_WORKSHOP_COLOR_PANEL, BUTTON_GRAY);
+    int can_manually_recolor = workshop_selection_can_manually_recolor();
+    lv_obj_t *color_button = workshop_button(root, 1068, 336, 154, 50, "Цвет", 0,
+                    U_WORKSHOP_COLOR_PANEL,
+                    can_manually_recolor ? BUTTON_GRAY : C(777777));
+    if (!can_manually_recolor) lv_obj_add_state(color_button, LV_STATE_DISABLED);
     int show_block_variants = workshop_palette_type == ON_LEVEL_BLOCK &&
                               workshop_tool == WS_TOOL_BUILD;
     int show_trigger_variants = workshop_palette_type == ON_LEVEL_TRIGGER &&
@@ -2768,7 +2808,7 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
     const int palette_types[] = {ON_LEVEL_BLOCK, ON_LEVEL_HAZARD, ON_LEVEL_COIN,
         ON_LEVEL_ENEMY, ON_LEVEL_PLAYER, ON_LEVEL_GOAL, ON_LEVEL_TRIGGER,
         ON_LEVEL_ORB_YELLOW, ON_LEVEL_PORTAL_NORMAL};
-    const char *palette_names[] = {"Блоки", "Шипы", "Монета", "Гусь",
+    const char *palette_names[] = {"Блоки", "Шипы", "Монета", "Утка",
         "Игрок", "Цели", "Триггер", "Орбы", "Порталы"};
     for (int i = 0; i < 9; ++i) {
         int x = 39 + i * 76;
@@ -2939,35 +2979,6 @@ static void vector_arrow_head_draw(lv_event_t *event) {
         head.p[1] = (lv_point_precise_t){cx - half, cy + length / 2};
         head.p[2] = (lv_point_precise_t){cx + half, cy + length / 2};
     }
-    lv_draw_triangle(layer, &head);
-}
-
-static void vector_refresh_draw(lv_event_t *event) {
-    if (lv_event_get_code(event) != LV_EVENT_DRAW_MAIN) return;
-    lv_obj_t *object = lv_event_get_current_target(event);
-    lv_layer_t *layer = lv_event_get_layer(event);
-    lv_area_t bounds;
-    lv_obj_get_coords(object, &bounds);
-    int cx = bounds.x1 + 28;
-    int cy = (bounds.y1 + bounds.y2) / 2;
-    lv_draw_arc_dsc_t arc;
-    lv_draw_arc_dsc_init(&arc);
-    arc.center = (lv_point_t){cx, cy};
-    arc.radius = 11;
-    arc.width = 3;
-    arc.color = BUTTON_TEXT;
-    arc.opa = LV_OPA_COVER;
-    arc.rounded = 1;
-    arc.start_angle = 48;
-    arc.end_angle = 318;
-    lv_draw_arc(layer, &arc);
-    lv_draw_triangle_dsc_t head;
-    lv_draw_triangle_dsc_init(&head);
-    head.color = BUTTON_TEXT;
-    head.opa = LV_OPA_COVER;
-    head.p[0] = (lv_point_precise_t){cx + 13, cy - 13};
-    head.p[1] = (lv_point_precise_t){cx + 1, cy - 11};
-    head.p[2] = (lv_point_precise_t){cx + 11, cy - 1};
     lv_draw_triangle(layer, &head);
 }
 
@@ -3327,6 +3338,9 @@ static uint32_t state_signature(int phase, const OnNetView *v) {
         h = mix(h, &workshop_ground_angle, sizeof workshop_ground_angle);
         h = mix(h, &workshop_ground_flip_x, sizeof workshop_ground_flip_x);
         h = mix(h, &workshop_ground_flip_y, sizeof workshop_ground_flip_y);
+        h = mix(h, &workshop_ground_color_set, sizeof workshop_ground_color_set);
+        h = mix(h, &workshop_ground_color_index, sizeof workshop_ground_color_index);
+        h = mix(h, &workshop_ground_color_custom, sizeof workshop_ground_color_custom);
         h = mix(h, &workshop_player_x, sizeof workshop_player_x);
         h = mix(h, &workshop_player_y, sizeof workshop_player_y);
         h = mix(h, &workshop_player_w, sizeof workshop_player_w);
@@ -3716,12 +3730,23 @@ static void pressed(lv_event_t *ev) {
     }
     if (code >= U_WORKSHOP_COLOR_BASE &&
         code < U_WORKSHOP_COLOR_BASE + 8) {
-        workshop_color_index = code - U_WORKSHOP_COLOR_BASE;
-        if (workshop_selected >= 0 && workshop_selected < workshop_object_count) {
-            workshop_objects[workshop_selected].color_set = workshop_color_set;
-            workshop_objects[workshop_selected].color_index = workshop_color_index;
+        if (workshop_selection_can_manually_recolor()) {
+            workshop_color_index = code - U_WORKSHOP_COLOR_BASE;
+            if (workshop_ground_selected) {
+                workshop_ground_color_set = workshop_color_set;
+                workshop_ground_color_index = workshop_color_index;
+                workshop_ground_color_custom = 1;
+            }
+            for (int i = 0; i < workshop_object_count; ++i) {
+                if (!workshop_selected_flags[i] ||
+                    !workshop_type_can_manually_recolor(workshop_objects[i].type))
+                    continue;
+                workshop_objects[i].color_set = workshop_color_set;
+                workshop_objects[i].color_index = workshop_color_index;
+            }
+            dirty = 1;
         }
-        dirty = 1;return;
+        return;
     }
     if (code >= U_WORKSHOP_LAYER_BASE &&
         code < U_WORKSHOP_LAYER_BASE + 10) {
@@ -3865,12 +3890,19 @@ static void pressed(lv_event_t *ev) {
         }
         dirty = 1;break;
     case U_WORKSHOP_COLOR_PANEL:
-        workshop_dialog = WS_DIALOG_COLOR;
-        if (workshop_selected >= 0 && workshop_selected < workshop_object_count) {
-            workshop_color_set = workshop_objects[workshop_selected].color_set;
-            workshop_color_index = workshop_objects[workshop_selected].color_index;
+        if (workshop_selection_can_manually_recolor()) {
+            int selected = workshop_first_recolorable_selected();
+            workshop_dialog = WS_DIALOG_COLOR;
+            if (selected >= 0) {
+                workshop_color_set = workshop_objects[selected].color_set;
+                workshop_color_index = workshop_objects[selected].color_index;
+            } else {
+                workshop_color_set = workshop_ground_color_set;
+                workshop_color_index = workshop_ground_color_index;
+            }
+            dirty = 1;
         }
-        dirty = 1;break;
+        break;
     case U_WORKSHOP_DIALOG_OK:
         if (workshop_dialog == WS_DIALOG_MOVE &&
             workshop_selected >= 0 && workshop_selected < workshop_object_count) {

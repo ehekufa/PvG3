@@ -33,9 +33,16 @@ export const LEVEL_TYPES = Object.freeze([
   'orb-yellow', 'orb-orange', 'particle', 'checkpoint',
   'portal-normal', 'portal-jetpack',
 ]);
+const NON_MANUALLY_RECOLORABLE_TYPES = new Set([
+  'player', 'portal-normal', 'portal-jetpack', 'orb-yellow', 'orb-orange',
+  'goal', 'checkpoint', 'enemy', 'coin',
+]);
+export function canManuallyRecolorType(type) {
+  return LEVEL_TYPES.includes(type) && !NON_MANUALLY_RECOLORABLE_TYPES.has(type);
+}
 export const TYPE_LABELS = Object.freeze({
   block: 'Блок', ground: 'Платформа', hazard: 'Шипы', coin: 'Монета',
-  enemy: 'Гусь', player: 'Игрок', goal: 'Финиш', trigger: 'Триггер', slope: 'Склон',
+  enemy: 'Утка', player: 'Игрок', goal: 'Финиш', trigger: 'Триггер', slope: 'Склон',
   'orb-yellow': 'Жёлтый орб', 'orb-orange': 'Оранжевый орб',
   particle: 'Эмиттер частиц', checkpoint: 'Чекпоинт',
   'portal-normal': 'Обычный портал', 'portal-jetpack': 'Портал Jetpack',

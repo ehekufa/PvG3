@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {LEVEL_TYPES, TRIGGER_KINDS, WORLD_LIMIT, MAX_LEVEL_OBJECTS,
+import {LEVEL_TYPES, TYPE_LABELS, TRIGGER_KINDS, WORLD_LIMIT, MAX_LEVEL_OBJECTS,
         MAX_OBJECT_WIDTH, MAX_OBJECT_HEIGHT, newDraft, addObject, findObjectAt,
         moveObjects, resizeObjects, rotateObjects, flipObjects, panCamera, copyObjects, pasteObjects, validateDraft,
         publishedRecord, isPublishedRecord, draftFromPublished, resolveControlMode,
         setTriggerKind, createTouchButtonState, createPreviewState, stepPreview,
         DEFAULT_PARTICLE_EMITTER, OFFICIAL_LEVEL_ID, isOfficialLevel,
-        normalizeParticleEmitter, sampleParticleEmitter,
+        canManuallyRecolorType, normalizeParticleEmitter, sampleParticleEmitter,
         drawParticleEmitterPreview, drawEditorCanvas, drawPreviewCanvas} from '../workshop.js';
 
 test('editor keeps section and control names but omits instructional hints', () => {
@@ -54,6 +54,54 @@ test('editor keeps section and control names but omits instructional hints', () 
   assert.equal(particleDialog.includes('Чёрный квадрат показывает'), false);
   assert.equal(particleDialog.includes('точка их рождения'), false);
   assert.equal(html.includes('id="ws-control-help"'), false);
+});
+
+test('manual recoloring is blocked only for fixed-art workshop objects', () => {
+  const blocked = [
+    'player', 'portal-normal', 'portal-jetpack', 'orb-yellow', 'orb-orange',
+    'goal', 'checkpoint', 'enemy', 'coin',
+  ];
+  for (const type of blocked)
+    assert.equal(canManuallyRecolorType(type), false, `${type} cannot be manually recolored`);
+  for (const type of ['block', 'ground', 'hazard', 'trigger', 'slope', 'particle'])
+    assert.equal(canManuallyRecolorType(type), true, `${type} remains manually recolorable`);
+  assert.equal(TYPE_LABELS.enemy, 'Утка');
+
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  assert.match(html, /data-ws-type="enemy"[^>]*>[\s\S]*?<span>Утка<\/span>/);
+  const app = readFileSync(new URL('../app.js', import.meta.url), 'utf8');
+  assert.match(app, /colorInput\.disabled = !canRecolor/);
+  assert.match(app, /property === 'color' && !canManuallyRecolorType\(object\.type\)/);
+  const native = readFileSync(new URL('../../src/lvgl_ui.c', import.meta.url), 'utf8');
+  assert.match(native, /workshop_type_can_manually_recolor/);
+  assert.match(native, /LV_STATE_DISABLED/);
+  assert.match(native, /return workshop_ground_selected \|\| workshop_first_recolorable_selected\(\) >= 0;/);
+  assert(native.includes('workshop_ground_color_custom = 1;'));
+  assert(native.includes('case ON_LEVEL_ENEMY: return "Утка";'));
+  assert(native.includes('"Блоки", "Шипы", "Монета", "Утка"'));
+});
+
+test('block-turn artwork replaces the circular refresh symbol across the UI', () => {
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const iconSrc = 'src="../assets/art/Переворот-блоков.png"';
+  for (const id of ['refresh', 'ws-preview-reset', 'ws-catalog-refresh']) {
+    const markerAt = html.indexOf(`id="${id}"`);
+    assert.notEqual(markerAt, -1, `${id} control exists`);
+    const start = html.lastIndexOf('<button', markerAt);
+    const end = html.indexOf('</button>', markerAt);
+    const button = html.slice(start, end + '</button>'.length);
+    assert(button.includes('class="refresh-icon"'));
+    assert(button.includes(iconSrc), `${id} uses the supplied image`);
+  }
+  assert.equal((html.match(/<span class="refresh-icon"/g) || []).length, 0,
+    'no circular-arrow CSS placeholders remain');
+  assert.equal(html.split(`<img class="refresh-icon" ${iconSrc}`).length - 1, 3);
+  const native = readFileSync(new URL('../../src/lvgl_ui.c', import.meta.url), 'utf8');
+  assert(native.includes('art(refresh, PV_ART_WORKSHOP_ROTATE, 27, 27, 26)'));
+  assert.equal(native.includes('vector_refresh_draw'), false);
+  const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+  assert(styles.includes('.refresh-icon {') && styles.includes('object-fit: contain;'));
+  assert.equal(styles.includes('.refresh-icon::after'), false);
 });
 
 test('only published level ID 338069 receives the official marker', () => {

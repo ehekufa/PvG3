@@ -6,7 +6,8 @@ import {DATABASE, validId, randomPlayerId, listRooms, getRoom, createRoom,
 import {preloadArtwork, drawGame} from './draw.js';
 import {LEVEL_WIDTH, LEVEL_HEIGHT, MAX_LEVEL_OBJECTS, WORLD_LIMIT,
         MIN_OBJECT_SIZE, MAX_OBJECT_WIDTH, MAX_OBJECT_HEIGHT, TILE_W, TILE_H,
-        TYPE_LABELS, TRIGGER_KINDS, TRIGGER_LABELS, isOfficialLevel, newDraft, setTriggerKind,
+        TYPE_LABELS, TRIGGER_KINDS, TRIGGER_LABELS, canManuallyRecolorType,
+        isOfficialLevel, newDraft, setTriggerKind,
         addObject, findObjectAt, validateDraft, draftFromPublished,
         moveObjects, resizeObjects, rotateObjects, flipObjects, panCamera, copyObjects, pasteObjects,
         createPreviewState, stepPreview,
@@ -370,7 +371,11 @@ function renderSelectedObject() {
   $('ws-object-height').value = Number(object.h.toFixed(2));
   $('ws-object-angle').value = Number((object.angle || 0).toFixed(1));
   $('ws-object-number').value = object.number || 0;
-  $('ws-object-color').value = object.color;
+  const colorInput = $('ws-object-color');
+  const canRecolor = canManuallyRecolorType(object.type);
+  colorInput.value = object.color;
+  colorInput.disabled = !canRecolor;
+  colorInput.closest('.ws-color-field').classList.toggle('is-disabled', !canRecolor);
   const triggerFields = $('ws-trigger-fields');
   triggerFields.classList.toggle('hidden', object.type !== 'trigger');
   if (object.type === 'particle') object.emitter = normalizeParticleEmitter(object.emitter);
@@ -559,7 +564,8 @@ function wsPointerUp(event) {
 }
 function updateSelectedProperty(property, value) {
   const object = wsObject(wsSelectedId);
-  if (!object || wsSelectedIds.size !== 1) return;
+  if (!object || wsSelectedIds.size !== 1 ||
+      (property === 'color' && !canManuallyRecolorType(object.type))) return;
   const n = Number(value);
   if (property !== 'color' && !Number.isFinite(n)) return;
   if (property === 'x' || property === 'y') {
