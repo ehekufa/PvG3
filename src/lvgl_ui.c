@@ -4053,6 +4053,7 @@ int lvgl_ui_init(void) {
                            PV_ART_LEVEL_TRIGGER_INVISIBILITY,
                            PV_ART_LEVEL_TRIGGER_NO_COLLISION,
                            PV_ART_LEVEL_TRIGGER_GRAVITY,
+                           PV_ART_LEVEL_TRIGGER_COLOR,
                            PV_ART_LEVEL_FLAG, PV_ART_LEVEL_SPIKE,
                            PV_ART_LEVEL_SLOPE, PV_ART_LEVEL_ORB_ORANGE,
                            PV_ART_LEVEL_ORB_YELLOW,
