@@ -41,6 +41,8 @@ EXPECTED = {
     "JETPACK_ACTIVE": "assets/art/джетпак-активен.png",
     "JETPACK_INACTIVE": "assets/art/Джетпак-отключён.png",
     "LEVEL_TRIGGER_COLOR": "assets/art/Триггер-цвет.png",
+    "WORKSHOP_ROTATE": "assets/art/Переворот-блоков.png",
+    "COLOR_WHEEL": "assets/art/Цветовой-круг.png",
 }
 
 assert len(IMAGES) == len(EXPECTED) == len(dict(IMAGES)), "Unexpected extra/missing sprite"
@@ -76,6 +78,7 @@ for name in ("DUCK_CONE", "DUCK_BUCKET", "COIN", "LEVEL_TRIGGER",
              "LEVEL_TRIGGER_ROTATE", "LEVEL_TRIGGER_FOREVER",
              "LEVEL_TRIGGER_INVISIBILITY", "LEVEL_TRIGGER_NO_COLLISION",
              "LEVEL_TRIGGER_GRAVITY", "LEVEL_TRIGGER_COLOR",
+             "WORKSHOP_ROTATE", "COLOR_WHEEL",
              "LEVEL_ORB_ORANGE", "LEVEL_ORB_YELLOW",
              "LEVEL_CHECKPOINT_INACTIVE", "LEVEL_CHECKPOINT_ACTIVE",
              "LEVEL_PORTAL_NORMAL", "LEVEL_PORTAL_JETPACK",
@@ -84,7 +87,7 @@ for name in ("DUCK_CONE", "DUCK_BUCKET", "COIN", "LEVEL_TRIGGER",
     assert pixels[0] == 0, (name, "expected transparent top-left corner")
 _, _, slope_pixels = png_pixels(ROOT / EXPECTED["LEVEL_SLOPE"])
 assert slope_pixels[0] >> 24 <= 16, "slope artwork should fade at its transparent corner"
-wheel_w, wheel_h, wheel_pixels = png_pixels(ROOT / EXPECTED["LEVEL_TRIGGER_COLOR"])
+wheel_w, wheel_h, wheel_pixels = png_pixels(ROOT / EXPECTED["COLOR_WHEEL"])
 assert wheel_w == wheel_h, "color-wheel art should be square"
 wheel_cx, wheel_cy = (wheel_w - 1) / 2, (wheel_h - 1) / 2
 for y in range(wheel_h):
@@ -94,4 +97,4 @@ for y in range(wheel_h):
         assert radius >= 18 or alpha == 0, "color-wheel center hole should stay transparent"
         assert radius < 92 or alpha == 0, "color-wheel outside edge should stay transparent"
 
-print(f"OK: {len(EXPECTED)} named sprites, including clean transparent color-wheel art, both portals and both Jetpack states")
+print(f"OK: {len(EXPECTED)} named sprites, including the editable transparent color wheel, rotation icon, both portals and both Jetpack states")

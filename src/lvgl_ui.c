@@ -1674,7 +1674,7 @@ static void workshop_draw_color_dialog(lv_obj_t *root) {
     box(root, 196, 79, 888, 72, 12, WS_BROWN_DARK, 0);
     label(root, 225, 93, 830, 46, "Цвет объекта", 3,
           WS_CREAM, LV_TEXT_ALIGN_CENTER);
-    art(root, PV_ART_LEVEL_TRIGGER_COLOR, 245, 115, 44);
+    art(root, PV_ART_COLOR_WHEEL, 245, 115, 44);
     static const char *const sets[] = {
         "Базовая", "Яркая", "Холодная", "Пастель"
     };
@@ -3083,8 +3083,14 @@ static lv_obj_t *workshop_rotation_button(lv_obj_t *parent, int x, int y,
                                            const char *caption, int caption_size) {
     lv_obj_t *rotate = workshop_button(parent, x, y, w, h, "", 0,
                                        action, face);
-    lv_obj_add_event_cb(rotate, vector_rotation_draw, LV_EVENT_DRAW_MAIN,
-                        (void *)(intptr_t)direction);
+    int icon_size = h < 56 ? 28 : 36;
+    int icon_y = h * 39 / 100;
+    lv_obj_t *icon = art_flipped(rotate, PV_ART_WORKSHOP_ROTATE,
+                                 w / 2, icon_y, icon_size,
+                                 direction > 0, 0);
+    if (!icon)
+        lv_obj_add_event_cb(rotate, vector_rotation_draw, LV_EVENT_DRAW_MAIN,
+                            (void *)(intptr_t)direction);
     if (caption && caption[0]) {
         int caption_height = caption_size == 0 ? 19 : 22;
         label(rotate, 2, h - caption_height - 2, w - 4, caption_height,
@@ -4054,6 +4060,7 @@ int lvgl_ui_init(void) {
                            PV_ART_LEVEL_TRIGGER_NO_COLLISION,
                            PV_ART_LEVEL_TRIGGER_GRAVITY,
                            PV_ART_LEVEL_TRIGGER_COLOR,
+                           PV_ART_WORKSHOP_ROTATE, PV_ART_COLOR_WHEEL,
                            PV_ART_LEVEL_FLAG, PV_ART_LEVEL_SPIKE,
                            PV_ART_LEVEL_SLOPE, PV_ART_LEVEL_ORB_ORANGE,
                            PV_ART_LEVEL_ORB_YELLOW,

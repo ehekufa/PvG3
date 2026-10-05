@@ -329,13 +329,14 @@ static void assert_platformer_art(void) {
                        PV_ART_LEVEL_PORTAL_NORMAL,
                        PV_ART_LEVEL_PORTAL_JETPACK,
                        PV_ART_JETPACK_ACTIVE, PV_ART_JETPACK_INACTIVE,
-                       PV_ART_LEVEL_TRIGGER_COLOR};
+                       PV_ART_LEVEL_TRIGGER_COLOR, PV_ART_WORKSHOP_ROTATE,
+                       PV_ART_COLOR_WHEEL};
     const int widths[] = {100, 100, 100, 100, 100, 100, 100, 100, 50,
                           100, 100, 100, 100, 100, 100,
-                          100, 100, 100, 100, 256};
+                          100, 100, 100, 100, 100, 100, 256};
     const int heights[] = {100, 50, 100, 100, 100, 100, 100, 100, 100,
                            100, 100, 100, 100, 100, 100,
-                           100, 100, 100, 100, 256};
+                           100, 100, 100, 100, 100, 100, 256};
     for (size_t i = 0; i < sizeof ids / sizeof ids[0]; ++i) {
         int width = 0, height = 0, visible = 0;
         const uint32_t *pixels = game_art_rgba(ids[i], &width, &height);
@@ -994,6 +995,8 @@ static int run_lvgl_test(void) {
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_NO_COLLISION));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_GRAVITY));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_COLOR));
+    assert(lvgl_ui_test_art_loaded(PV_ART_WORKSHOP_ROTATE));
+    assert(lvgl_ui_test_art_loaded(PV_ART_COLOR_WHEEL));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_ORB_ORANGE));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_ORB_YELLOW));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_CHECKPOINT_INACTIVE));

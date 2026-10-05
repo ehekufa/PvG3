@@ -113,8 +113,8 @@
                 </div>
                 <label>Шаг поворота, °<input id="ws-rotate-step" type="number" min="0.1" max="359.9" step="0.1" value="45"></label>
                 <div class="ws-rotate-actions" role="group" aria-label="Повернуть выделение">
-                  <button type="button" data-ws-rotate="-1" aria-label="Повернуть против часовой стрелки"><svg class="ws-rotate-icon rotate-ccw" viewBox="0 0 32 32" aria-hidden="true"><path d="M22 5a12 12 0 1 0 5 14"/><path d="M27 11v9h-9"/></svg><span data-ws-rotate-label>-45°</span></button>
-                  <button type="button" data-ws-rotate="1" aria-label="Повернуть по часовой стрелке"><svg class="ws-rotate-icon rotate-cw" viewBox="0 0 32 32" aria-hidden="true"><path d="M22 5a12 12 0 1 0 5 14"/><path d="M27 11v9h-9"/></svg><span data-ws-rotate-label>+45°</span></button>
+                  <button type="button" data-ws-rotate="-1" aria-label="Повернуть против часовой стрелки"><img class="ws-rotate-icon rotate-ccw" src="../assets/art/Переворот-блоков.png" alt="" aria-hidden="true"><span data-ws-rotate-label>-45°</span></button>
+                  <button type="button" data-ws-rotate="1" aria-label="Повернуть по часовой стрелке"><img class="ws-rotate-icon rotate-cw" src="../assets/art/Переворот-блоков.png" alt="" aria-hidden="true"><span data-ws-rotate-label>+45°</span></button>
                 </div>
                 <span class="overline">ЗЕРКАЛЬНОЕ ОТРАЖЕНИЕ</span>
                 <div class="ws-flip-actions" role="group" aria-label="Отразить выделение">
@@ -175,7 +175,7 @@
                     <input id="ws-trigger-gravity" type="range" min="-100" max="100" step="1" value="0">
                   </div>
                   <div id="ws-trigger-color-field" class="ws-color-field hidden ws-trigger-color-field">
-                    <label for="ws-trigger-color"><img class="ws-color-wheel" src="../assets/art/Триггер-цвет.png" alt=""><span id="ws-trigger-color-label">Цвет объектов</span></label>
+                    <label for="ws-trigger-color"><img class="ws-color-wheel" src="../assets/art/Цветовой-круг.png" alt=""><span id="ws-trigger-color-label">Цвет объектов</span></label>
                     <input id="ws-trigger-color" type="color" value="#ffc54e">
                   </div>
                   <div id="ws-trigger-forever-fields" class="hidden">

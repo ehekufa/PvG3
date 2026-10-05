@@ -23,6 +23,17 @@ test('editor keeps section and control names but omits instructional hints', () 
   assert.equal(editor.includes('title='), false, 'editor buttons have no hover tooltips');
   assert(editor.includes('КАТЕГОРИИ ОБЪЕКТОВ'));
   assert(editor.includes('ЗЕРКАЛЬНОЕ ОТРАЖЕНИЕ'));
+  assert.equal((editor.match(/Переворот-блоков\.png/g) || []).length, 2,
+    'both rotation directions use the provided transparent PNG');
+  assert.equal(editor.includes('<svg class="ws-rotate-icon'), false,
+    'rotation controls no longer use hand-drawn SVG stand-ins');
+  assert(html.includes('src="../assets/art/Цветовой-круг.png"'),
+    'the editable color-wheel PNG remains the color-control artwork');
+  const rotatePng = readFileSync(new URL('../../assets/art/Переворот-блоков.png', import.meta.url));
+  assert.equal(rotatePng.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+  const rotateStyles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+  assert.match(rotateStyles, /\.ws-rotate-icon\.rotate-cw \{ transform: scaleX\(-1\); \}/,
+    'clockwise rotation mirrors the provided counterclockwise icon');
   assert(editor.includes('Шаг перемещения'));
   assert(editor.includes('Слева ↔ справа'));
   const level = newDraft('hint-check');

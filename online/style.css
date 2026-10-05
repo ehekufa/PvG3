@@ -680,8 +680,7 @@ button, .panel, .map-card, .room-item, .side-card, .code-panel, .canvas-wrap,
 .ws-nudge-center { width: 8px; height: 8px; justify-self: center; align-self: center; border-radius: 50%; background: currentColor; }
 .ws-map-pan-tools { padding-top: 10px; border-top: 2px solid var(--outline); }
 .ws-rotate-actions button { display: flex; min-height: 52px; flex-direction: column; align-items: center; justify-content: center; gap: 1px; }
-.ws-rotate-icon { width: 23px; height: 23px; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
-.ws-rotate-icon path:last-child { fill: currentColor; stroke: none; }
+.ws-rotate-icon { width: 23px; height: 23px; object-fit: contain; }
 .ws-rotate-icon.rotate-cw { transform: scaleX(-1); }
 .ws-flip-actions button { display: flex; min-height: 52px; flex-direction: column; align-items: center; justify-content: center; gap: 1px; font-size: 11px !important; }
 .ws-flip-icon { width: 22px; height: 22px; fill: currentColor; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }

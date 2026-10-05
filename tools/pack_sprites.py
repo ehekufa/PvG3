@@ -51,6 +51,8 @@ IMAGES = [
     ("JETPACK_ACTIVE", "assets/art/джетпак-активен.png"),
     ("JETPACK_INACTIVE", "assets/art/Джетпак-отключён.png"),
     ("LEVEL_TRIGGER_COLOR", "assets/art/Триггер-цвет.png"),
+    ("WORKSHOP_ROTATE", "assets/art/Переворот-блоков.png"),
+    ("COLOR_WHEEL", "assets/art/Цветовой-круг.png"),
 ]
 
 

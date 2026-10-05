@@ -140,6 +140,8 @@ _Static_assert((int)PV_ART_BREAD == (int)SPR_KHLEBUSHEK &&
                (int)PV_ART_JETPACK_ACTIVE == (int)SPR_JETPACK_ACTIVE &&
                (int)PV_ART_JETPACK_INACTIVE == (int)SPR_JETPACK_INACTIVE &&
                (int)PV_ART_LEVEL_TRIGGER_COLOR == (int)SPR_LEVEL_TRIGGER_COLOR &&
+               (int)PV_ART_WORKSHOP_ROTATE == (int)SPR_WORKSHOP_ROTATE &&
+               (int)PV_ART_COLOR_WHEEL == (int)SPR_COLOR_WHEEL &&
                (int)PV_ART_COUNT == (int)SPR_COUNT,
                "LVGL art IDs must match the PNG packer");
 static uint32_t *sprite_pixels[SPR_COUNT];
