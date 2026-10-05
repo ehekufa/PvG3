@@ -27,16 +27,17 @@ jobs:
 
       - name: Verify artwork, licensed font, UI, saves and gameplay (Clang)
         run: |
-          exec > >(tee /tmp/pvg3-verify.log) 2>&1
+          exec 3>&1
+          exec > /tmp/pvg3-verify.log 2>&1
           verify_failed() {
-            status=$?
-            echo "::error title=Verification command failed::$BASH_COMMAND"
-            tail -n 30 /tmp/pvg3-verify.log | sed 's/%/%25/g' | while IFS= read -r line; do
-              printf '::error::%s\n' "$line"
+            local status="$1" command="$2"
+            printf '::error title=Verification command failed::%s\n' "$command" >&3
+            tail -n 80 /tmp/pvg3-verify.log | sed 's/%/%25/g' | while IFS= read -r line; do
+              printf '::error::%s\n' "$line" >&3
             done
             exit "$status"
           }
-          trap verify_failed ERR
+          trap 'verify_failed "$?" "$BASH_COMMAND"' ERR
           clang --version
           python3 tools/pack_sprites.py
           python3 tools/pack_font.py
@@ -90,6 +91,7 @@ jobs:
             src/online_net.c tools/fake_online_http.c tools/host_test.c \
             -o host_test -lm -pthread
           ./host_test
+          cat /tmp/pvg3-verify.log >&3
 
       - name: Build native library (both ABIs)
         run: |
