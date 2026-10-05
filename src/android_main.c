@@ -36,9 +36,7 @@ static const char *FS =
     "varying vec2 v_uv;\n"
     "uniform sampler2D u_tex;\n"
     "void main(){\n"
-    "  vec4 pixel = texture2D(u_tex, vec2(v_uv.x, 1.0 - v_uv.y));\n"
-    "  float gray = dot(pixel.rgb, vec3(0.299, 0.587, 0.114));\n"
-    "  gl_FragColor = vec4(vec3(gray), pixel.a);\n"
+    "  gl_FragColor = texture2D(u_tex, vec2(v_uv.x, 1.0 - v_uv.y));\n"
     "}\n";
 
 static GLuint compile_shader(GLenum type, const char *src) {
@@ -181,7 +179,7 @@ static void engine_draw(Engine *e, const uint32_t *fb) {
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, GAME_W, GAME_H, GL_RGBA, GL_UNSIGNED_BYTE, fb);
 
     glViewport(0, 0, e->w, e->h);
-    glClearColor(0.055f, 0.055f, 0.055f, 1.0f);
+    glClearColor(0.125f, 0.208f, 0.294f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
     int left, top, width, height;
     game_viewport(e, &left, &top, &width, &height);
@@ -537,9 +535,6 @@ void android_main(struct android_app *app) {
         }
         if (engine.ui_ready && !legacy_renderer_phase(game_phase()))
             lvgl_ui_frame(dt, fb);
-        /* Grayscale after the final LVGL blit too: no sprite, player or HUD
-         * tint can leave the native screen in color. */
-        game_frame_apply_grayscale(fb, (size_t)GAME_W * GAME_H);
         /* The settings toggle can change audio while this frame is being drawn. */
         update_music();
         engine_draw(&engine, fb);

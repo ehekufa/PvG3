@@ -10,33 +10,23 @@ import {LEVEL_TYPES, TYPE_LABELS, TRIGGER_KINDS, WORLD_LIMIT, MAX_LEVEL_OBJECTS,
         canManuallyRecolorType, normalizeParticleEmitter, sampleParticleEmitter,
         drawParticleEmitterPreview, drawEditorCanvas, drawPreviewCanvas} from '../workshop.js';
 
-test('browser UI and every canvas preview are displayed in grayscale', () => {
-  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+test('renderers preserve color and keep the player blue and finish flag amber', () => {
   const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
-  assert.match(styles, /\.shell,\s*\.toast,\s*dialog\s*\{\s*filter:\s*grayscale\(1\);\s*\}/);
-  assert.match(html, /class="shell"[\s\S]*id="ws-preview-canvas"/);
-  assert.match(html, /class="shell"[\s\S]*id="battle"/);
-});
-
-test('native output removes color after composing the player, HUD, and LVGL', () => {
   const android = readFileSync(new URL('../../src/android_main.c', import.meta.url), 'utf8');
   const windows = readFileSync(new URL('../../src/windows_main.c', import.meta.url), 'utf8');
   const game = readFileSync(new URL('../../src/game.c', import.meta.url), 'utf8');
-  const gameTick = game.slice(game.indexOf('void game_tick('));
-  assert(gameTick.indexOf('render();') <
-         gameTick.indexOf('game_frame_apply_grayscale(fb'),
-         'even a direct bash/host render is grayscale');
-  assert.match(android, /float gray = dot\(pixel\.rgb, vec3\(0\.299, 0\.587, 0\.114\)\)/);
-  assert.match(android, /gl_FragColor = vec4\(vec3\(gray\), pixel\.a\)/);
-  assert(android.indexOf('lvgl_ui_frame(dt, fb)') <
-         android.indexOf('game_frame_apply_grayscale(fb'),
-         'Android filters after LVGL draws the full interface');
-  assert(windows.indexOf('lvgl_ui_frame(dt, game_pixels)') <
-         windows.indexOf('game_frame_apply_grayscale(game_pixels'),
-         'Windows filters after LVGL draws the full interface');
-  assert(windows.indexOf('game_frame_apply_grayscale(game_pixels') <
-         windows.indexOf('convert_pixels();'),
-         'Windows filters before display conversion');
+  const workshop = readFileSync(new URL('../workshop.js', import.meta.url), 'utf8');
+  const draft = newDraft();
+  assert.equal(draft.objects.find(object => object.type === 'player').color, '#5ab7e8');
+  assert.equal(draft.objects.find(object => object.type === 'goal').color, '#f2a76f');
+  assert.match(styles, /--accent: #e68e70/);
+  assert.match(styles, /--accent-blue: #67b4c8/);
+  assert.doesNotMatch(styles, /grayscale\s*\(/i);
+  assert.match(android, /gl_FragColor = texture2D\(u_tex/);
+  assert.doesNotMatch(android, /grayscale|float gray/i);
+  assert.doesNotMatch(game, /game_frame_apply_grayscale|grayscale/i);
+  assert.doesNotMatch(windows, /game_frame_apply_grayscale|grayscale/i);
+  assert.match(workshop, /function workshopObjectColor\(object\)[\s\S]*?if \(object\.type === 'goal'\) return DEFAULT_COLORS\.goal/);
 });
 
 test('saving stays active without autosave or control-hint captions', () => {

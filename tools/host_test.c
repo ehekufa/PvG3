@@ -35,54 +35,69 @@ static void test_language_preference(void) {
     assert(remove(path) == 0);
 }
 
-static void assert_frame_grayscale(const uint32_t *pixels, size_t count) {
-    for (size_t i = 0; i < count; ++i) {
-        unsigned red = pixels[i] & 255u;
-        unsigned green = (pixels[i] >> 8) & 255u;
-        unsigned blue = (pixels[i] >> 16) & 255u;
-        assert(red == green && green == blue);
-    }
-}
-
-static void test_frame_grayscale_filter(void) {
-    uint32_t pixels[] = {
-        0xff0000ffu, /* red in RGBA byte order */
-        0xff00ff00u, /* green */
-        0xffff0000u, /* blue */
-        0x80202020u  /* gray with non-opaque alpha */
-    };
-    game_frame_apply_grayscale(pixels, sizeof pixels / sizeof pixels[0]);
-    assert(pixels[0] == 0xff4d4d4du);
-    assert(pixels[1] == 0xff959595u);
-    assert(pixels[2] == 0xff1d1d1du);
-    assert(pixels[3] == 0x80202020u);
-    assert_frame_grayscale(pixels, sizeof pixels / sizeof pixels[0]);
-}
-
-static void test_blue_player_frame_grayscale(void) {
+static void test_custom_level_keeps_blue_player_and_amber_flag(void) {
     static uint32_t frame[GAME_W * GAME_H];
     OnPublishedLevel level = {0};
     level.width = 16;level.height = 10;level.object_count = 3;
     level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
         .x=0,.y=8,.w=16,.h=2,.visible=1,.color=0xffffffu};
+    /* Old records may carry green tints; the player/finish visuals are fixed. */
     level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
-        .x=2,.y=7,.w=.65f,.h=.85f,.visible=1,.color=0x0000ffu};
+        .x=2,.y=7,.w=.65f,.h=.85f,.visible=1,.color=0x69d16cu};
     level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
-        .x=14,.y=6,.w=1,.h=2,.visible=1,.color=0xffffffu};
+        .x=4,.y=6,.w=1,.h=2,.visible=1,.color=0x69d16cu};
     game_init();game_workshop_open();game_workshop_open_details();
     game_workshop_open_editor();
     assert(game_workshop_preview(&level));
     game_tick(0, frame);
-    size_t colored_pixels = 0;
-    for (size_t i = 0; i < (size_t)GAME_W * GAME_H; ++i) {
-        unsigned red = frame[i] & 255u;
-        unsigned green = (frame[i] >> 8) & 255u;
-        unsigned blue = (frame[i] >> 16) & 255u;
+    size_t colored_pixels = 0, blue_player_pixels = 0, amber_flag_pixels = 0;
+    for (int y = 0; y < GAME_H; ++y) for (int x = 0; x < GAME_W; ++x) {
+        uint32_t pixel = frame[y * GAME_W + x];
+        unsigned red = pixel & 255u;
+        unsigned green = (pixel >> 8) & 255u;
+        unsigned blue = (pixel >> 16) & 255u;
         colored_pixels += red != green || green != blue;
+        if (x >= 475 && x < 550 && y >= 365 && y < 450 &&
+            (pixel & 0xffffffu) != 0x5a4632u)
+            blue_player_pixels += blue > red + 12 && blue > green + 6;
+        if (x >= 635 && x < 735 && y >= 300 && y < 450 &&
+            (pixel & 0xffffffu) != 0x5a4632u)
+            amber_flag_pixels += red > blue + 18 && green > blue + 12;
     }
-    assert(colored_pixels == 0); /* including the blue-tinted player */
-    assert_frame_grayscale(frame, (size_t)GAME_W * GAME_H);
+    assert(colored_pixels > 1000);
+    assert(blue_player_pixels > 20);
+    assert(amber_flag_pixels > 20);
     game_custom_level_exit();
+}
+
+static void test_legacy_preferences_migration(void) {
+    const char *path = "pvg3-legacy-settings-test.preference";
+    remove(path);
+    FILE *file = fopen(path, "wb");assert(file);
+    assert(fputs("PVG3-PREFERENCES 1\nmusic=0\nneutral_background=1\n",
+                 file) >= 0);
+    assert(fclose(file) == 0);
+    preferences_set_path(path);
+    assert(!preferences_music_enabled());
+    assert(!preferences_neutral_background_enabled());
+    file = fopen(path, "rb");assert(file);
+    char saved[96] = {0};
+    assert(fgets(saved, sizeof saved, file));
+    assert(strcmp(saved, "PVG3-PREFERENCES 2\n") == 0);
+    assert(fclose(file) == 0);
+    preferences_set_path(NULL);
+    assert(remove(path) == 0);
+}
+
+static int pixel_has_color(uint32_t pixel) {
+    unsigned red = pixel & 255u;
+    unsigned green = (pixel >> 8) & 255u;
+    unsigned blue = (pixel >> 16) & 255u;
+    unsigned maximum = red > green ? red : green;
+    if (blue > maximum) maximum = blue;
+    unsigned minimum = red < green ? red : green;
+    if (blue < minimum) minimum = blue;
+    return maximum - minimum >= 18u;
 }
 
 static void test_game_preferences(void) {
@@ -90,7 +105,7 @@ static void test_game_preferences(void) {
     if (remove(path) != 0) assert(errno == ENOENT);
     preferences_set_path(path);
     assert(preferences_music_enabled());
-    assert(preferences_neutral_background_enabled());
+    assert(!preferences_neutral_background_enabled());
     preferences_set_music_enabled(0);
     preferences_set_neutral_background_enabled(0);
     preferences_set_path(path);
@@ -107,20 +122,22 @@ static void test_game_preferences(void) {
 
 static void test_campaign_background_preference(void) {
     static uint32_t frame[GAME_W * GAME_H];
+    preferences_set_neutral_background_enabled(0);
     game_init();
-    assert(preferences_neutral_background_enabled());
+    assert(!preferences_neutral_background_enabled());
     game_input_press(630, 80);
     game_input_press(190, 260);
     assert(game_phase() == GAME_PLAY);
     game_tick(0, frame);
-    const uint32_t neutral = 0xff4a4a4au;
-    assert(frame[400 * GAME_W + 1000] == neutral);
-    preferences_set_neutral_background_enabled(0);
-    game_tick(0, frame);
-    assert(frame[400 * GAME_W + 1000] != neutral);
+    const uint32_t artwork = frame[400 * GAME_W + 1000];
+    assert(pixel_has_color(artwork)); /* original authored map is the default */
     preferences_set_neutral_background_enabled(1);
     game_tick(0, frame);
-    assert(frame[400 * GAME_W + 1000] == neutral);
+    const uint32_t plain = frame[400 * GAME_W + 1000];
+    assert(plain != artwork && pixel_has_color(plain));
+    preferences_set_neutral_background_enabled(0);
+    game_tick(0, frame);
+    assert(frame[400 * GAME_W + 1000] == artwork);
     game_init();
 }
 
@@ -156,10 +173,11 @@ static void write_bmp(const char *path, int w, int h, const uint32_t *rgba) {
 }
 
 int main(void) {
-    test_frame_grayscale_filter();
     test_language_preference();
+    test_legacy_preferences_migration();
     test_game_preferences();
-    assert(preferences_neutral_background_enabled());
+    preferences_set_neutral_background_enabled(0);
+    assert(!preferences_neutral_background_enabled());
     if (mkdir("shots", 0755) != 0 && errno != EEXIST) {
         perror("shots");
         return 1;
@@ -168,16 +186,16 @@ int main(void) {
     game_init();
     game_tick(0.016f, fb);
     assert(game_phase() == GAME_MENU);
-    /* A neutral gray background replaces the old menu's Queen robot. */
-    assert(fb[365 * GAME_W + 1165] == 0xFFAEAEAEu);
-    assert(fb[50 * GAME_W + 100] == 0xFFFFFFFFu); /* player-level tile restored */
-    assert(fb[50 * GAME_W + 480] == 0xFFFFFFFFu); /* campaign is white */
-    assert(fb[70 * GAME_W + 900] == 0xFFFFFFFFu); /* no Zen Garden picture */
-    assert(fb[580 * GAME_W + 105] == 0xFFFFFFFFu); /* book is white */
-    assert(fb[560 * GAME_W + 450] == 0xFFFFFFFFu); /* start is white */
-    assert(fb[580 * GAME_W + 900] == 0xFFFFFFFFu); /* online is white */
-    assert(fb[538 * GAME_W + 1058] == 0xff999999u); /* no level-count caption */
-    assert(fb[689 * GAME_W + 640] == 0xff999999u); /* no autosave footer */
+    /* The menu sky is a soft blue, and the Queen's robot stays on level 5. */
+    assert(fb[365 * GAME_W + 1165] == 0xFFECE0C6u);
+    assert(fb[50 * GAME_W + 100] == 0xFFF8FDFFu); /* player-level tile restored */
+    assert(fb[50 * GAME_W + 480] == 0xFFF8FDFFu); /* campaign uses warm white */
+    assert(fb[70 * GAME_W + 900] == 0xFFF8FDFFu); /* no Zen Garden picture */
+    assert(fb[580 * GAME_W + 105] == 0xFFF8FDFFu); /* book uses warm white */
+    assert(fb[560 * GAME_W + 450] == 0xFF708EE6u); /* start uses coral */
+    assert(fb[580 * GAME_W + 900] == 0xFFF8FDFFu); /* online uses warm white */
+    assert(fb[538 * GAME_W + 1058] == 0xffb5d3e0u); /* no level-count caption */
+    assert(fb[689 * GAME_W + 640] == 0xffb5d3e0u); /* no autosave footer */
     test_campaign_background_preference();
     game_tick(0.016f, fb);
     write_bmp("shots/menu.bmp", GAME_W, GAME_H, fb);
@@ -219,9 +237,9 @@ int main(void) {
     game_input_press(320, 160 + 3 * 99 + 44); /* Jumper's page */
     game_tick(0, fb);
     assert(game_phase() == GAME_BOOK);
-    /* The book spread uses contrasting white and light-gray paper. */
-    assert(fb[350 * GAME_W + 125] == 0xFFFFFFFFu);
-    assert(fb[350 * GAME_W + 1155] == 0xFFE1E1E1u);
+    /* The book spread uses warm white and blue-gray paper. */
+    assert(fb[350 * GAME_W + 125] == 0xFFF8FDFFu);
+    assert(fb[350 * GAME_W + 1155] == 0xFFF2ECE1u);
     write_bmp("shots/book.bmp", GAME_W, GAME_H, fb);
     game_input_press(320, 160 + 2 * 99 + 44); /* sunflower's page */
     game_tick(0, fb);
@@ -252,7 +270,7 @@ int main(void) {
     game_input_press(640, 600);             /* first level */
     game_tick(0, fb);
     assert(game_phase() == GAME_PLAY);
-    assert(fb[35 * GAME_W + 930] == 0xFFFFFFFFu); /* shop's book button is white */
+    assert(fb[35 * GAME_W + 930] == 0xFFF8FDFFu); /* shop's book button uses warm white */
     /* The first playable row starts immediately below the top HUD. */
     assert(fb[125 * GAME_W + 960] != fb[90 * GAME_W + 960]);
     write_bmp("shots/level1.bmp", GAME_W, GAME_H, fb);
@@ -275,7 +293,7 @@ int main(void) {
     game_tick(0, fb);
     uint32_t water = fb[285 * GAME_W + 700];
     uint32_t land = fb[175 * GAME_W + 700];
-    assert(((land >> 16) & 255u) > ((water >> 16) & 255u) + 20u);
+    assert(((water >> 16) & 255u) > ((land >> 16) & 255u) + 20u);
     write_bmp("shots/water_empty.bmp", GAME_W, GAME_H, fb);
     game_input_press(125, 615);            /* lily packet */
     game_input_press(535, 288);            /* water row 2, column 3 */
@@ -284,6 +302,6 @@ int main(void) {
     game_tick(0, fb);
     write_bmp("shots/water_planted.bmp", GAME_W, GAME_H, fb);
     preferences_set_neutral_background_enabled(1);
-    test_blue_player_frame_grayscale();
+    test_custom_level_keeps_blue_player_and_amber_flag();
     return 0;
 }

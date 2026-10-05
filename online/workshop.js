@@ -55,11 +55,20 @@ const TYPE_SIZES = Object.freeze({
 });
 const DEFAULT_COLORS = Object.freeze({
   block: '#55c8ea', ground: '#65a845', hazard: '#e56c5b', coin: '#ffc54e',
-  enemy: '#9560bd', player: '#5ab7e8', goal: '#69d16c', trigger: '#f27652',
+  enemy: '#9560bd', player: '#5ab7e8', goal: '#f2a76f', trigger: '#f27652',
   slope: '#e56c5b', 'orb-yellow': '#fff400', 'orb-orange': '#ff8a16',
   particle: '#68f0d8', checkpoint: '#b6d8ff',
   'portal-normal': '#cccccc', 'portal-jetpack': '#2f2f2f',
 });
+
+// Player blue and the warm amber finish flag are fixed visual identities.
+// Older published levels may still store the former green finish tint; render
+// it consistently without mutating the remote level record.
+function workshopObjectColor(object) {
+  if (object.type === 'player') return DEFAULT_COLORS.player;
+  if (object.type === 'goal') return DEFAULT_COLORS.goal;
+  return object.color || DEFAULT_COLORS[object.type] || '#243b58';
+}
 const TYPE_TO_ID = Object.freeze({
   block: 0, ground: 1, hazard: 2, coin: 3, enemy: 4,
   player: 5, goal: 6, trigger: 7, slope: 8, 'orb-yellow': 9, 'orb-orange': 10,
@@ -1051,18 +1060,19 @@ function drawWorkshopObject(ctx, art, object, x, y, w, h, checkpointActive = fal
   const flipX = object.type === 'player' && typeof playerFacingLeft === 'boolean' ?
     playerFacingLeft : objectFlipX(object);
   const flipY = object.flipY === true;
+  const tint = workshopObjectColor(object);
   if (object.type === 'player' && drawWorkshopImage(
-      ctx, playerArt ? tintWorkshopImage(playerArt, object.color) : playerArt,
+      ctx, playerArt ? tintWorkshopImage(playerArt, tint) : playerArt,
       x, y, w, h, angle, flipX, flipY)) return true;
   const artType = object.type === 'checkpoint' && checkpointActive ?
     'checkpointActive' : object.type;
   if (!angle && !flipX && !flipY)
     return drawWorkshopArt(ctx, art, artType, x, y, w, h,
-                           object.trigger?.kind, object.color);
+                           object.trigger?.kind, tint);
   ctx.save();ctx.translate(x + w / 2, y + h / 2);ctx.rotate(angle);
   ctx.scale(flipX ? -1 : 1, flipY ? -1 : 1);
   const drawn = drawWorkshopArt(ctx, art, artType, -w / 2, -h / 2, w, h,
-                                object.trigger?.kind, object.color);
+                                object.trigger?.kind, tint);
   ctx.restore();
   return drawn;
 }
@@ -1085,11 +1095,11 @@ export function drawEditorCanvas(canvas, level, selectedId = 0, _tool = 'build',
   const cameraX = clamp(Number(camera?.x) || 0, -WORLD_LIMIT, WORLD_LIMIT - LEVEL_WIDTH);
   const cameraY = clamp(Number(camera?.y) || 0, -WORLD_LIMIT, WORLD_LIMIT - LEVEL_HEIGHT);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = '#14283c';ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#172c40';ctx.fillRect(0, 0, canvas.width, canvas.height);
   const firstCol = Math.floor(cameraX), firstRow = Math.floor(cameraY);
   for (let c = firstCol; (c - cameraX) * TILE_W <= canvas.width; c++) {
     const x = Math.round((c - cameraX) * TILE_W);
-    ctx.strokeStyle = '#2a4056';ctx.lineWidth = 1;
+    ctx.strokeStyle = '#344b60';ctx.lineWidth = 1;
     ctx.beginPath();ctx.moveTo(x, 0);ctx.lineTo(x, canvas.height);ctx.stroke();
   }
   for (let r = firstRow; (r - cameraY) * TILE_H <= canvas.height; r++) {
@@ -1104,7 +1114,7 @@ export function drawEditorCanvas(canvas, level, selectedId = 0, _tool = 'build',
     if (o.visible === false) continue;
     const x = (o.x - cameraX) * TILE_W + 3, y = (o.y - cameraY) * TILE_H + 3;
     const w = o.w * TILE_W - 6, h = o.h * TILE_H - 6;
-    ctx.fillStyle = o.color || DEFAULT_COLORS[o.type];
+    ctx.fillStyle = workshopObjectColor(o);
     if (o.type === 'particle') {
       drawParticleEmitterMarker(ctx, x, y, w, h, o.color || DEFAULT_COLORS.particle, o.angle);
     } else {
@@ -1132,7 +1142,7 @@ export function drawEditorCanvas(canvas, level, selectedId = 0, _tool = 'build',
         o.type === 'hazard' ? SPIKE_VERTICES : null;
       ctx.save();ctx.translate(x + w / 2, y + h / 2);ctx.rotate(angle);
       ctx.scale(objectFlipX(o) ? -1 : 1, o.flipY ? -1 : 1);
-      ctx.strokeStyle = '#27d2d6';ctx.lineWidth = 4;
+      ctx.strokeStyle = '#67b4c8';ctx.lineWidth = 4;
       if (silhouette) {
         ctx.beginPath();
         silhouette.forEach(([u, v], index) => {
@@ -1308,14 +1318,14 @@ export function drawPreviewCanvas(canvas, state, _control = 'keyboard', art = {}
   if (grassY < canvas.height) {
     ctx.fillStyle = '#8cb95c';ctx.fillRect(0, Math.max(64, grassY), canvas.width,
       Math.max(0, canvas.height - Math.max(64, grassY)));
-    if (grassY >= 64) {ctx.fillStyle = '#222';ctx.fillRect(0, grassY, canvas.width, 3);}
+    if (grassY >= 64) {ctx.fillStyle = '#344b60';ctx.fillRect(0, grassY, canvas.width, 3);}
   }
   for (const o of state.objects) {
     if (!o.visible || state.invisible?.includes(o.id) ||
         o.type === 'player' || o.type === 'trigger' || o.type === 'particle') continue;
     const x = o.x * TILE_W - cameraX, y = o.y * TILE_H - cameraY;
     const w = o.w * TILE_W, h = o.h * TILE_H;
-    ctx.fillStyle = o.color || DEFAULT_COLORS[o.type];
+    ctx.fillStyle = workshopObjectColor(o);
     const triggerArt = o.type === 'trigger' &&
       (art?.[triggerArtKey(o.trigger?.kind)]?.naturalWidth || art.trigger?.naturalWidth);
     if (triggerArt) {ctx.globalAlpha = .18;ctx.fillRect(x, y, w, h);ctx.globalAlpha = 1;}
@@ -1341,13 +1351,13 @@ export function drawPreviewCanvas(canvas, state, _control = 'keyboard', art = {}
       art?.[state.jetpackActive ? 'jetpackActive' : 'jetpackInactive'] : null;
     if (!drawWorkshopObject(ctx, art, player, x, y, w, h, false, jetpackArt,
                             state.facingLeft)) {
-      ctx.fillStyle = player.color || DEFAULT_COLORS.player;
+      ctx.fillStyle = workshopObjectColor(player);
       ctx.fillRect(x, y, w, h);
       ctx.fillStyle = '#fff';ctx.fillRect(x + w * .2, y + h * .22, 8, 9);ctx.fillRect(x + w * .62, y + h * .22, 8, 9);
-      ctx.fillStyle = '#111';ctx.fillRect(x + w * .25, y + h * .24, 3, 5);ctx.fillRect(x + w * .67, y + h * .24, 3, 5);
+      ctx.fillStyle = '#243b52';ctx.fillRect(x + w * .25, y + h * .24, 3, 5);ctx.fillRect(x + w * .67, y + h * .24, 3, 5);
     }
   }
-  ctx.fillStyle = '#14283c';ctx.fillRect(0, 0, canvas.width, 64);
+  ctx.fillStyle = '#172c40';ctx.fillRect(0, 0, canvas.width, 64);
   ctx.fillStyle = '#fff';ctx.font = '22px PTSans, sans-serif';
   ctx.fillText(`Монеты: ${state.coins}`, 24, 41);
   if (state.won) {

@@ -63,12 +63,9 @@ void game_workshop_open_editor(void);
 void game_workshop_back(void);
 int game_workshop_preview(const OnPublishedLevel *level);
 
-/* Advance by dt seconds. If fb is non-NULL, render a grayscale GAME_W*GAME_H
+/* Advance by dt seconds. If fb is non-NULL, render a full-color GAME_W*GAME_H
  * frame in RGBA8 byte order. Pass NULL to simulate without drawing (tests). */
 void game_tick(float dt, uint32_t *fb);
-/* Convert every RGB pixel in a rendered frame to grayscale, preserving alpha.
- * Native frontends apply this after game and LVGL have finished drawing. */
-void game_frame_apply_grayscale(uint32_t *rgba, size_t pixel_count);
 /* Android's LVGL adapter draws the online match HUD itself. Keep the old HUD
  * for independent renderer tests and as a fallback if LVGL cannot initialize. */
 void game_set_lvgl_ui(int enabled);

@@ -25,6 +25,7 @@
 #define PATH_CAP 32768
 
 static HWND window_handle;
+static HBRUSH window_background_brush;
 static int running = 1, focused = 1, ui_ready;
 static int mouse_active, mouse_via_lvgl, legacy_down_phase = -1;
 static int legacy_down_x, legacy_down_y;
@@ -368,9 +369,6 @@ static void render_frame(float dt) {
     if (fullscreen && !lvgl_ui_fullscreen(game_phase())) game_tick(0, game_pixels);
     if (ui_ready && !legacy_renderer_phase(game_phase()))
         lvgl_ui_frame(dt, game_pixels);
-    /* The whole composed game frame, including LVGL and sprite artwork, is
-     * monochrome; this also removes authored blue player tints. */
-    game_frame_apply_grayscale(game_pixels, (size_t)GAME_W * GAME_H);
     /* Apply an in-game music toggle on the same frame as the UI change. */
     set_music(focused && !IsIconic(window_handle));
     convert_pixels();
@@ -423,7 +421,7 @@ static void paint_frame(HWND hwnd) {
     HDC target = backbuffer_ensure(dc, width, height) ? backbuffer_dc : dc;
 
     /* Compose the whole frame off-screen and copy it once to prevent flicker. */
-    FillRect(target, &client, (HBRUSH)GetStockObject(BLACK_BRUSH));
+    FillRect(target, &client, window_background_brush);
     if (dib_info.bmiHeader.biSize) {
         int left, top, viewport_width, viewport_height;
         game_viewport(width, height, &left, &top,
@@ -537,7 +535,9 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous,
     wc.hInstance = instance;
     wc.hCursor = LoadCursorW(NULL, MAKEINTRESOURCEW(32512));
     wc.hIcon = LoadIconW(NULL, MAKEINTRESOURCEW(32512));
-    wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+    window_background_brush = CreateSolidBrush(RGB(32, 53, 75));
+    if (!window_background_brush) goto cleanup;
+    wc.hbrBackground = window_background_brush;
     wc.lpszClassName = APP_CLASS;
     if (!RegisterClassExW(&wc)) {
         MessageBoxW(NULL, L"Не удалось создать окно PvG3.", L"PvG3",
@@ -598,5 +598,6 @@ cleanup:
     on_net_shutdown();
     set_music(0);
     if (ui_ready) lvgl_ui_shutdown();
+    if (window_background_brush) DeleteObject(window_background_brush);
     return 0;
 }

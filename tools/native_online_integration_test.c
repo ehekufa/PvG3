@@ -317,13 +317,6 @@ static void screenshot(const char *name) {
 /* Exercises actual LVGL pointer events and the existing in-memory Firebase.
  * Also writes screenshots if PVG3_LVGL_SHOTS=1; never touches the live DB. */
 static uint32_t ui_pixels[GAME_W * GAME_H];
-static uint32_t grayscale_pixel(uint32_t pixel) {
-    unsigned red = pixel & 255u;
-    unsigned green = (pixel >> 8) & 255u;
-    unsigned blue = (pixel >> 16) & 255u;
-    unsigned gray = (77u * red + 150u * green + 29u * blue + 128u) >> 8;
-    return (pixel & 0xff000000u) | (gray * 0x00010101u);
-}
 static void assert_platformer_art(void) {
     const int ids[] = {PV_ART_LEVEL_BLOCK, PV_ART_LEVEL_PLATFORM,
                        PV_ART_LEVEL_TRIGGER, PV_ART_LEVEL_TRIGGER_ROTATE,
@@ -357,7 +350,6 @@ static void assert_platformer_art(void) {
 static void ui_snapshot(const char *name) {
     game_tick(0, lvgl_ui_fullscreen(game_phase()) ? NULL : ui_pixels);
     lvgl_ui_frame(.050f, ui_pixels);
-    game_frame_apply_grayscale(ui_pixels, (size_t)GAME_W * GAME_H);
     const char *filter = getenv("PVG3_LVGL_SHOTS");
     if (!filter || !*filter || (strcmp(filter, "1") && strcmp(filter, name))) return;
     char path[100];snprintf(path, sizeof path, "shots/lvgl_%s.ppm", name);
@@ -839,6 +831,7 @@ static void native_trigger_runtime_regression(void) {
 }
 
 static void native_recolor_background_regression(void) {
+    preferences_set_neutral_background_enabled(1);
     static OnPublishedLevel level;
     static uint32_t base_frame[GAME_W * GAME_H];
     static uint32_t changed_frame[GAME_W * GAME_H];
@@ -858,8 +851,8 @@ static void native_recolor_background_regression(void) {
         .x=8,.y=6,.w=1,.h=1,.color=0x55c8eau,.visible=1,.number=43};
     assert(game_workshop_preview(&level));
     game_tick(0, base_frame);
-    assert(game_debug_custom_background_color() == 0x30343bu);
-    assert(base_frame[200 * GAME_W + 20] == 0xff343434u);
+    assert(game_debug_custom_background_color() == 0x32465au);
+    assert(base_frame[200 * GAME_W + 20] == 0xff5a4632u);
     game_custom_level_exit();
 
     level.object_count = 7;
@@ -882,10 +875,10 @@ static void native_recolor_background_regression(void) {
     assert(game_debug_custom_background_color() == 0x4c82d0u);
     assert(preferences_neutral_background_enabled());
     game_tick(0, changed_frame);
-    assert(changed_frame[160 * GAME_W + 20] == 0xff343434u);
+    assert(changed_frame[160 * GAME_W + 20] == 0xff5a4632u);
     preferences_set_neutral_background_enabled(0);
     game_tick(0, changed_frame);
-    assert(changed_frame[160 * GAME_W + 20] == 0xff7b7b7bu);
+    assert(changed_frame[160 * GAME_W + 20] == 0xffd0824cu);
     int changed_pixels = 0;
     for (int y = 285; y < 390; ++y)
         for (int x = 875; x < 980; ++x)
@@ -894,7 +887,7 @@ static void native_recolor_background_regression(void) {
     assert(changed_pixels > 100); /* object recoloring remains a separate feature */
     preferences_set_neutral_background_enabled(1);
     game_tick(0, changed_frame);
-    assert(changed_frame[160 * GAME_W + 20] == 0xff343434u);
+    assert(changed_frame[160 * GAME_W + 20] == 0xff5a4632u);
     game_custom_level_exit();
 }
 
@@ -1074,13 +1067,16 @@ static int run_lvgl_test(void) {
     assert(lvgl_ui_test_art_loaded(PV_ART_JETPACK_INACTIVE));
     game_set_lvgl_ui(1);
     ui_snapshot("menu");
-    assert(ui_pixels[60 * GAME_W + 545] == 0xFFFFFFFFu); /* campaign */
-    assert(ui_pixels[60 * GAME_W + 848] == 0xFFFFFFFFu); /* garden */
-    assert(ui_pixels[70 * GAME_W + 970] == 0xFFFFFFFFu); /* player levels */
-    assert(ui_pixels[580 * GAME_W + 100] == 0xFFFFFFFFu); /* book */
-    assert(ui_pixels[560 * GAME_W + 420] == 0xFFFFFFFFu); /* start */
-    assert(ui_pixels[580 * GAME_W + 905] == 0xFFFFFFFFu); /* online */
-    assert(ui_pixels[680 * GAME_W + 910] == 0xFFFFFFFFu); /* large settings button */
+    assert(ui_pixels[60 * GAME_W + 545] == 0xFFF8FDFFu); /* campaign */
+    assert(ui_pixels[60 * GAME_W + 848] == 0xFFF8FDFFu); /* garden */
+    assert(ui_pixels[70 * GAME_W + 970] == 0xFFF8FDFFu); /* player levels */
+    assert(ui_pixels[580 * GAME_W + 100] == 0xFFF8FDFFu); /* book */
+    assert(ui_pixels[560 * GAME_W + 420] == 0xFF708EE6u); /* start */
+    assert(ui_pixels[580 * GAME_W + 905] == 0xFFF8FDFFu); /* online */
+    uint32_t settings_face = ui_pixels[680 * GAME_W + 910];
+    assert(((settings_face >> 16) & 255u) > 180u &&
+           ((settings_face >> 8) & 255u) > 180u &&
+           (settings_face & 255u) > 180u); /* light blue-gray settings button */
 
     assert(lvgl_ui_test_label_present("Настройки"));
     ui_tap(1042, 687);
@@ -1108,7 +1104,6 @@ static int run_lvgl_test(void) {
            lvgl_ui_test_label_present("Level background") &&
            lvgl_ui_test_label_present("Plain") &&
            lvgl_ui_test_label_present("Artwork") &&
-           !lvgl_ui_test_label_present("The entire game is displayed in grayscale.") &&
            lvgl_ui_test_label_present("Plants vs. Geese 3") &&
            lvgl_ui_test_label_present("Settings"));
     ui_tap(640, 594); /* close settings */
@@ -1581,18 +1576,17 @@ static int run_lvgl_test(void) {
     preferences_set_neutral_background_enabled(0); /* test the supplied map PNG */
     ui_tap(830, 79);assert(game_phase() == GAME_GARDEN);
     ui_snapshot("garden");
-    /* Unoccupied soil/wood must come from the author's PNG, then be shown
-     * in grayscale—not as a checkerboard, fake-green wash or hidden path. */
+    /* Unoccupied soil/wood must come from the author's PNG in its original
+     * colors, not as a checkerboard, fake-green wash or hidden path. */
     int w, h;
     const uint32_t *map = game_art_rgba(PV_ART_LAWN, &w, &h);
     assert(map && w == 500 && h == 500);
     int wood_x = 190, soil_x = 1100, clear_y = 625;
     assert(ui_pixels[clear_y * GAME_W + wood_x] ==
-           grayscale_pixel(map[(clear_y * h / GAME_H) * w +
-                               wood_x * (w / 2) / 250]));
+           map[(clear_y * h / GAME_H) * w + wood_x * (w / 2) / 250]);
     assert(ui_pixels[clear_y * GAME_W + soil_x] ==
-           grayscale_pixel(map[(clear_y * h / GAME_H) * w + w / 2 +
-               (soil_x - 250) * (w - w / 2) / (GAME_W - 250)]));
+           map[(clear_y * h / GAME_H) * w + w / 2 +
+               (soil_x - 250) * (w - w / 2) / (GAME_W - 250)]);
     preferences_set_neutral_background_enabled(1);
     uint8_t garden[GAME_GARDEN_CELLS], garden_after[GAME_GARDEN_CELLS];
     ui_tap(320, 55);ui_board_tap(424, 176); /* no more tap -> tap planting */
@@ -1620,7 +1614,7 @@ static int run_lvgl_test(void) {
     int garden_src_x = w / 2 + (garden_canal_x - 250) *
         (w - w / 2) / (GAME_W - 250);
     assert(ui_pixels[garden_canal_y * GAME_W + garden_canal_x] ==
-           grayscale_pixel(garden_water[garden_src_y * w + garden_src_x]));
+           garden_water[garden_src_y * w + garden_src_x]);
     ui_tap(60, 57); /* return to plants while keeping the water map */
     ui_drag(840, 55, 535, 288, "garden_water_lily");
     game_garden_export(garden);
@@ -1658,7 +1652,7 @@ static int run_lvgl_test(void) {
     int src_canal_y = h / 5 + (canal_y - 232) * (h * 27 / 50 - h / 5) / 224;
     int src_canal_x = w / 2 + (canal_x - 250) * (w - w / 2) / (GAME_W - 250);
     assert(ui_pixels[canal_y * GAME_W + canal_x] ==
-           grayscale_pixel(water_map[src_canal_y * w + src_canal_x]));
+           water_map[src_canal_y * w + src_canal_x]);
     preferences_set_neutral_background_enabled(1);
     /* The lily illustration must survive recharge; no black/blank packet. */
     uint32_t lily_icon_pixel = ui_pixels[600 * GAME_W + 50];
@@ -1704,7 +1698,7 @@ static int run_lvgl_test(void) {
     ui_tap(352, 438);tick_pump(3);
     assert(game_phase() == GAME_ONLINE_MATCH && db.host_role == ON_ROLE_PLANTS);
     ui_snapshot("match_plants");
-    assert(ui_pixels[50 * GAME_W + 935] == 0xFFFFFFFFu); /* online book */
+    assert(ui_pixels[50 * GAME_W + 935] == 0xFFF8FDFFu); /* online book */
     ui_tap(120, 580);ui_board_tap(535, 288);
     OnMatch match;int role;
     game_online_ui_snapshot(&match, &role, NULL, NULL, 0, NULL);
