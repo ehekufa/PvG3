@@ -3230,7 +3230,7 @@ static void settings_dialog(lv_obj_t *root) {
     lv_obj_set_style_border_width(english,
         font_language() == FONT_LANG_EN ? 5 : 3, 0);
     label(root, 395, 427, 500, 54,
-          "Голубое — небо, зелёное — трава и платформы. Хитбоксы не показаны.",
+          "Обводки столкновений не рисуются.",
           0, MUTED, LV_TEXT_ALIGN_CENTER);
     button(root, 530, 505, 220, 52, "Закрыть", 1, U_SETTINGS_CLOSE);
 }

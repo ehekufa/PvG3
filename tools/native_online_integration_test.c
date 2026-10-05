@@ -685,7 +685,28 @@ static void native_trigger_runtime_regression(void) {
            game_debug_custom_checkpoint_id() == 5);
     game_custom_level_exit();
 
-    /* Falling beyond the world boundary also returns to the saved checkpoint. */
+    /* Falling below the playable level is a death and returns to the start. */
+    level.object_count = 2;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_PLAYER,
+        .x=1,.y=1,.w=.65f,.h=.85f,.visible=1,.number=1};
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
+    assert(game_workshop_preview(&level));
+    float start_y = game_debug_custom_player_y();
+    int fell_and_died = 0;
+    for (int i = 0; i < 100; ++i) {
+        float previous_y = game_debug_custom_player_y();
+        game_tick(.05f, NULL);
+        if (previous_y > start_y + 200.0f &&
+            fabsf(game_debug_custom_player_y() - start_y) < .001f) {
+            fell_and_died = 1;
+            break;
+        }
+    }
+    assert(fell_and_died && game_debug_custom_death_flash() > .5f);
+    game_custom_level_exit();
+
+    /* Falling beyond the world's hard limit also returns to the checkpoint. */
     level.object_count = 3;
     level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_PLAYER,
         .x=1,.y=99999.0f,.w=.65f,.h=.85f,.visible=1,.number=1};
@@ -699,9 +720,8 @@ static void native_trigger_runtime_regression(void) {
     float fall_spawn_y = (99999.0f + 1.0f - .85f) * 72.0f;
     int fell_to_checkpoint = 0;
     for (int i = 0; i < 60; ++i) {
-        float previous_y = game_debug_custom_player_y();
         game_tick(.05f, NULL);
-        if (previous_y > fall_spawn_y + 1.0f &&
+        if (game_debug_custom_death_flash() > 0 &&
             fabsf(game_debug_custom_player_y() - fall_spawn_y) < .001f) {
             fell_to_checkpoint = 1;break;
         }
@@ -828,7 +848,8 @@ static void native_recolor_background_regression(void) {
         .x=8,.y=6,.w=1,.h=1,.color=0x55c8eau,.visible=1,.number=43};
     assert(game_workshop_preview(&level));
     game_tick(0, base_frame);
-    assert(game_debug_custom_background_color() == 0x8bcce6u);
+    assert(game_debug_custom_background_color() == 0x30343bu);
+    assert(base_frame[200 * GAME_W + 20] == 0xff3b3430u);
     game_custom_level_exit();
 
     level.object_count = 7;
@@ -1454,15 +1475,13 @@ static int run_lvgl_test(void) {
     assert(lvgl_ui_test_label_present("Кнопки · WASD"));
     ui_tap(910, 55); /* settings button in the native platformer HUD */
     assert(lvgl_ui_test_label_present("Язык интерфейса") &&
-           lvgl_ui_test_label_present(
-               "Голубое — небо, зелёное — трава и платформы. Хитбоксы не показаны."));
+           lvgl_ui_test_label_present("Обводки столкновений не рисуются."));
     ui_tap(640, 388); /* English */
     assert(font_language() == FONT_LANG_EN);
     assert(lvgl_ui_test_label_present("Controls · WASD") &&
            lvgl_ui_test_label_present("Back to levels") &&
            lvgl_ui_test_label_present("ACTION") &&
-           lvgl_ui_test_label_present(
-               "Blue is sky; green is grass and platforms. Hitboxes are not shown."));
+           lvgl_ui_test_label_present("Collision outlines are not drawn."));
     ui_tap(640, 531); /* close the settings overlay */
     assert(!lvgl_ui_test_label_present("Interface language"));
     ui_tap(910, 55);ui_tap(640, 316); /* restore Russian for the other checks */

@@ -118,6 +118,7 @@ int game_debug_custom_player_grounded(void);
 int game_debug_custom_player_facing_left(void);
 float game_debug_custom_gravity(void);
 uint32_t game_debug_custom_background_color(void);
+float game_debug_custom_death_flash(void);
 int game_debug_custom_checkpoint_id(void);
 int game_debug_custom_jetpack_mode(void);
 int game_debug_custom_jetpack_active(void);

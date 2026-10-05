@@ -470,8 +470,11 @@ static int book_enemy_tab;              /* the five plants or illustrated foes *
 static OnMatch online_match;
 static OnNetView online_view;
 static OnPublishedLevel custom_level;
+#define CUSTOM_BACKGROUND_DEFAULT 0x30343bu
+#define CUSTOM_FALL_MARGIN_TILES 3.0f
 static int custom_object_count, custom_level_active, custom_level_won, custom_level_coins;
-static uint32_t custom_background_color = 0x8bcce6u;
+static uint32_t custom_background_color = CUSTOM_BACKGROUND_DEFAULT;
+static float custom_fall_plane_y, custom_death_flash_time;
 static int custom_player_index = -1;
 #define CUSTOM_ID_MAP_CAP 65536
 static int custom_id_map[CUSTOM_ID_MAP_CAP];
@@ -2654,6 +2657,23 @@ static void custom_player_reset(void) {
     memset(custom_portal_inside, 0, sizeof custom_portal_inside);
     custom_jump_request = custom_jump_held = 0;
 }
+
+static float custom_level_fall_plane(void) {
+    float lowest_object_bottom = custom_level.height > 0 ?
+                                (float)custom_level.height : 10.0f;
+    for (int i = 0; i < custom_object_count; ++i) {
+        const OnLevelObject *object = &custom_level.objects[i];
+        if (!object->visible || object->type == ON_LEVEL_TRIGGER ||
+            object->type == ON_LEVEL_PARTICLE) continue;
+        float object_bottom = object->y + object->h;
+        if (object_bottom > lowest_object_bottom)
+            lowest_object_bottom = object_bottom;
+    }
+    float plane = lowest_object_bottom + CUSTOM_FALL_MARGIN_TILES;
+    if (plane > CUSTOM_WORLD_LIMIT) plane = CUSTOM_WORLD_LIMIT;
+    return plane * CUSTOM_TILE_H;
+}
+
 static int custom_platformer_start(const OnPublishedLevel *source) {
     if (!source || source->object_count < 1 ||
         source->object_count > ON_LEVEL_OBJECT_CAP) return 0;
@@ -2678,7 +2698,8 @@ static int custom_platformer_start(const OnPublishedLevel *source) {
     memset(custom_invisible, 0, sizeof custom_invisible);
     memset(custom_portal_inside, 0, sizeof custom_portal_inside);
     custom_jetpack_mode = custom_jetpack_active = 0;
-    custom_background_color = 0x8bcce6u;
+    custom_background_color = CUSTOM_BACKGROUND_DEFAULT;
+    custom_death_flash_time = 0;
     custom_gravity = 1450.0f;custom_elapsed_time = 0;
     custom_player_collision_enabled = 1;
     custom_group_rotation_count = 0;
@@ -2695,11 +2716,13 @@ static int custom_platformer_start(const OnPublishedLevel *source) {
     custom_jump_request = custom_jump_held = 0;
     custom_trigger_request = custom_trigger_held = 0;
     custom_fire_triggers(ON_TRIGGER_START);
+    custom_fall_plane_y = custom_level_fall_plane();
     return 1;
 }
 static void custom_platformer_stop(void) {
     custom_level_active = 0;custom_level_won = 0;custom_object_count = 0;
     custom_checkpoint_id = 0;custom_respawn_x = custom_respawn_y = 0;
+    custom_fall_plane_y = custom_death_flash_time = 0;
     custom_gravity = 1450.0f;custom_elapsed_time = 0;
     custom_group_rotation_count = 0;
     custom_control_axis = custom_control_vertical = 0;
@@ -2707,7 +2730,7 @@ static void custom_platformer_stop(void) {
     custom_jump_request = custom_jump_held = 0;
     custom_trigger_request = custom_trigger_held = 0;
     custom_jetpack_mode = custom_jetpack_active = 0;
-    custom_background_color = 0x8bcce6u;
+    custom_background_color = CUSTOM_BACKGROUND_DEFAULT;
     memset(custom_portal_inside, 0, sizeof custom_portal_inside);
 }
 int game_workshop_preview(const OnPublishedLevel *level) {
@@ -2909,6 +2932,10 @@ static void custom_platformer_update(float dt) {
     if (!custom_level_active || custom_level_won) return;
     if (dt < 0) dt = 0;
     if (dt > .05f) dt = .05f;
+    if (custom_death_flash_time > 0) {
+        custom_death_flash_time -= dt;
+        if (custom_death_flash_time < 0) custom_death_flash_time = 0;
+    }
     custom_elapsed_time += dt;
     custom_player_vx = (float)custom_control_axis * 250.0f;
     if (custom_control_axis < 0) custom_player_facing_left = 1;
@@ -2948,9 +2975,14 @@ static void custom_platformer_update(float dt) {
         custom_player_grounded = custom_resolve_player_solids();
     }
     int player_respawned = 0;
-    if (custom_player_y > CUSTOM_WORLD_LIMIT * CUSTOM_TILE_H ||
-        custom_player_y + custom_player_h < -CUSTOM_WORLD_LIMIT * CUSTOM_TILE_H) {
-        custom_player_reset();player_respawned = 1;
+    int fell_below_level = custom_player_y + custom_player_h >
+                           custom_fall_plane_y;
+    int escaped_world_top = custom_player_y + custom_player_h <
+                            -CUSTOM_WORLD_LIMIT * CUSTOM_TILE_H;
+    if (fell_below_level || escaped_world_top) {
+        custom_player_reset();
+        if (fell_below_level) custom_death_flash_time = .55f;
+        player_respawned = 1;
     }
     if (custom_player_collision_enabled && !player_respawned) {
         float player_x, player_y, player_w, player_h;
@@ -3162,21 +3194,8 @@ static void custom_platformer_draw(void) {
          COL((custom_background_color >> 16) & 255u,
              (custom_background_color >> 8) & 255u,
              custom_background_color & 255u));
-    float cloud_scroll_f = fmodf(custom_camera_x * .18f, GAME_W + 300.0f);
-    if (cloud_scroll_f < 0) cloud_scroll_f += GAME_W + 300.0f;
-    int cloud_scroll = (int)cloud_scroll_f;
-    int cloud_y = 100 - (int)(custom_camera_y * .05f);
-    for (int base = -cloud_scroll - 160; base < GAME_W + 300; base += GAME_W + 300) {
-        ellipse(base + 190, cloud_y, 78, 24, COL(239, 247, 227));
-        ellipse(base + 225, cloud_y, 53, 30, COL(239, 247, 227));
-    }
-    int grass_y = 590 - (int)lrintf(custom_camera_y);
-    if (grass_y < GAME_H) {
-        if (grass_y < 103) grass_y = 103;
-        rect(0, grass_y, GAME_W - 1, GAME_H - 1, COL(143, 190, 93));
-        for (int x = 0; x < GAME_W; x += 80)
-            rect(x, grass_y, x + 54, grass_y + 3, COL(190, 221, 124));
-    }
+    /* A flat neutral backdrop keeps background colors from looking like
+     * collision overlays; the level's own artwork remains visible. */
     for (int i = 0; i < custom_object_count; i++)
         if (custom_level.objects[i].visible && !custom_object_is_invisible(&custom_level.objects[i]) &&
             custom_level.objects[i].type != ON_LEVEL_PLAYER &&
@@ -3210,6 +3229,11 @@ static void custom_platformer_draw(void) {
             sprite_draw_tinted_flipped(player_art, px, py,
                 (int)custom_player_w, (int)custom_player_h,
                 player_flip_x, player_flip_y, player_tint, 128);
+    }
+    if (custom_death_flash_time > 0) {
+        rect_blend(0, 103, GAME_W - 1, GAME_H - 1, COL(0, 0, 0), 90);
+        rect(410, 306, 870, 394, COL(0, 0, 0));
+        draw_text_c(640, 334, 4, COL(255, 255, 255), "ТЫ УПАЛ!");
     }
     rect(0, 0, GAME_W - 1, 102, COL(190, 190, 190));
     rect(0, 100, GAME_W - 1, 102, COL(0, 0, 0));
@@ -3796,6 +3820,7 @@ int game_debug_custom_player_grounded(void) {return custom_player_grounded;}
 int game_debug_custom_player_facing_left(void) {return custom_player_facing_left;}
 float game_debug_custom_gravity(void) {return custom_gravity;}
 uint32_t game_debug_custom_background_color(void) {return custom_background_color;}
+float game_debug_custom_death_flash(void) {return custom_death_flash_time;}
 int game_debug_custom_checkpoint_id(void) {return custom_checkpoint_id;}
 int game_debug_custom_jetpack_mode(void) {return custom_jetpack_mode;}
 int game_debug_custom_jetpack_active(void) {return custom_jetpack_active;}
