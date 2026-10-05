@@ -27,7 +27,8 @@ static void workshop_navigation_and_preview(void) {
     assert(game_phase() == GAME_WORKSHOP_DETAILS);
     game_workshop_open_editor();
     assert(game_phase() == GAME_WORKSHOP_EDIT);
-    OnPublishedLevel level = {0};
+    static OnPublishedLevel level;
+    memset(&level, 0, sizeof level);
     snprintf(level.id, sizeof level.id, "%s", "0");
     snprintf(level.title, sizeof level.title, "%s", "Локальная проверка");
     level.width = 16;level.height = 10;level.object_count = 3;
@@ -66,10 +67,7 @@ static void custom_level_runtime(void) {
     game_custom_level_request(view.levels[0].id);
     on_net_pump_once();
     on_net_view(&view);
-    assert(view.level_loaded && !strcmp(view.loaded_level.id, "104"));
-    assert(!strcmp(view.loaded_level.description,
-                   "Найди скрытый мост и монеты, затем доберись до финиша по платформам."));
-    assert(view.loaded_level.object_count == 3);
+    assert(view.level_loaded && !strcmp(view.loaded_level_id, "104"));
     game_tick(0, NULL);
     assert(game_phase() == GAME_CUSTOM_PLAY);
     float start_x = game_debug_custom_player_x();

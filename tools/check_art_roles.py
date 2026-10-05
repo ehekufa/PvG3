@@ -26,8 +26,14 @@ EXPECTED = {
     "LEVEL_TRIGGER": "assets/art/Триггер-движения.png",
     "LEVEL_TRIGGER_ROTATE": "assets/art/Триггер-вращения.png",
     "LEVEL_TRIGGER_FOREVER": "assets/art/Триггер-вечно.png",
+    "LEVEL_TRIGGER_INVISIBILITY": "assets/art/Триггер-невидимости.png",
+    "LEVEL_TRIGGER_NO_COLLISION": "assets/art/Триггер-нет столкновения.png",
     "LEVEL_FLAG": "assets/art/Флажок - финиш.png",
     "LEVEL_SPIKE": "assets/art/Шип.png",
+    "LEVEL_SLOPE": "assets/art/Склон.png",
+    "LEVEL_TRIGGER_GRAVITY": "assets/art/Триггер-гравитации.png",
+    "LEVEL_ORB_ORANGE": "assets/art/Оранжевый opб.png",
+    "LEVEL_ORB_YELLOW": "assets/art/Жёлтый орб.png",
 }
 
 assert len(IMAGES) == len(EXPECTED) == len(dict(IMAGES)), "Unexpected extra/missing sprite"
@@ -36,10 +42,30 @@ for name, filename in EXPECTED.items():
     w, h, pixels = png_pixels(ROOT / filename)
     assert w > 0 and h > 0 and any(p >> 24 for p in pixels), (name, filename)
 
-# The two new duck drawings and the coin must remain transparent at the corners,
-# so they can be composited over the author's map and UI without a black box.
-for name in ("DUCK_CONE", "DUCK_BUCKET", "COIN"):
+# These hitbox rectangles are the exact non-transparent bounds used by the
+# browser and native preview. Keep them synchronized with the source artwork.
+EXPECTED_ALPHA_BOUNDS = {
+    "KHLEBUSHEK": (21, 2, 80, 96),
+    "DUCK": (20, 21, 99, 99),
+    "COIN": (5, 3, 96, 97),
+    "LEVEL_FLAG": (2, 3, 50, 100),
+}
+for name, expected in EXPECTED_ALPHA_BOUNDS.items():
+    w, h, pixels = png_pixels(ROOT / EXPECTED[name])
+    opaque = [(i % w, i // w) for i, pixel in enumerate(pixels) if pixel >> 24]
+    bounds = (min(x for x, _ in opaque), min(y for _, y in opaque),
+              max(x for x, _ in opaque) + 1, max(y for _, y in opaque) + 1)
+    assert bounds == expected, (name, bounds, expected)
+
+# Author drawings and all trigger icons remain transparent at the corners, so
+# they can be composited over the map and UI without a black box.
+for name in ("DUCK_CONE", "DUCK_BUCKET", "COIN", "LEVEL_TRIGGER",
+             "LEVEL_TRIGGER_ROTATE", "LEVEL_TRIGGER_FOREVER",
+             "LEVEL_TRIGGER_INVISIBILITY", "LEVEL_TRIGGER_NO_COLLISION",
+             "LEVEL_TRIGGER_GRAVITY", "LEVEL_ORB_ORANGE", "LEVEL_ORB_YELLOW"):
     _, _, pixels = png_pixels(ROOT / EXPECTED[name])
     assert pixels[0] == 0, (name, "expected transparent top-left corner")
+_, _, slope_pixels = png_pixels(ROOT / EXPECTED["LEVEL_SLOPE"])
+assert slope_pixels[0] >> 24 <= 16, "slope artwork should fade at its transparent corner"
 
-print("OK: twenty-three named sprites, including platformer blocks, flag, spike and all three trigger variants")
+print("OK: twenty-nine named sprites, including block, slope, platform, flag, spike, six trigger variants and both orbs")

@@ -24,7 +24,8 @@ static struct {
     char state[ON_STATE_JSON_CAP], command[256];
 } db;
 static char uploaded_level_id[ON_LEVEL_ID_SIZE];
-static char uploaded_level_body[ON_STATE_JSON_CAP];
+static char uploaded_level_body[ON_LEVEL_JSON_CAP];
+static OnPublishedLevel fake_level_record;
 static char uploaded_index_body[1024];
 static const char *FAKE_GUEST = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 static const char *FAKE_HOST = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -118,12 +119,13 @@ int on_http_request(const char *path, const char *method, const char *body,
             if (if_match && !strcmp(if_match, "null_etag") &&
                 (!strcmp(level_id, "104") || !strcmp(level_id, uploaded_level_id)))
                 return answer(response, cap, "null", 412);
-            OnPublishedLevel level;
-            if (!body || !on_protocol_published_level(body, level_id, &level))
+            if (!body || !on_protocol_published_level(body, level_id, &fake_level_record))
                 return answer(response, cap, "null", 400);
             if (strlen(body) >= sizeof uploaded_level_body) return -2;
             strcpy(uploaded_level_id, level_id);strcpy(uploaded_level_body, body);
-            return answer(response, cap, body, 200);
+            /* The native HTTP adapters deliberately discard Firebase's
+             * successful echo of a large PUT body. */
+            return answer(response, cap, "null", 200);
         }
     }
     if (level_child_id(path, "levels-index", level_id)) {
@@ -234,22 +236,48 @@ static void expect_state(OnMatch *out) {
     assert(db.state[0]);
     assert(on_protocol_match(db.state, out));
 }
-static OnPublishedLevel sample_level(void) {
-    OnPublishedLevel level = {0};
-    snprintf(level.id, sizeof level.id, "%s", "1");
-    snprintf(level.title, sizeof level.title, "%s", "Нативная публикация");
-    snprintf(level.description, sizeof level.description, "%s", "Проверка каталога.");
-    level.width = 16;level.height = 10;level.object_count = 3;
-    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+static void sample_level(OnPublishedLevel *level) {
+    memset(level, 0, sizeof *level);
+    snprintf(level->id, sizeof level->id, "%s", "1");
+    snprintf(level->title, sizeof level->title, "%s", "Нативная публикация");
+    snprintf(level->description, sizeof level->description, "%s", "Проверка каталога.");
+    level->width = 16;level->height = 10;level->object_count = 3;
+    level->objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
         .x=0,.y=8,.w=16,.h=2,.color=0x65a845u,.visible=1};
-    snprintf(level.objects[0].name, sizeof level.objects[0].name, "%s", "Платформа");
-    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
+    snprintf(level->objects[0].name, sizeof level->objects[0].name, "%s", "Платформа");
+    level->objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
         .x=1,.y=7,.w=.65f,.h=.85f,.color=0x5ab7e8u,.visible=1};
-    snprintf(level.objects[1].name, sizeof level.objects[1].name, "%s", "Игрок");
-    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
+    snprintf(level->objects[1].name, sizeof level->objects[1].name, "%s", "Игрок");
+    level->objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
         .x=14,.y=6,.w=1,.h=2,.color=0x69d16cu,.visible=1};
-    snprintf(level.objects[2].name, sizeof level.objects[2].name, "%s", "Финиш");
-    return level;
+    snprintf(level->objects[2].name, sizeof level->objects[2].name, "%s", "Финиш");
+}
+static void large_level_transport_round_trip(void) {
+    static OnPublishedLevel source, loaded;
+    memset(&source, 0, sizeof source);
+    snprintf(source.id, sizeof source.id, "%s", "1");
+    snprintf(source.title, sizeof source.title, "%s", "Предел публикации");
+    snprintf(source.description, sizeof source.description, "%s", "20 000 объектов всех типов.");
+    source.width = 16;source.height = 10;source.object_count = ON_LEVEL_OBJECT_CAP;
+    for (int i = 0; i < ON_LEVEL_OBJECT_CAP; ++i) {
+        int type = i == 0 ? ON_LEVEL_PLAYER : i == 1 ? ON_LEVEL_GOAL :
+                   i == 2 ? ON_LEVEL_GROUND : i == 3 ? ON_LEVEL_COIN : ON_LEVEL_BLOCK;
+        source.objects[i] = (OnLevelObject){.id=i + 1,.type=type,
+            .x=(float)(i % 16),.y=(float)((i / 16) % 10),.w=1,.h=1,
+            .color=0x55c8eau,.number=i % 10000,.visible=1};
+    }
+    assert(on_net_level_publish(&source));
+    tick_pump(1);
+    OnNetView published = view();
+    assert(!published.level_publish_busy && published.level_publish_id[0] &&
+           strlen(uploaded_level_body) > 1024u * 1024u);
+    on_net_level_fetch(uploaded_level_id);
+    tick_pump(1);
+    OnNetView fetched = view();
+    assert(fetched.level_loaded && !strcmp(fetched.loaded_level_id, uploaded_level_id));
+    assert(on_net_take_loaded_level(&loaded));
+    assert(loaded.object_count == ON_LEVEL_OBJECT_CAP &&
+           loaded.objects[ON_LEVEL_OBJECT_CAP - 1].id == ON_LEVEL_OBJECT_CAP);
 }
 static void isolate_saves(uint8_t *before, uint8_t *after, size_t size) {
     assert(game_save_export(after, size) && !memcmp(before, after, size));
@@ -276,10 +304,16 @@ static uint32_t ui_pixels[GAME_W * GAME_H];
 static void assert_platformer_art(void) {
     const int ids[] = {PV_ART_LEVEL_BLOCK, PV_ART_LEVEL_PLATFORM,
                        PV_ART_LEVEL_TRIGGER, PV_ART_LEVEL_TRIGGER_ROTATE,
-                       PV_ART_LEVEL_TRIGGER_FOREVER, PV_ART_LEVEL_FLAG,
-                       PV_ART_LEVEL_SPIKE};
-    const int widths[] = {100, 100, 100, 100, 100, 50, 100};
-    const int heights[] = {100, 50, 100, 100, 100, 100, 100};
+                       PV_ART_LEVEL_TRIGGER_FOREVER,
+                       PV_ART_LEVEL_TRIGGER_INVISIBILITY,
+                       PV_ART_LEVEL_TRIGGER_NO_COLLISION,
+                       PV_ART_LEVEL_TRIGGER_GRAVITY, PV_ART_LEVEL_FLAG,
+                       PV_ART_LEVEL_SPIKE, PV_ART_LEVEL_SLOPE,
+                       PV_ART_LEVEL_ORB_ORANGE, PV_ART_LEVEL_ORB_YELLOW};
+    const int widths[] = {100, 100, 100, 100, 100, 100, 100, 100, 50,
+                          100, 100, 100, 100};
+    const int heights[] = {100, 50, 100, 100, 100, 100, 100, 100, 100,
+                           100, 100, 100, 100};
     for (size_t i = 0; i < sizeof ids / sizeof ids[0]; ++i) {
         int width = 0, height = 0, visible = 0;
         const uint32_t *pixels = game_art_rgba(ids[i], &width, &height);
@@ -291,7 +325,8 @@ static void assert_platformer_art(void) {
 static void ui_snapshot(const char *name) {
     game_tick(0, lvgl_ui_fullscreen(game_phase()) ? NULL : ui_pixels);
     lvgl_ui_frame(.050f, ui_pixels);
-    if (!getenv("PVG3_LVGL_SHOTS")) return;
+    const char *filter = getenv("PVG3_LVGL_SHOTS");
+    if (!filter || !*filter || (strcmp(filter, "1") && strcmp(filter, name))) return;
     char path[100];snprintf(path, sizeof path, "shots/lvgl_%s.ppm", name);
     FILE *f = fopen(path, "wb");assert(f);
     fprintf(f, "P6\n%d %d\n255\n", GAME_W, GAME_H);
@@ -331,7 +366,8 @@ static void ui_drag(int x0, int y0, int x1, int y1,
     assert(lvgl_ui_pointer(x1, y1, 0));ui_snapshot("drag_drop");
 }
 static void native_trigger_runtime_regression(void) {
-    OnPublishedLevel level = {0};
+    static OnPublishedLevel level;
+    memset(&level, 0, sizeof level);
     snprintf(level.id, sizeof level.id, "%s", "1");
     snprintf(level.title, sizeof level.title, "%s", "Trigger runtime test");
     level.width = 16;level.height = 10;level.object_count = 8;
@@ -345,9 +381,10 @@ static void native_trigger_runtime_regression(void) {
         .x=6,.y=6,.w=1,.h=1,.visible=1,.number=42};
     level.objects[4] = (OnLevelObject){.id=5,.type=ON_LEVEL_BLOCK,
         .x=8,.y=6,.w=1,.h=1,.visible=1,.number=42};
+    /* Action-button events must fire even when the player is nowhere near them. */
     for (int i = 5; i < 8; ++i) {
         level.objects[i] = (OnLevelObject){.id=i + 1,.type=ON_LEVEL_TRIGGER,
-            .x=1,.y=7,.w=1,.h=1,.visible=1,
+            .x=100,.y=100,.w=1,.h=1,.visible=1,
             .trigger_event=ON_TRIGGER_MANUAL,.target_id=0,
             .trigger_group_id=42,.trigger_has_group=1};
     }
@@ -392,19 +429,306 @@ static void native_trigger_runtime_regression(void) {
     assert(game_debug_custom_object(4, &first) && first.visible &&
            first.angle > 35.9f && first.angle < 36.1f);
     game_custom_level_exit();
+
+    /* The invisibility trigger hides its target group visually, not physically. */
+    level.object_count = 5;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+        .x=0,.y=20,.w=16,.h=1,.visible=1,.number=3};
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
+        .x=1,.y=7,.w=.65f,.h=.85f,.visible=1,.number=1};
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_BLOCK,
+        .x=1,.y=8,.w=1,.h=1,.visible=1,.number=42};
+    level.objects[4] = (OnLevelObject){.id=5,.type=ON_LEVEL_TRIGGER,
+        .x=1,.y=7,.w=1,.h=1,.visible=1,
+        .trigger_kind=ON_TRIGGER_KIND_INVISIBILITY,
+        .trigger_event=ON_TRIGGER_START,.trigger_action=ON_TRIGGER_INVISIBLE,
+        .trigger_group_id=42,.trigger_has_group=1};
+    assert(game_workshop_preview(&level));
+    assert(game_debug_custom_object(4, &first) && first.visible &&
+           game_debug_custom_object_invisible(4));
+    for (int i = 0; i < 20; ++i) game_tick(.05f, NULL);
+    assert(game_debug_custom_player_y() > 7 * 72 &&
+           game_debug_custom_player_y() < 8 * 72);
+    game_custom_level_exit();
+
+    /* Touch events need actual contact; merely pressing action never substitutes for touch. */
+    level.objects[4].trigger_event = ON_TRIGGER_TOUCH;
+    level.objects[4].x = 100;level.objects[4].y = 100;
+    assert(game_workshop_preview(&level));
+    for (int i = 0; i < 20; ++i) game_tick(.05f, NULL);
+    assert(!game_debug_custom_object_invisible(4));
+    game_custom_level_exit();
+    level.objects[4].x = 1;level.objects[4].y = 7;
+    assert(game_workshop_preview(&level));
+    game_tick(.01f, NULL);
+    assert(game_debug_custom_object_invisible(4));
+    game_custom_level_exit();
+
+    /* The collision trigger leaves its block visible but lets the player fall through. */
+    level.objects[3].visible = 1;
+    level.objects[4].trigger_kind = ON_TRIGGER_KIND_NO_COLLISION;
+    level.objects[4].trigger_event = ON_TRIGGER_MANUAL;
+    level.objects[4].trigger_action = ON_TRIGGER_NO_COLLISION;
+    assert(game_workshop_preview(&level));
+    game_custom_control(0, 0, 1);game_tick(.05f, NULL);game_custom_control(0, 0, 0);
+    for (int i = 0; i < 20; ++i) game_tick(.05f, NULL);
+    assert(game_debug_custom_object(4, &first) && first.visible);
+    assert(game_debug_custom_player_y() > 9 * 72);
+    game_custom_level_exit();
+
+    /* Rotated blocks use the same oriented geometry as their artwork. */
+    level.object_count = 4;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+        .x=0,.y=12,.w=16,.h=1,.visible=1,.number=3};
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
+        .x=4.5f,.y=4.5f,.w=.65f,.h=.85f,.visible=1,.number=1};
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_BLOCK,
+        .x=4,.y=6,.w=2,.h=1,.angle=90,.visible=1,.number=42};
+    assert(game_workshop_preview(&level));
+    for (int i = 0; i < 120; ++i) game_tick(1.0f / 60.0f, NULL);
+    assert(game_debug_custom_player_y() > 315 && game_debug_custom_player_y() < 345);
+    game_custom_level_exit();
+
+    /* The existing triangular art is solid, safe, and climbable in native play. */
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+        .x=0,.y=8,.w=16,.h=2,.visible=1,.number=3};
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
+        .x=1,.y=7,.w=.65f,.h=.85f,.visible=1,.number=1};
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_SLOPE,
+        .x=3,.y=7,.w=1,.h=1,.visible=1,.number=42};
+    assert(game_workshop_preview(&level));
+    float spawn_y = game_debug_custom_player_y();
+    float highest_y = spawn_y;
+    game_custom_control(1, 0, 0);
+    for (int i = 0; i < 24; ++i) {
+        game_tick(.05f, NULL);
+        if (game_debug_custom_player_y() < highest_y)
+            highest_y = game_debug_custom_player_y();
+    }
+    game_custom_control(0, 0, 0);
+    assert(game_debug_custom_player_x() > 240 && highest_y < spawn_y - 35);
+    game_custom_level_exit();
+
+    /* Horizontal mirroring reverses the slope, its climb direction and collision. */
+    level.objects[1].x = 5;
+    level.objects[3].flip_x = 1;
+    assert(game_workshop_preview(&level));
+    screenshot("slope_mirrored_start");
+    spawn_y = game_debug_custom_player_y();highest_y = spawn_y;
+    game_custom_control(-1, 0, 0);
+    for (int i = 0; i < 24; ++i) {
+        game_tick(.05f, NULL);
+        if (game_debug_custom_player_y() < highest_y)
+            highest_y = game_debug_custom_player_y();
+        if (i == 13) screenshot("slope_mirrored_climb");
+    }
+    game_custom_control(0, 0, 0);
+    assert(game_debug_custom_player_x() < 3 * 72 && highest_y < spawn_y - 35);
+    game_custom_level_exit();
+
+    /* The same slope remains climbable after a quarter-turn rotation. */
+    level.objects[3].flip_x = 0;level.objects[3].angle = 90;
+    assert(game_workshop_preview(&level));
+    spawn_y = game_debug_custom_player_y();highest_y = spawn_y;
+    game_custom_control(-1, 0, 0);
+    for (int i = 0; i < 24; ++i) {
+        game_tick(.05f, NULL);
+        if (game_debug_custom_player_y() < highest_y)
+            highest_y = game_debug_custom_player_y();
+    }
+    game_custom_control(0, 0, 0);
+    assert(game_debug_custom_player_x() < 3 * 72 && highest_y < spawn_y - 35);
+    game_custom_level_exit();
+
+    /* The signed gravity trigger changes the whole level's acceleration. */
+    level.object_count = 4;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+        .x=0,.y=30,.w=16,.h=1,.visible=1,.number=3};
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
+        .x=1,.y=1,.w=.65f,.h=.85f,.visible=1,.number=1};
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_TRIGGER,
+        .x=100,.y=100,.w=1,.h=1,.visible=1,
+        .trigger_kind=ON_TRIGGER_KIND_GRAVITY,.trigger_event=ON_TRIGGER_START,
+        .trigger_action=ON_TRIGGER_SET_GRAVITY,.trigger_value=-100,
+        .trigger_color=0xffc54eu};
+    assert(game_workshop_preview(&level));
+    assert(game_debug_custom_gravity() == 450.0f);
+    for (int i = 0; i < 10; ++i) game_tick(.05f, NULL);
+    float weak_gravity_y = game_debug_custom_player_y();
+    game_custom_level_exit();
+    level.objects[3].trigger_value = 100;
+    assert(game_workshop_preview(&level));
+    assert(game_debug_custom_gravity() == 2450.0f);
+    for (int i = 0; i < 10; ++i) game_tick(.05f, NULL);
+    float strong_gravity_y = game_debug_custom_player_y();
+    assert(strong_gravity_y > weak_gravity_y + 100);
+    game_custom_level_exit();
+
+    /* Orbs have no solid body; one jump press while inside the circle activates. */
+    level.object_count = 4;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+        .x=0,.y=30,.w=16,.h=1,.visible=1,.number=3};
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
+        .x=3,.y=4,.w=.65f,.h=.85f,.visible=1,.number=1};
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_ORB_YELLOW,
+        .x=3,.y=4,.w=.7f,.h=.7f,.visible=1,.number=4};
+    assert(game_workshop_preview(&level));
+    float orb_spawn_y = game_debug_custom_player_y();
+    game_tick(.05f, NULL);
+    assert(game_debug_custom_player_y() > orb_spawn_y &&
+           game_debug_custom_player_vy() > 0.0f &&
+           game_debug_custom_gravity() == 1450.0f);
+    assert(lvgl_ui_touch_pointer(17, 700, 400, 1)); /* click anywhere, not the orb art */
+    game_tick(0, NULL);
+    assert(game_debug_custom_player_vy() == -650.0f &&
+           game_debug_custom_gravity() == 1450.0f);
+    assert(lvgl_ui_touch_pointer(17, 700, 400, 0));
+    game_tick(.05f, NULL);
+    assert(game_debug_custom_player_vy() > -650.0f &&
+           game_debug_custom_player_vy() < 0 &&
+           game_debug_custom_gravity() == 1450.0f);
+    float yellow_bounce_y = game_debug_custom_player_y();
+    game_custom_level_exit();
+    level.objects[3].type = ON_LEVEL_ORB_ORANGE;
+    assert(game_workshop_preview(&level));
+    orb_spawn_y = game_debug_custom_player_y();
+    game_tick(.05f, NULL);
+    assert(game_debug_custom_player_y() > orb_spawn_y &&
+           game_debug_custom_player_vy() > 0.0f &&
+           game_debug_custom_gravity() == 1450.0f);
+    assert(lvgl_ui_touch_pointer(17, 700, 400, 1));
+    game_tick(0, NULL);
+    assert(game_debug_custom_player_vy() == -1050.0f &&
+           game_debug_custom_gravity() == 1450.0f);
+    assert(lvgl_ui_touch_pointer(17, 700, 400, 0));
+    game_tick(.05f, NULL);
+    assert(game_debug_custom_player_vy() < -900.0f &&
+           game_debug_custom_gravity() == 1450.0f &&
+           game_debug_custom_player_y() < yellow_bounce_y);
+    game_custom_level_exit();
+
+    /* The art-free particle emitter draws its own trail in the native runtime. */
+    static uint32_t with_particles[GAME_W * GAME_H];
+    static uint32_t without_particles[GAME_W * GAME_H];
+    static uint32_t disabled_particles[GAME_W * GAME_H];
+    static uint32_t changed_particles[GAME_W * GAME_H];
+    level.object_count = 3;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+        .x=0,.y=30,.w=16,.h=1,.visible=1,.number=3};
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
+        .x=1,.y=7,.w=.65f,.h=.85f,.visible=1,.number=1};
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
+    assert(game_workshop_preview(&level));
+    game_tick(0, without_particles);
+    game_custom_level_exit();
+    level.object_count = 4;
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_PARTICLE,
+        .x=6,.y=4,.w=1,.h=1,.color=0x68f0d8u,.visible=1,
+        .emitter={.enabled=1,.continuous=1,.gravity_enabled=0,.glow=1,
+            .rate=8,.lifetime=1.2f,.speed=90,.spread=40,.size=4,
+            .direction=-90,.gravity=90}};
+    assert(game_workshop_preview(&level));
+    game_tick(0, with_particles);
+    assert(memcmp(with_particles, without_particles, sizeof with_particles));
+    game_custom_level_exit();
+    level.objects[3].emitter.enabled = 0;
+    assert(game_workshop_preview(&level));
+    game_tick(0, disabled_particles);
+    assert(!memcmp(disabled_particles, without_particles, sizeof disabled_particles));
+    game_custom_level_exit();
+    level.objects[3].emitter.enabled = 1;
+    level.objects[3].emitter.speed = 0;
+    assert(game_workshop_preview(&level));
+    game_tick(0, changed_particles);
+    assert(memcmp(changed_particles, with_particles, sizeof changed_particles));
+    game_custom_level_exit();
+
+    /* The bread's collider starts/ends at its visible alpha bounds, not its PNG canvas. */
+    level.object_count = 4;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+        .x=0,.y=8,.w=16,.h=2,.visible=1,.number=3};
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
+        .x=1,.y=7,.w=.65f,.h=.85f,.visible=1,.number=1};
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_BLOCK,
+        .x=2,.y=7,.w=1,.h=1,.visible=1,.number=4};
+    assert(game_workshop_preview(&level));
+    game_custom_control(1, 0, 0);
+    for (int i = 0; i < 3; ++i) game_tick(.05f, NULL);
+    game_custom_control(0, 0, 0);
+    assert(game_debug_custom_player_x() > 112);
+    screenshot("alpha_player_wall");
+    game_custom_level_exit();
+
+    /* A transparent upper corner of the spike art is not a lethal contact. */
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+        .x=0,.y=20,.w=16,.h=1,.visible=1,.number=3};
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
+        .x=2.53f,.y=4.033f,.w=.65f,.h=.85f,.visible=1,.number=1};
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_HAZARD,
+        .x=3,.y=4,.w=1,.h=1,.visible=1,.number=4};
+    assert(game_workshop_preview(&level));
+    float spike_graze_spawn = game_debug_custom_player_x();
+    game_custom_control(1, 0, 0);game_tick(.001f, NULL);game_custom_control(0, 0, 0);
+    assert(game_debug_custom_player_x() > spike_graze_spawn + .1f);
+    screenshot("alpha_spike_graze");
+    game_custom_level_exit();
+
+    /* Trigger PNGs are for the editor only and never appear in a play preview. */
+    static uint32_t with_trigger[GAME_W * GAME_H];
+    static uint32_t without_trigger[GAME_W * GAME_H];
+    level.object_count = 4;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+        .x=0,.y=12,.w=16,.h=1,.visible=1,.number=3};
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
+        .x=1,.y=7,.w=.65f,.h=.85f,.visible=1,.number=1};
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_TRIGGER,
+        .x=10,.y=1,.w=1,.h=1,.visible=1,
+        .trigger_kind=ON_TRIGGER_KIND_INVISIBILITY,
+        .trigger_event=ON_TRIGGER_MANUAL,.trigger_action=ON_TRIGGER_INVISIBLE,
+        .target_id=3};
+    assert(game_workshop_preview(&level));
+    game_tick(0, with_trigger);
+    game_custom_level_exit();
+    level.object_count = 3;
+    assert(game_workshop_preview(&level));
+    game_tick(0, without_trigger);
+    assert(!memcmp(with_trigger, without_trigger, sizeof with_trigger));
+    game_custom_level_exit();
 }
 
 static int run_lvgl_test(void) {
     static uint8_t before[20000], after[20000];
     size_t bytes = game_save_size();assert(bytes < sizeof before);
     game_init();assert(game_save_export(before, bytes));
-    native_trigger_runtime_regression();
-    game_init();assert(game_save_export(after, bytes) && !memcmp(before, after, bytes));
     assert_platformer_art();
     assert(lvgl_ui_init());
+    native_trigger_runtime_regression();
+    game_init();assert(game_save_export(after, bytes) && !memcmp(before, after, bytes));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_ROTATE));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_FOREVER));
+    assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_INVISIBILITY));
+    assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_NO_COLLISION));
+    assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_GRAVITY));
+    assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_ORB_ORANGE));
+    assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_ORB_YELLOW));
     game_set_lvgl_ui(1);
     ui_snapshot("menu");
     assert(ui_pixels[60 * GAME_W + 545] == 0xFFFFFFFFu); /* campaign */
@@ -445,32 +769,40 @@ static int run_lvgl_test(void) {
     ui_tap(317, 247); /* add the adjacent block to the selection */
     ui_snapshot("workshop_multi_selected");
 #ifdef PVG3_LVGL_TEST
-    OnPublishedLevel editor_probe;
+    static OnPublishedLevel editor_probe;
     assert(lvgl_ui_test_workshop_level(&editor_probe));
     assert(editor_probe.object_count == 6 &&
            editor_probe.objects[4].x == 5 && editor_probe.objects[5].x == 6);
 #endif
-    ui_tap(214, 688); /* move both objects right by one world cell */
+    ui_tap(214, 688); /* move both objects right by half a world cell */
 #ifdef PVG3_LVGL_TEST
     assert(lvgl_ui_test_workshop_level(&editor_probe));
     assert(editor_probe.object_count == 6 &&
-           editor_probe.objects[4].x == 6 && editor_probe.objects[5].x == 7);
+           editor_probe.objects[4].x == 5.5f && editor_probe.objects[5].x == 6.5f);
+#endif
+    ui_tap(377, 688);ui_tap(428, 688); /* mirror left/right and top/bottom */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[4].flip_x && editor_probe.objects[4].flip_y &&
+           editor_probe.objects[5].flip_x && editor_probe.objects[5].flip_y);
 #endif
     ui_tap(808, 690); /* copy selection */
     ui_tap(932, 690); /* paste offset copies */
 #ifdef PVG3_LVGL_TEST
     assert(lvgl_ui_test_workshop_level(&editor_probe));
     assert(editor_probe.object_count == 8 &&
-           editor_probe.objects[6].x == 7 && editor_probe.objects[6].y == 3 &&
-           editor_probe.objects[7].x == 8 && editor_probe.objects[7].y == 3 &&
-           editor_probe.objects[6].number == editor_probe.objects[4].number);
+           editor_probe.objects[6].x == 6.5f && editor_probe.objects[6].y == 3 &&
+           editor_probe.objects[7].x == 7.5f && editor_probe.objects[7].y == 3 &&
+           editor_probe.objects[6].number == editor_probe.objects[4].number &&
+           editor_probe.objects[6].flip_x && editor_probe.objects[6].flip_y &&
+           editor_probe.objects[7].flip_x && editor_probe.objects[7].flip_y);
 #endif
     ui_tap(1056, 690); /* delete only the pasted selection */
 #ifdef PVG3_LVGL_TEST
     assert(lvgl_ui_test_workshop_level(&editor_probe));
     assert(editor_probe.object_count == 6);
 #endif
-    ui_tap(319, 247);ui_tap(361, 247); /* reselect the original pair */
+    ui_tap(296, 247);ui_tap(338, 247); /* reselect the half-shifted original pair */
     ui_tap(1056, 690); /* remove the temporary pair */
 #ifdef PVG3_LVGL_TEST
     assert(lvgl_ui_test_workshop_level(&editor_probe));
@@ -498,7 +830,7 @@ static int run_lvgl_test(void) {
 #endif
     ui_snapshot("workshop_direct_transform");
 
-    ui_tap(674, 596); /* trigger category; movement is the default */
+    ui_tap(595, 596); /* trigger category; movement is the default */
     ui_tap(294, 247); /* place a movement trigger */
     ui_tap(835, 361); /* configure X and Y separately */
     ui_tap(640, 343); /* X: replace 1 with 9999 */
@@ -523,10 +855,122 @@ static int run_lvgl_test(void) {
     ui_tap(975, 505);ui_tap(417, 275);ui_tap(194, 390);ui_tap(975, 390);
     ui_tap(720, 371); /* unactivate forever */
     ui_tap(640, 628); /* save trigger settings */
-    ui_tap(1178, 495); /* scroll the infinite workshop map */
-    ui_tap(80, 596); /* block category */
+    ui_tap(870, 480); /* invisibility variant */
+    ui_tap(422, 330); /* place invisibility trigger */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[editor_probe.object_count - 1].trigger_kind ==
+           ON_TRIGGER_KIND_INVISIBILITY);
+#endif
+    ui_tap(1108, 480); /* no-collision variant */
+    ui_tap(472, 330); /* place no-collision trigger */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[editor_probe.object_count - 1].trigger_kind ==
+           ON_TRIGGER_KIND_NO_COLLISION);
+#endif
+    ui_tap(472, 330); /* select the newly placed no-collision trigger */
+    ui_tap(835, 361); /* open trigger settings */
+    ui_tap(870, 528); /* switch the selected trigger to invisibility */
+    ui_tap(1108, 528); /* and back to no-collision */
+    ui_tap(878, 173);ui_tap(878, 173);ui_tap(878, 173); /* event: start */
+    ui_tap(640, 628); /* close trigger settings */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[editor_probe.object_count - 1].trigger_kind ==
+           ON_TRIGGER_KIND_NO_COLLISION &&
+           editor_probe.objects[editor_probe.object_count - 1].trigger_event ==
+           ON_TRIGGER_START);
+#endif
+    ui_tap(595, 596); /* trigger category */
+    ui_tap(990, 480); /* gravity trigger */
+    ui_tap(520, 370); /* place it away from the finish */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[editor_probe.object_count - 1].trigger_kind ==
+           ON_TRIGGER_KIND_GRAVITY &&
+           editor_probe.objects[editor_probe.object_count - 1].trigger_action ==
+           ON_TRIGGER_SET_GRAVITY &&
+           !editor_probe.objects[editor_probe.object_count - 1].trigger_has_group &&
+           editor_probe.objects[editor_probe.object_count - 1].target_id == 0);
+#endif
+    ui_tap(835, 361); /* open the gravity settings */
+    ui_tap(158, 319); /* weak gravity is the negative endpoint */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[editor_probe.object_count - 1].trigger_kind ==
+           ON_TRIGGER_KIND_GRAVITY &&
+           editor_probe.objects[editor_probe.object_count - 1].trigger_value <= -95.0f);
+#endif
+    ui_tap(1079, 319); /* strong gravity is the positive endpoint */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[editor_probe.object_count - 1].trigger_kind ==
+           ON_TRIGGER_KIND_GRAVITY &&
+           editor_probe.objects[editor_probe.object_count - 1].trigger_value == 100.0f);
+#endif
+    ui_tap(640, 628); /* save the slider value */
+    ui_tap(680, 596); /* orb category (yellow is the default) */
+    ui_tap(565, 414); /* place a yellow orb */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[editor_probe.object_count - 1].type == ON_LEVEL_ORB_YELLOW);
+#endif
+    ui_tap(1108, 439); /* orange orb variant */
+    ui_tap(607, 414); /* place a stronger orange orb */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[editor_probe.object_count - 1].type == ON_LEVEL_ORB_ORANGE);
+#endif
+    ui_tap(1178, 526); /* scroll the infinite workshop map */
+    ui_tap(80, 596); /* select the shared blocks category */
+    ui_tap(990, 439); /* choose its slope variant */
+    ui_tap(506, 331); /* place a solid triangular slope */
+    ui_snapshot("workshop_slope_added");
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[editor_probe.object_count - 1].type == ON_LEVEL_SLOPE);
+#endif
+    ui_tap(377, 688);ui_snapshot("workshop_slope_mirror_x");
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[editor_probe.object_count - 1].flip_x);
+#endif
+    ui_tap(428, 688);ui_snapshot("workshop_slope_mirror_xy");
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[editor_probe.object_count - 1].flip_x &&
+           editor_probe.objects[editor_probe.object_count - 1].flip_y);
+#endif
+    ui_tap(742, 596); /* the art-free P palette button */
+    ui_tap(590, 370);ui_snapshot("workshop_particle_added");
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[editor_probe.object_count - 1].type == ON_LEVEL_PARTICLE &&
+           editor_probe.objects[editor_probe.object_count - 1].emitter.rate == 8 &&
+           editor_probe.objects[editor_probe.object_count - 1].emitter.enabled);
+#endif
+    ui_tap(830, 360);ui_snapshot("workshop_particle_settings");
+    ui_tap(490, 220); /* adjust the particles-per-second slider */
+    ui_tap(316, 142); /* switch to finite bursts */
+    ui_tap(485, 142); /* enable the gravity setting */
+    ui_snapshot("workshop_particle_settings_changed");
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[editor_probe.object_count - 1].type == ON_LEVEL_PARTICLE &&
+           editor_probe.objects[editor_probe.object_count - 1].emitter.rate != 8 &&
+           !editor_probe.objects[editor_probe.object_count - 1].emitter.continuous &&
+           editor_probe.objects[editor_probe.object_count - 1].emitter.gravity_enabled &&
+           on_level_particle_valid(&editor_probe.objects[editor_probe.object_count - 1].emitter));
+#endif
+    ui_tap(640, 659);ui_snapshot("workshop_particle_settings_closed");
+    ui_tap(80, 596); /* reselect blocks category and choose its square variant */
+    ui_tap(834, 439);
     ui_tap(422, 205); /* now maps to world X=10 */
     ui_snapshot("workshop_trigger_variants_and_pan");
+#ifdef PVG3_LVGL_TEST
+    assert(ui_pixels[480 * GAME_W + 800] == ui_pixels[480 * GAME_W + 1100]);
+#endif
     ui_tap(929, 209); /* select the earlier block for the edit dialogs */
     ui_tap(149, 195);
     ui_tap(836, 377);ui_snapshot("workshop_move_dialog");
@@ -556,6 +1000,23 @@ static int run_lvgl_test(void) {
            strstr(uploaded_level_body, "\"groupId\":24") &&
            strstr(uploaded_level_body, "\"action\":\"unactivate\"") &&
            strstr(uploaded_level_body, "\"kind\":\"forever\"") &&
+           strstr(uploaded_level_body, "\"kind\":\"invisibility\"") &&
+           strstr(uploaded_level_body, "\"action\":\"invisible\"") &&
+           strstr(uploaded_level_body, "\"kind\":\"no-collision\"") &&
+           strstr(uploaded_level_body, "\"action\":\"no-collision\"") &&
+           strstr(uploaded_level_body, "\"kind\":\"gravity\"") &&
+           strstr(uploaded_level_body, "\"action\":\"set-gravity\"") &&
+           strstr(uploaded_level_body, "\"value\":100.0000") &&
+           strstr(uploaded_level_body, "\"type\":\"orb-yellow\"") &&
+           strstr(uploaded_level_body, "\"type\":\"orb-orange\"") &&
+           strstr(uploaded_level_body, "\"type\":\"particle\"") &&
+           strstr(uploaded_level_body, "\"emitter\":{\"enabled\":true") &&
+           strstr(uploaded_level_body, "\"continuous\":false") &&
+           strstr(uploaded_level_body, "\"gravityEnabled\":true") &&
+           strstr(uploaded_level_body, "\"event\":\"start\"") &&
+           strstr(uploaded_level_body, "\"type\":\"slope\"") &&
+           strstr(uploaded_level_body, "\"flipX\":true") &&
+           strstr(uploaded_level_body, "\"flipY\":true") &&
            strstr(uploaded_level_body, "\"x\":10.0000") &&
            strstr(uploaded_level_body, "\"w\":1.1000") &&
            strstr(uploaded_level_body, "\"angle\":45.000"));
@@ -801,13 +1262,13 @@ int main(void) {
     static uint8_t before[20000], after[20000];
     size_t size = game_save_size();assert(size <= sizeof before);
     game_init();assert(game_save_export(before, size));
-    OnPublishedLevel draft = sample_level();
+    static OnPublishedLevel draft, decoded;
+    sample_level(&draft);
     assert(on_net_level_publish(&draft));tick_pump(1);
     OnNetView published = view();
     assert(!published.level_publish_busy && published.level_publish_id[0] &&
            strstr(published.level_publish_notice, "ОПУБЛИКОВАН") &&
            uploaded_level_body[0] && uploaded_index_body[0]);
-    OnPublishedLevel decoded;
     assert(on_protocol_published_level(uploaded_level_body,
                                        uploaded_level_id, &decoded));
     assert(!strcmp(decoded.title, draft.title));
@@ -934,6 +1395,7 @@ int main(void) {
                        v.state.coin_count == 0);
     game_input_press(1151, 49);tick_pump(2);
     game_input_press(1140, 50);isolate_saves(before, after, size);
+    large_level_transport_round_trip();
     on_net_shutdown();
     puts("Native Firebase REST host/guest, both roles, coins, ACK and offline saves passed");
     return 0;

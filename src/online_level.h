@@ -11,18 +11,26 @@
 #define ON_LEVEL_DESCRIPTION_SIZE 481 /* 160 UTF-16 code units, worst-case UTF-8 */
 #define ON_LEVEL_OBJECT_NAME_SIZE 145 /* 48 UTF-16 code units, worst-case UTF-8 */
 #define ON_LEVEL_LIST_CAP 24
-#define ON_LEVEL_OBJECT_CAP 120
+/* This is a total-per-level ceiling across every object type, not a per-type
+ * allowance. Keep the wire and both workshops aligned with this value. */
+#define ON_LEVEL_OBJECT_CAP 20000
 #define ON_LEVEL_WORLD_LIMIT 100000
 
 enum {
     ON_LEVEL_BLOCK, ON_LEVEL_GROUND, ON_LEVEL_HAZARD, ON_LEVEL_COIN,
-    ON_LEVEL_ENEMY, ON_LEVEL_PLAYER, ON_LEVEL_GOAL, ON_LEVEL_TRIGGER
+    ON_LEVEL_ENEMY, ON_LEVEL_PLAYER, ON_LEVEL_GOAL, ON_LEVEL_TRIGGER,
+    ON_LEVEL_SLOPE, /* appended to keep all existing published type IDs stable */
+    ON_LEVEL_ORB_YELLOW, ON_LEVEL_ORB_ORANGE,
+    ON_LEVEL_PARTICLE /* invisible in play; emits a configurable-color particle trail */
 };
-enum { ON_TRIGGER_TOUCH, ON_TRIGGER_COIN, ON_TRIGGER_MANUAL };
+enum { ON_TRIGGER_TOUCH, ON_TRIGGER_COIN, ON_TRIGGER_MANUAL, ON_TRIGGER_START };
 enum { ON_TRIGGER_TOGGLE, ON_TRIGGER_MOVE, ON_TRIGGER_RECOLOR,
        ON_TRIGGER_NUMBER, ON_TRIGGER_ROTATE, ON_TRIGGER_ACTIVATE,
-       ON_TRIGGER_UNACTIVATE };
-enum { ON_TRIGGER_KIND_MOVE, ON_TRIGGER_KIND_ROTATE, ON_TRIGGER_KIND_FOREVER };
+       ON_TRIGGER_UNACTIVATE, ON_TRIGGER_INVISIBLE,
+       ON_TRIGGER_NO_COLLISION, ON_TRIGGER_SET_GRAVITY };
+enum { ON_TRIGGER_KIND_MOVE, ON_TRIGGER_KIND_ROTATE, ON_TRIGGER_KIND_FOREVER,
+       ON_TRIGGER_KIND_INVISIBILITY, ON_TRIGGER_KIND_NO_COLLISION,
+       ON_TRIGGER_KIND_GRAVITY };
 
 typedef struct {
     char id[ON_LEVEL_ID_SIZE];
@@ -31,9 +39,42 @@ typedef struct {
 } OnPublishedLevelSummary;
 
 typedef struct {
+    int enabled, continuous, gravity_enabled, glow;
+    int rate;              /* particles/second, or particles per burst */
+    float lifetime;        /* seconds */
+    int speed, spread, size, direction, gravity; /* px/s, degrees, px, degrees, px/s^2 */
+} OnLevelParticle;
+
+#define ON_LEVEL_PARTICLE_MAX_VISIBLE 48
+
+static inline OnLevelParticle on_level_particle_default(void) {
+    return (OnLevelParticle){
+        .enabled=1, .continuous=1, .gravity_enabled=0, .glow=1,
+        .rate=8, .lifetime=1.2f, .speed=90, .spread=40,
+        .size=4, .direction=-90, .gravity=90
+    };
+}
+
+static inline int on_level_particle_valid(const OnLevelParticle *emitter) {
+    return emitter &&
+        (emitter->enabled == 0 || emitter->enabled == 1) &&
+        (emitter->continuous == 0 || emitter->continuous == 1) &&
+        (emitter->gravity_enabled == 0 || emitter->gravity_enabled == 1) &&
+        (emitter->glow == 0 || emitter->glow == 1) &&
+        emitter->rate >= 1 && emitter->rate <= 30 &&
+        emitter->lifetime >= .2f && emitter->lifetime <= 3.0f &&
+        emitter->speed >= 0 && emitter->speed <= 300 &&
+        emitter->spread >= 0 && emitter->spread <= 180 &&
+        emitter->size >= 1 && emitter->size <= 12 &&
+        emitter->direction >= -180 && emitter->direction <= 180 &&
+        emitter->gravity >= 0 && emitter->gravity <= 300;
+}
+
+typedef struct {
     int id, type;
     char name[ON_LEVEL_OBJECT_NAME_SIZE];
     float x, y, w, h, angle;
+    int flip_x, flip_y;
     uint32_t color;
     int number, visible;
     int trigger_kind, trigger_event, trigger_action, target_id;
@@ -41,6 +82,7 @@ typedef struct {
     uint32_t trigger_color;
     int trigger_group_id, trigger_has_group;
     int trigger_duration, trigger_has_duration; /* timed group rotation, seconds */
+    OnLevelParticle emitter; /* ignored for non-particle objects */
 } OnLevelObject;
 
 typedef struct {
