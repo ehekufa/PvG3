@@ -282,6 +282,17 @@ static void sprite_draw_rotated_tinted_flipped(int id, int x, int y, int w, int 
         else if (alpha) *dst = blend(*dst, color, alpha);
     }
 }
+static void sprite_draw_flipped(int id, int x, int y, int w, int h,
+                                int flip_x, int flip_y) {
+    if (id < 0 || id >= SPR_COUNT) return;
+    sprite_crop_flipped(id, x, y, w, h, 0, 0,
+        SPRITE_DATA[id].w, SPRITE_DATA[id].h, flip_x, flip_y);
+}
+static void sprite_draw_rotated_flipped(int id, int x, int y, int w, int h,
+                                        float degrees, int flip_x, int flip_y) {
+    sprite_draw_rotated_tinted_flipped(id, x, y, w, h, degrees,
+                                       flip_x, flip_y, 0, 0);
+}
 /* ------------------------------------------------------------------ */
 /* Real, anti-aliased PT Sans font (embedded OFL TrueType).             */
 /* ------------------------------------------------------------------ */
@@ -2717,6 +2728,7 @@ int game_workshop_preview(const OnPublishedLevel *level) {
     phase = PH_CUSTOM_PLAY;
     return 1;
 }
+static int custom_object_can_manually_recolor(int type);
 static void custom_apply_trigger_to_object(const OnLevelObject *trigger,
                                            OnLevelObject *target) {
     if (!trigger || !target) return;
@@ -2734,7 +2746,11 @@ static void custom_apply_trigger_to_object(const OnLevelObject *trigger,
         target->angle = fmodf(target->angle + trigger->trigger_value, 360.0f);
         if (target->angle < 0) target->angle += 360.0f;
         break;
-    case ON_TRIGGER_RECOLOR: target->color = trigger->trigger_color;break;
+    case ON_TRIGGER_RECOLOR:
+        if (target->type != ON_LEVEL_TRIGGER &&
+            custom_object_can_manually_recolor(target->type))
+            target->color = trigger->trigger_color;
+        break;
     case ON_TRIGGER_NUMBER:
         target->number = (int)fmaxf(0, fminf(9999, trigger->trigger_value));break;
     default: break;
@@ -3015,6 +3031,11 @@ static void custom_platformer_update(float dt) {
     custom_run_forever_triggers(dt);
     custom_update_group_rotations(dt);
 }
+static int custom_object_can_manually_recolor(int type) {
+    return type == ON_LEVEL_BLOCK || type == ON_LEVEL_GROUND ||
+           type == ON_LEVEL_HAZARD || type == ON_LEVEL_TRIGGER ||
+           type == ON_LEVEL_SLOPE || type == ON_LEVEL_PARTICLE;
+}
 static void custom_draw_object(const OnLevelObject *o) {
     if (!o || o->type == ON_LEVEL_TRIGGER || o->type == ON_LEVEL_PARTICLE) return;
     int x = (int)lrintf(o->x * CUSTOM_TILE_W - custom_camera_x);
@@ -3022,18 +3043,20 @@ static void custom_draw_object(const OnLevelObject *o) {
     int w = (int)lrintf(o->w * CUSTOM_TILE_W), h = (int)lrintf(o->h * CUSTOM_TILE_H);
     if (w < 3 || h < 3) return;
     int rotated = fabsf(o->angle) >= .01f;
-    /* Player and finish colors are fixed visual identities. Old drafts may
-     * still store the previous lime finish tint; keep the authored record
-     * untouched but render the player blue and the flag warm amber. */
-    uint32_t object_color = o->type == ON_LEVEL_PLAYER ? 0x5ab7e8u :
-                            o->type == ON_LEVEL_GOAL ? 0xf2a76fu : o->color;
-    uint32_t tint = COL((object_color >> 16) & 255u,
-                        (object_color >> 8) & 255u, object_color & 255u);
+    uint32_t tint = COL((o->color >> 16) & 255u,
+                        (o->color >> 8) & 255u, o->color & 255u);
+    int tint_opacity = custom_object_can_manually_recolor(o->type) ? 128 : 0;
 #define DRAW_LEVEL_ART(id) do { \
-        if (rotated) sprite_draw_rotated_tinted_flipped((id), x, y, w, h, \
-            o->angle, o->flip_x, o->flip_y, tint, 128); \
-        else sprite_draw_tinted_flipped((id), x, y, w, h, \
-            o->flip_x, o->flip_y, tint, 128); \
+        if (tint_opacity > 0 && rotated) \
+            sprite_draw_rotated_tinted_flipped((id), x, y, w, h, \
+                o->angle, o->flip_x, o->flip_y, tint, tint_opacity); \
+        else if (tint_opacity > 0) \
+            sprite_draw_tinted_flipped((id), x, y, w, h, \
+                o->flip_x, o->flip_y, tint, tint_opacity); \
+        else if (rotated) \
+            sprite_draw_rotated_flipped((id), x, y, w, h, o->angle, \
+                o->flip_x, o->flip_y); \
+        else sprite_draw_flipped((id), x, y, w, h, o->flip_x, o->flip_y); \
     } while (0)
     switch (o->type) {
     case ON_LEVEL_BLOCK:
@@ -3048,9 +3071,14 @@ static void custom_draw_object(const OnLevelObject *o) {
                 for (int dx = 0; dx < w; dx += tile_w) {
                     int draw_w = w - dx < tile_w ? w - dx : tile_w;
                     int draw_h = h - dy < tile_h ? h - dy : tile_h;
-                    sprite_draw_tinted_flipped(PV_ART_LEVEL_PLATFORM,
-                        x + dx, y + dy, draw_w, draw_h, o->flip_x, o->flip_y,
-                        tint, 128);
+                    if (tint_opacity > 0)
+                        sprite_draw_tinted_flipped(PV_ART_LEVEL_PLATFORM,
+                            x + dx, y + dy, draw_w, draw_h,
+                            o->flip_x, o->flip_y, tint, tint_opacity);
+                    else
+                        sprite_draw_flipped(PV_ART_LEVEL_PLATFORM,
+                            x + dx, y + dy, draw_w, draw_h,
+                            o->flip_x, o->flip_y);
                 }
         }
         break;
@@ -3067,10 +3095,10 @@ static void custom_draw_object(const OnLevelObject *o) {
         DRAW_LEVEL_ART(PV_ART_LEVEL_ORB_ORANGE);break;
     case ON_LEVEL_ENEMY: {
         int flip_x = !o->flip_x;
-        if (rotated) sprite_draw_rotated_tinted_flipped(PV_ART_DUCK, x, y, w, h,
-            o->angle, flip_x, o->flip_y, tint, 128);
-        else sprite_draw_tinted_flipped(PV_ART_DUCK, x, y, w, h,
-                                        flip_x, o->flip_y, tint, 128);
+        if (rotated) sprite_draw_rotated_flipped(PV_ART_DUCK, x, y, w, h,
+            o->angle, flip_x, o->flip_y);
+        else sprite_draw_flipped(PV_ART_DUCK, x, y, w, h,
+                                 flip_x, o->flip_y);
         break;
     }
     case ON_LEVEL_PLAYER: /* The moving player is rendered separately. */
@@ -3196,12 +3224,10 @@ static void custom_platformer_draw(void) {
     custom_draw_particle_effects();
     int player_visible = 1, player_flip_x = 0, player_flip_y = 0;
     float player_angle = 0;
-    uint32_t player_color = 0x5ab7e8u;
     if (custom_player_index >= 0 && custom_player_index < custom_object_count) {
         const OnLevelObject *player = &custom_level.objects[custom_player_index];
         player_visible = player->visible && !custom_object_is_invisible(player);
         player_angle = player->angle;
-        player_color = 0x5ab7e8u;
         player_flip_x = custom_player_facing_left;
         player_flip_y = player->flip_y;
     }
@@ -3210,17 +3236,14 @@ static void custom_platformer_draw(void) {
         int py = (int)lrintf(custom_player_y - custom_camera_y);
         int player_art = !custom_jetpack_mode ? PV_ART_BREAD :
             custom_jetpack_active ? PV_ART_JETPACK_ACTIVE : PV_ART_JETPACK_INACTIVE;
-        uint32_t player_tint = COL(
-            (player_color >> 16) & 255u, (player_color >> 8) & 255u,
-            player_color & 255u);
         if (fabsf(player_angle) >= .01f)
-            sprite_draw_rotated_tinted_flipped(player_art, px, py,
+            sprite_draw_rotated_flipped(player_art, px, py,
                 (int)custom_player_w, (int)custom_player_h, player_angle,
-                player_flip_x, player_flip_y, player_tint, 128);
+                player_flip_x, player_flip_y);
         else
-            sprite_draw_tinted_flipped(player_art, px, py,
+            sprite_draw_flipped(player_art, px, py,
                 (int)custom_player_w, (int)custom_player_h,
-                player_flip_x, player_flip_y, player_tint, 128);
+                player_flip_x, player_flip_y);
     }
     rect(0, 0, GAME_W - 1, 102, COL(220, 232, 239));
     rect(0, 100, GAME_W - 1, 102, COL(36, 59, 82));

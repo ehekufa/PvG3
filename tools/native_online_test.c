@@ -102,9 +102,9 @@ static void published_level_writer(void) {
         .x=0,.y=8,.w=16,.h=2,.color=0x65a845u,.visible=1};
     snprintf(level.objects[0].name, sizeof level.objects[0].name, "%s", "Платформа");
     level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
-        .x=1,.y=7,.w=.65f,.h=.85f,.color=0x5ab7e8u,.visible=1};
+        .x=1,.y=7,.w=.65f,.h=.85f,.color=0xffffffu,.visible=1};
     level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
-        .x=14,.y=6,.w=1,.h=2,.color=0x69d16cu,.visible=1};
+        .x=14,.y=6,.w=1,.h=2,.color=0xffffffu,.visible=1};
     level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_TRIGGER,
         .x=-ON_LEVEL_WORLD_LIMIT,.y=ON_LEVEL_WORLD_LIMIT - 1,.w=1,.h=1,
         .color=0xf27652u,.visible=1,.trigger_kind=ON_TRIGGER_KIND_MOVE,
@@ -314,10 +314,10 @@ static void published_level_writer(void) {
         "\"format\":\"PVG3-MAKER\",\"version\":1,\"width\":16,\"height\":10,"
         "\"objects\":["
         "{\"id\":1,\"type\":\"player\",\"name\":\"Игрок\",\"x\":1,\"y\":7,"
-        "\"w\":0.65,\"h\":0.85,\"angle\":0,\"color\":\"#5ab7e8\","
+        "\"w\":0.65,\"h\":0.85,\"angle\":0,\"color\":\"#fffdf8\","
         "\"number\":1,\"visible\":true},"
         "{\"id\":2,\"type\":\"goal\",\"name\":\"Финиш\",\"x\":14,\"y\":6,"
-        "\"w\":1,\"h\":2,\"angle\":0,\"color\":\"#69d16c\","
+        "\"w\":1,\"h\":2,\"angle\":0,\"color\":\"#fffdf8\","
         "\"number\":2,\"visible\":true}]}}";
     static OnPublishedLevel old_record;
     assert(on_protocol_published_level(legacy_without_flips, "23817", &old_record));

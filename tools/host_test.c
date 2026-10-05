@@ -4,11 +4,13 @@
  */
 #include <assert.h>
 #include <errno.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <sys/stat.h>
 #include "game.h"
+#include "game_view.h"
 #include "font.h"
 #include "preferences.h"
 #include "online_net.h"
@@ -35,13 +37,33 @@ static void test_language_preference(void) {
     assert(remove(path) == 0);
 }
 
-static void test_custom_level_keeps_blue_player_and_amber_flag(void) {
+static size_t count_exact_sprite_samples(const uint32_t *frame, int art_id,
+                                         int x, int y, int width, int height) {
+    int source_width = 0, source_height = 0;
+    const uint32_t *source = game_art_rgba(art_id, &source_width, &source_height);
+    assert(source && source_width > 0 && source_height > 0);
+    size_t matches = 0;
+    for (int dy = 0; dy < height; ++dy) {
+        int sy = dy * source_height / height;
+        for (int dx = 0; dx < width; ++dx) {
+            int sx = dx * source_width / width;
+            uint32_t source_pixel = source[sy * source_width + sx];
+            if ((source_pixel >> 24) != 255u) continue;
+            assert(x + dx >= 0 && x + dx < GAME_W);
+            assert(y + dy >= 0 && y + dy < GAME_H);
+            matches += frame[(y + dy) * GAME_W + x + dx] == source_pixel;
+        }
+    }
+    return matches;
+}
+
+static void test_custom_level_keeps_original_player_and_flag_art(void) {
     static uint32_t frame[GAME_W * GAME_H];
     OnPublishedLevel level = {0};
     level.width = 16;level.height = 10;level.object_count = 3;
     level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
         .x=0,.y=8,.w=16,.h=2,.visible=1,.color=0xffffffu};
-    /* Old records may carry green tints; the player/finish visuals are fixed. */
+    /* Legacy/custom data may carry any colors; fixed-art objects ignore them. */
     level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
         .x=2,.y=7,.w=.65f,.h=.85f,.visible=1,.color=0x69d16cu};
     level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
@@ -50,23 +72,20 @@ static void test_custom_level_keeps_blue_player_and_amber_flag(void) {
     game_workshop_open_editor();
     assert(game_workshop_preview(&level));
     game_tick(0, frame);
-    size_t colored_pixels = 0, blue_player_pixels = 0, amber_flag_pixels = 0;
-    for (int y = 0; y < GAME_H; ++y) for (int x = 0; x < GAME_W; ++x) {
-        uint32_t pixel = frame[y * GAME_W + x];
-        unsigned red = pixel & 255u;
-        unsigned green = (pixel >> 8) & 255u;
-        unsigned blue = (pixel >> 16) & 255u;
-        colored_pixels += red != green || green != blue;
-        if (x >= 475 && x < 550 && y >= 365 && y < 450 &&
-            (pixel & 0xffffffu) != 0x5a4632u)
-            blue_player_pixels += blue > red + 12 && blue > green + 6;
-        if (x >= 635 && x < 735 && y >= 300 && y < 450 &&
-            (pixel & 0xffffffu) != 0x5a4632u)
-            amber_flag_pixels += red > blue + 18 && green > blue + 12;
-    }
-    assert(colored_pixels > 1000);
-    assert(blue_player_pixels > 20);
-    assert(amber_flag_pixels > 20);
+
+    float camera_x = 2.0f * 80.0f + .65f * 80.0f * .5f - GAME_W * .40f;
+    float camera_y = 7.0f * 72.0f + .85f * 72.0f * .5f - 411.0f;
+    int player_x = (int)lrintf(2.0f * 80.0f - camera_x);
+    int player_y = (int)lrintf(7.0f * 72.0f - camera_y);
+    int flag_x = (int)lrintf(4.0f * 80.0f - camera_x);
+    int flag_y = (int)lrintf(6.0f * 72.0f - camera_y);
+    size_t original_player_pixels = count_exact_sprite_samples(
+        frame, PV_ART_BREAD, player_x, player_y, (int)(.65f * 80.0f),
+        (int)(.85f * 72.0f));
+    size_t original_flag_pixels = count_exact_sprite_samples(
+        frame, PV_ART_LEVEL_FLAG, flag_x, flag_y, 80, 144);
+    assert(original_player_pixels > 20);
+    assert(original_flag_pixels > 20);
     game_custom_level_exit();
 }
 
@@ -302,6 +321,6 @@ int main(void) {
     game_tick(0, fb);
     write_bmp("shots/water_planted.bmp", GAME_W, GAME_H, fb);
     preferences_set_neutral_background_enabled(1);
-    test_custom_level_keeps_blue_player_and_amber_flag();
+    test_custom_level_keeps_original_player_and_flag_art();
     return 0;
 }

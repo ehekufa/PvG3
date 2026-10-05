@@ -35,9 +35,9 @@ static void workshop_navigation_and_preview(void) {
     level.objects[0] = (OnLevelObject){.id=10,.type=ON_LEVEL_GROUND,
         .x=0,.y=8,.w=16,.h=2,.color=0x65a845u,.visible=1};
     level.objects[1] = (OnLevelObject){.id=11,.type=ON_LEVEL_PLAYER,
-        .x=1,.y=6,.w=.65f,.h=.85f,.color=0x55c8eau,.visible=1};
+        .x=1,.y=6,.w=.65f,.h=.85f,.color=0xffffffu,.visible=1};
     level.objects[2] = (OnLevelObject){.id=12,.type=ON_LEVEL_GOAL,
-        .x=14,.y=6,.w=1,.h=2,.color=0x69d16cu,.visible=1};
+        .x=14,.y=6,.w=1,.h=2,.color=0xffffffu,.visible=1};
     assert(game_workshop_preview(&level));
     assert(game_phase() == GAME_CUSTOM_PLAY);
     game_custom_control(1, 0, 0);game_tick(.05f, NULL);

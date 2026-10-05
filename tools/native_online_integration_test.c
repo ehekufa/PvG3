@@ -262,10 +262,10 @@ static void sample_level(OnPublishedLevel *level) {
         .x=0,.y=8,.w=16,.h=2,.color=0x65a845u,.visible=1};
     snprintf(level->objects[0].name, sizeof level->objects[0].name, "%s", "Платформа");
     level->objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
-        .x=1,.y=7,.w=.65f,.h=.85f,.color=0x5ab7e8u,.visible=1};
+        .x=1,.y=7,.w=.65f,.h=.85f,.color=0xffffffu,.visible=1};
     snprintf(level->objects[1].name, sizeof level->objects[1].name, "%s", "Игрок");
     level->objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
-        .x=14,.y=6,.w=1,.h=2,.color=0x69d16cu,.visible=1};
+        .x=14,.y=6,.w=1,.h=2,.color=0xffffffu,.visible=1};
     snprintf(level->objects[2].name, sizeof level->objects[2].name, "%s", "Финиш");
 }
 static void large_level_transport_round_trip(void) {
@@ -842,9 +842,9 @@ static void native_recolor_background_regression(void) {
     level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
         .x=0,.y=8,.w=16,.h=2,.color=0x65a845u,.visible=1,.number=3};
     level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
-        .x=1,.y=7,.w=.65f,.h=.85f,.color=0x5ab7e8u,.visible=1,.number=1};
+        .x=1,.y=7,.w=.65f,.h=.85f,.color=0xffffffu,.visible=1,.number=42};
     level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
-        .x=14,.y=6,.w=1,.h=2,.color=0x69d16cu,.visible=1,.number=2};
+        .x=14,.y=6,.w=1,.h=2,.color=0xffffffu,.visible=1,.number=42};
     level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_BLOCK,
         .x=6,.y=6,.w=1,.h=1,.color=0x55c8eau,.visible=1,.number=42};
     level.objects[4] = (OnLevelObject){.id=5,.type=ON_LEVEL_BLOCK,
@@ -867,11 +867,15 @@ static void native_recolor_background_regression(void) {
         .trigger_action=ON_TRIGGER_SET_BACKGROUND,.target_id=0,
         .trigger_color=0x4c82d0u};
     assert(game_workshop_preview(&level));
-    OnLevelObject recolored, untouched;
+    OnLevelObject recolored, untouched, unchanged_player, unchanged_goal;
     assert(game_debug_custom_object(4, &recolored) &&
            recolored.color == 0xd02da6u);
     assert(game_debug_custom_object(5, &untouched) &&
            untouched.color == 0x55c8eau);
+    assert(game_debug_custom_object(2, &unchanged_player) &&
+           unchanged_player.color == 0xffffffu);
+    assert(game_debug_custom_object(3, &unchanged_goal) &&
+           unchanged_goal.color == 0xffffffu);
     assert(game_debug_custom_background_color() == 0x4c82d0u);
     assert(preferences_neutral_background_enabled());
     game_tick(0, changed_frame);
@@ -1321,7 +1325,7 @@ static int run_lvgl_test(void) {
            editor_probe.objects[editor_probe.object_count - 1].trigger_action ==
            ON_TRIGGER_RECOLOR &&
            editor_probe.objects[editor_probe.object_count - 1].trigger_has_group &&
-           editor_probe.objects[editor_probe.object_count - 1].trigger_group_id == 2);
+           editor_probe.objects[editor_probe.object_count - 1].trigger_group_id == 3);
     uint32_t recolor_original =
         editor_probe.objects[editor_probe.object_count - 1].trigger_color;
 #endif

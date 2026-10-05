@@ -100,6 +100,7 @@ function normalizeWorkshopDraft(saved) {
       typeof o.color === 'string' && /^#[0-9a-f]{6}$/i.test(o.color));
   if (!validShape) return null;
   for (const object of saved.objects) {
+    if (!canManuallyRecolorType(object.type)) object.color = '#fffdf8';
     object.flipX = object.flipX === true;object.flipY = object.flipY === true;
     if (object.type === 'particle') object.emitter = normalizeParticleEmitter(object.emitter);
     if (object.type !== 'trigger') continue;

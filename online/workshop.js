@@ -53,20 +53,22 @@ const TYPE_SIZES = Object.freeze({
   'orb-yellow': [.7, .7], 'orb-orange': [.7, .7], particle: [1, 1],
   checkpoint: [1, 1], 'portal-normal': [1, 1], 'portal-jetpack': [1, 1],
 });
+const FIXED_SPRITE_FALLBACK_COLOR = '#fffdf8';
 const DEFAULT_COLORS = Object.freeze({
-  block: '#55c8ea', ground: '#65a845', hazard: '#e56c5b', coin: '#ffc54e',
-  enemy: '#9560bd', player: '#5ab7e8', goal: '#f2a76f', trigger: '#f27652',
-  slope: '#e56c5b', 'orb-yellow': '#fff400', 'orb-orange': '#ff8a16',
-  particle: '#68f0d8', checkpoint: '#b6d8ff',
-  'portal-normal': '#cccccc', 'portal-jetpack': '#2f2f2f',
+  block: '#55c8ea', ground: '#65a845', hazard: '#e56c5b',
+  coin: FIXED_SPRITE_FALLBACK_COLOR, enemy: FIXED_SPRITE_FALLBACK_COLOR,
+  player: FIXED_SPRITE_FALLBACK_COLOR, goal: FIXED_SPRITE_FALLBACK_COLOR,
+  trigger: '#f27652', slope: '#e56c5b',
+  'orb-yellow': FIXED_SPRITE_FALLBACK_COLOR,
+  'orb-orange': FIXED_SPRITE_FALLBACK_COLOR,
+  particle: '#68f0d8', checkpoint: FIXED_SPRITE_FALLBACK_COLOR,
+  'portal-normal': FIXED_SPRITE_FALLBACK_COLOR,
+  'portal-jetpack': FIXED_SPRITE_FALLBACK_COLOR,
 });
 
-// Player blue and the warm amber finish flag are fixed visual identities.
-// Older published levels may still store the former green finish tint; render
-// it consistently without mutating the remote level record.
 function workshopObjectColor(object) {
-  if (object.type === 'player') return DEFAULT_COLORS.player;
-  if (object.type === 'goal') return DEFAULT_COLORS.goal;
+  if (!canManuallyRecolorType(object.type))
+    return FIXED_SPRITE_FALLBACK_COLOR;
   return object.color || DEFAULT_COLORS[object.type] || '#243b58';
 }
 const TYPE_TO_ID = Object.freeze({
@@ -165,8 +167,12 @@ export function setTriggerKind(level, id, kind) {
   const wasGlobal = previousKind === 'gravity' || previousKind === 'background';
   const isGlobal = kind === 'gravity' || kind === 'background';
   if (!isGlobal && wasGlobal) {
-    const target = level.objects.find(item => item.type === 'goal') ||
-      level.objects.find(item => item.id !== object.id && item.type !== 'trigger');
+    const target = kind === 'recolor' ?
+      level.objects.find(item => item.id !== object.id && item.type !== 'trigger' &&
+        canManuallyRecolorType(item.type)) ||
+        level.objects.find(item => item.id !== object.id && item.type !== 'trigger') :
+      level.objects.find(item => item.type === 'goal') ||
+        level.objects.find(item => item.id !== object.id && item.type !== 'trigger');
     trigger.targetId = target?.id || 0;
     trigger.groupId = Number.isInteger(target?.number) ? target.number : 0;
   }
@@ -175,8 +181,12 @@ export function setTriggerKind(level, id, kind) {
   if (isGlobal) {
     delete trigger.targetId;delete trigger.groupId;
   } else if (kind === 'recolor') {
-    if (!Number.isInteger(trigger.groupId)) {
-      const target = level.objects.find(item => item.type === 'goal') ||
+    const hasRecolorableTarget = Number.isInteger(trigger.groupId) &&
+      level.objects.some(item => item.id !== object.id && item.type !== 'trigger' &&
+        item.number === trigger.groupId && canManuallyRecolorType(item.type));
+    if (!hasRecolorableTarget) {
+      const target = level.objects.find(item => item.id !== object.id && item.type !== 'trigger' &&
+        canManuallyRecolorType(item.type)) ||
         level.objects.find(item => item.id !== object.id && item.type !== 'trigger');
       trigger.groupId = Number.isInteger(target?.number) ? target.number : 0;
     }
@@ -226,7 +236,10 @@ export function addObject(level, type, x, y, triggerKind = 'move') {
   if (type === 'particle') object.emitter = {...DEFAULT_PARTICLE_EMITTER};
   if (type === 'trigger') {
     const kind = TRIGGER_KINDS.includes(triggerKind) ? triggerKind : 'move';
-    const target = level.objects.find(o => o.type === 'goal') || level.objects[0];
+    const target = kind === 'recolor' ?
+      level.objects.find(object => object.type !== 'trigger' &&
+        canManuallyRecolorType(object.type)) || level.objects[0] :
+      level.objects.find(object => object.type === 'goal') || level.objects[0];
     const targetGroup = Number.isInteger(target?.number) ? target.number : 0;
     const action = TRIGGER_ACTIONS[kind];
     object.trigger = {kind, event: 'touch', action,
@@ -472,7 +485,9 @@ function recordObject(object) {
     id: object.id, type: object.type, name: object.name || TYPE_LABELS[object.type],
     x: object.x, y: object.y, w: object.w, h: object.h, angle: object.angle || 0,
     flipX: object.flipX === true, flipY: object.flipY === true,
-    color: object.color, number: object.number || 0, visible: object.visible !== false,
+    color: canManuallyRecolorType(object.type) ?
+      object.color : FIXED_SPRITE_FALLBACK_COLOR,
+    number: object.number || 0, visible: object.visible !== false,
     layer: object.layer || 0, layer2: object.layer2 || 0, zOrder: object.zOrder || 0,
   };
   if (object.type === 'particle')
@@ -532,7 +547,10 @@ export function draftFromPublished(record) {
       trigger.action = 'rotate';
       delete trigger.degrees;delete trigger.value;
     }
-    return {...object, trigger,
+    return {...object,
+      color: canManuallyRecolorType(object.type) ?
+        object.color : FIXED_SPRITE_FALLBACK_COLOR,
+      trigger,
       ...(object.type === 'particle' ? {emitter: normalizeParticleEmitter(object.emitter)} : {}),
       flipX: object.flipX === true, flipY: object.flipY === true,
       layer: Number.isInteger(object.layer) ? object.layer : 0,
@@ -780,8 +798,8 @@ function executeTrigger(state, trigger) {
   if (kind === 'recolor') {
     if (rgb(t.color) && Number.isInteger(t.groupId))
       for (const target of state.objects)
-        if (target.type !== 'trigger' && target.number === t.groupId)
-          target.color = t.color;
+        if (target.type !== 'trigger' && canManuallyRecolorType(target.type) &&
+            target.number === t.groupId) target.color = t.color;
     return;
   }
   if (kind === 'rotate' && t.duration !== undefined) {
@@ -836,7 +854,10 @@ function executeTrigger(state, trigger) {
       const degrees = kind === 'rotate' ? (t.degrees ?? t.value ?? 0) : (t.value ?? 0);
       target.angle = ((target.angle + degrees) % 360 + 360) % 360;break;
     }
-    case 'recolor': target.color = t.color;break;
+    case 'recolor':
+      if (target.type !== 'trigger' && canManuallyRecolorType(target.type))
+        target.color = t.color;
+      break;
     case 'number': target.number = clamp(Math.trunc(t.value), 0, 9999);break;
     }
   }
@@ -1060,10 +1081,10 @@ function drawWorkshopObject(ctx, art, object, x, y, w, h, checkpointActive = fal
   const flipX = object.type === 'player' && typeof playerFacingLeft === 'boolean' ?
     playerFacingLeft : objectFlipX(object);
   const flipY = object.flipY === true;
-  const tint = workshopObjectColor(object);
+  const tint = canManuallyRecolorType(object.type) ?
+    workshopObjectColor(object) : null;
   if (object.type === 'player' && drawWorkshopImage(
-      ctx, playerArt ? tintWorkshopImage(playerArt, tint) : playerArt,
-      x, y, w, h, angle, flipX, flipY)) return true;
+      ctx, playerArt, x, y, w, h, angle, flipX, flipY)) return true;
   const artType = object.type === 'checkpoint' && checkpointActive ?
     'checkpointActive' : object.type;
   if (!angle && !flipX && !flipY)

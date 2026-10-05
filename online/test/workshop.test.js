@@ -10,15 +10,15 @@ import {LEVEL_TYPES, TYPE_LABELS, TRIGGER_KINDS, WORLD_LIMIT, MAX_LEVEL_OBJECTS,
         canManuallyRecolorType, normalizeParticleEmitter, sampleParticleEmitter,
         drawParticleEmitterPreview, drawEditorCanvas, drawPreviewCanvas} from '../workshop.js';
 
-test('renderers preserve color and keep the player blue and finish flag amber', () => {
+test('renderers preserve full color and fixed sprites keep their authored colors', () => {
   const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
   const android = readFileSync(new URL('../../src/android_main.c', import.meta.url), 'utf8');
   const windows = readFileSync(new URL('../../src/windows_main.c', import.meta.url), 'utf8');
   const game = readFileSync(new URL('../../src/game.c', import.meta.url), 'utf8');
   const workshop = readFileSync(new URL('../workshop.js', import.meta.url), 'utf8');
   const draft = newDraft();
-  assert.equal(draft.objects.find(object => object.type === 'player').color, '#5ab7e8');
-  assert.equal(draft.objects.find(object => object.type === 'goal').color, '#f2a76f');
+  assert.equal(draft.objects.find(object => object.type === 'player').color, '#fffdf8');
+  assert.equal(draft.objects.find(object => object.type === 'goal').color, '#fffdf8');
   assert.match(styles, /--accent: #e68e70/);
   assert.match(styles, /--accent-blue: #67b4c8/);
   assert.doesNotMatch(styles, /grayscale\s*\(/i);
@@ -26,7 +26,16 @@ test('renderers preserve color and keep the player blue and finish flag amber', 
   assert.doesNotMatch(android, /grayscale|float gray/i);
   assert.doesNotMatch(game, /game_frame_apply_grayscale|grayscale/i);
   assert.doesNotMatch(windows, /game_frame_apply_grayscale|grayscale/i);
-  assert.match(workshop, /function workshopObjectColor\(object\)[\s\S]*?if \(object\.type === 'goal'\) return DEFAULT_COLORS\.goal/);
+  assert.doesNotMatch(game, /0x5ab7e8|0xf2a76f/i);
+  assert.match(game, /custom_object_can_manually_recolor\(o->type\) \? 128 : 0/);
+  const enemyDraw = game.match(/case ON_LEVEL_ENEMY: \{([\s\S]*?)break;\s*\}/)?.[1];
+  assert.ok(enemyDraw, 'custom-level enemy uses the supplied duck sprite');
+  assert.match(enemyDraw, /sprite_draw_rotated_flipped/);
+  assert.match(enemyDraw, /sprite_draw_flipped/);
+  assert.doesNotMatch(enemyDraw, /sprite_draw_(?:rotated_)?tinted/,
+    'fixed duck artwork is drawn without a programmatic tint');
+  assert.match(workshop,
+    /const tint = canManuallyRecolorType\(object\.type\) \?[\s\S]*?: null/);
 });
 
 test('saving stays active without autosave or control-hint captions', () => {
@@ -114,8 +123,14 @@ test('manual recoloring is blocked only for fixed-art workshop objects', () => {
     'player', 'portal-normal', 'portal-jetpack', 'orb-yellow', 'orb-orange',
     'goal', 'checkpoint', 'enemy', 'coin',
   ];
-  for (const type of blocked)
+  const fixedArtLevel = newDraft('fixed-art-neutral-colors');
+  for (const type of blocked) {
     assert.equal(canManuallyRecolorType(type), false, `${type} cannot be manually recolored`);
+    const object = type === 'player' || type === 'goal' ?
+      fixedArtLevel.objects.find(item => item.type === type) :
+      addObject(fixedArtLevel, type, 100, 100);
+    assert.equal(object.color, '#fffdf8', `${type} stores no overlay tint`);
+  }
   for (const type of ['block', 'ground', 'hazard', 'trigger', 'slope', 'particle'])
     assert.equal(canManuallyRecolorType(type), true, `${type} remains manually recolorable`);
   assert.equal(TYPE_LABELS.enemy, 'Утка');
@@ -127,6 +142,11 @@ test('manual recoloring is blocked only for fixed-art workshop objects', () => {
   assert.match(app, /property === 'color' && !canManuallyRecolorType\(object\.type\)/);
   const native = readFileSync(new URL('../../src/lvgl_ui.c', import.meta.url), 'utf8');
   assert.match(native, /workshop_type_can_manually_recolor/);
+  assert(native.includes('int can_recolor_art = workshop_type_can_manually_recolor(type);'));
+  assert(native.includes('(!has_art || can_recolor_art)'),
+    'fixed sprite art does not get a colored backing shape');
+  assert(native.includes('if (can_recolor_art) {'),
+    'native fixed-art sprites are not recolored');
   assert.match(native, /LV_STATE_DISABLED/);
   assert.match(native, /return workshop_ground_selected \|\| workshop_first_recolorable_selected\(\) >= 0;/);
   assert(native.includes('workshop_ground_color_custom = 1;'));
@@ -373,7 +393,15 @@ test('particle emitters round-trip, stay non-solid and draw P markers plus orb s
 });
 
 test('recolor and background triggers round-trip, target groups, and update the playable preview', () => {
+  const defaultColorTrigger = addObject(newDraft('default-recolor'),
+    'trigger', 100, 100, 'recolor');
+  assert.equal(defaultColorTrigger.trigger.groupId, 3,
+    'new recolor triggers target the tintable built-in platform group');
   const level = newDraft('recolor-background');
+  const player = level.objects.find(object => object.type === 'player');
+  const goal = level.objects.find(object => object.type === 'goal');
+  player.number = 42;player.color = '#41cf69';
+  goal.number = 42;goal.color = '#41cf69';
   const first = addObject(level, 'block', 6, 6);
   first.number = 42;
   const other = addObject(level, 'block', 8, 6);
@@ -385,6 +413,8 @@ test('recolor and background triggers round-trip, target groups, and update the 
 
   assert.equal(validateDraft(level).ok, true);
   const record = publishedRecord('712', level);
+  assert.equal(record.project.objects.find(object => object.type === 'player').color, '#fffdf8');
+  assert.equal(record.project.objects.find(object => object.type === 'goal').color, '#fffdf8');
   const recolorWire = record.project.objects.find(object => object.id === recolor.id).trigger;
   const backgroundWire = record.project.objects.find(object => object.id === background.id).trigger;
   assert.deepEqual(recolorWire,
@@ -398,6 +428,10 @@ test('recolor and background triggers round-trip, target groups, and update the 
   assert.equal(state.objects.find(object => object.id === first.id).color, '#e547b2');
   assert.equal(state.objects.find(object => object.id === other.id).color, other.color,
     'recolor affects only the selected group, including block sprites');
+  assert.equal(state.objects.find(object => object.type === 'player').color, '#fffdf8',
+    'fixed player data uses no overlay tint');
+  assert.equal(state.objects.find(object => object.type === 'goal').color, '#fffdf8',
+    'fixed finish data uses no overlay tint');
   assert.equal(state.backgroundColor, '#468bd0');
   const canvas = recordingCanvas();
   drawPreviewCanvas(canvas.canvas, state);
@@ -406,8 +440,8 @@ test('recolor and background triggers round-trip, target groups, and update the 
 
   const switched = structuredClone(restored);
   assert.equal(setTriggerKind(switched, background.id, 'recolor'), true);
-  assert.equal(switched.objects.find(object => object.id === background.id).trigger.groupId, 2,
-    'switching from global background mode restores a valid target group');
+  assert.equal(switched.objects.find(object => object.id === background.id).trigger.groupId, 3,
+    'switching to recolor selects the recolorable built-in platform group');
   assert.equal(validateDraft(switched).ok, true);
 });
 
@@ -639,6 +673,46 @@ test('web artwork uses cached alpha-preserving tints in both editor and gameplay
     assert.equal(overlay.composite, 'source-atop');
     assert(editor.images.some(call => call.image === tint));
     assert(preview.images.some(call => call.image === tint));
+  } finally {
+    if (hadDocument) globalThis.document = oldDocument;
+    else delete globalThis.document;
+  }
+});
+
+test('fixed player, finish and enemy artwork ignores saved colors in editor and preview', () => {
+  const level = newDraft('fixed-art-colors');
+  const player = level.objects.find(object => object.type === 'player');
+  const goal = level.objects.find(object => object.type === 'goal');
+  const enemy = addObject(level, 'enemy', 10, 6);
+  player.color = '#41cf69';
+  goal.color = '#41cf69';
+  enemy.color = '#41cf69';
+  const playerArt = {type: 'player', naturalWidth: 64, naturalHeight: 64};
+  const goalArt = {type: 'goal', naturalWidth: 64, naturalHeight: 96};
+  const enemyArt = {type: 'enemy', naturalWidth: 64, naturalHeight: 64};
+  const offscreen = [];
+  const hadDocument = Object.hasOwn(globalThis, 'document');
+  const oldDocument = globalThis.document;
+  globalThis.document = {createElement(name) {
+    assert.equal(name, 'canvas');
+    const canvas = {width: 0, height: 0, getContext() {
+      return {drawImage() {}, fillRect() {}};
+    }};
+    offscreen.push(canvas);return canvas;
+  }};
+  try {
+    const art = {player: playerArt, goal: goalArt, enemy: enemyArt};
+    const editor = recordingCanvas();
+    drawEditorCanvas(editor.canvas, level, 0, 'build', art);
+    const preview = recordingCanvas();
+    drawPreviewCanvas(preview.canvas, createPreviewState(level), 'keyboard', art);
+
+    assert.equal(offscreen.length, 0, 'fixed sprites are never color-tinted');
+    for (const frame of [editor, preview]) {
+      assert(frame.images.some(call => call.image === playerArt));
+      assert(frame.images.some(call => call.image === goalArt));
+      assert(frame.images.some(call => call.image === enemyArt));
+    }
   } finally {
     if (hadDocument) globalThis.document = oldDocument;
     else delete globalThis.document;

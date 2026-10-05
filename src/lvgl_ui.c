@@ -1149,7 +1149,7 @@ static void workshop_place_object(int type, int col, int row) {
     if (type == ON_LEVEL_PARTICLE)
         o->emitter = on_level_particle_default();
     o->trigger_event = ON_TRIGGER_TOUCH;
-    o->trigger_group_id = 2; /* goal group */
+    o->trigger_group_id = workshop_trigger_kind == ON_TRIGGER_KIND_RECOLOR ? 3 : 2;
     o->trigger_x = 1;o->trigger_y = 0;o->trigger_duration = 3;
     workshop_set_trigger_kind(o, workshop_trigger_kind);
     workshop_object_count++;
@@ -1440,6 +1440,14 @@ static int workshop_trigger_action_for_kind(int kind) {
            kind == ON_TRIGGER_KIND_BACKGROUND ? ON_TRIGGER_SET_BACKGROUND :
            ON_TRIGGER_MOVE;
 }
+static int workshop_group_has_recolorable_object(int group_id) {
+    if (group_id == 3) return 1; /* built-in platform */
+    for (int i = 0; i < workshop_object_count; ++i)
+        if (workshop_objects[i].group_id == group_id &&
+            workshop_objects[i].type != ON_LEVEL_TRIGGER &&
+            workshop_type_can_manually_recolor(workshop_objects[i].type)) return 1;
+    return 0;
+}
 static void workshop_set_trigger_kind(WorkshopObject *object, int kind) {
     if (!object || kind < ON_TRIGGER_KIND_MOVE ||
         kind > ON_TRIGGER_KIND_BACKGROUND) return;
@@ -1449,7 +1457,10 @@ static void workshop_set_trigger_kind(WorkshopObject *object, int kind) {
     if (kind != ON_TRIGGER_KIND_BACKGROUND && kind != ON_TRIGGER_KIND_GRAVITY &&
         (previous_kind == ON_TRIGGER_KIND_BACKGROUND ||
          previous_kind == ON_TRIGGER_KIND_GRAVITY) && object->trigger_group_id == 0)
-        object->trigger_group_id = 2;
+        object->trigger_group_id = kind == ON_TRIGGER_KIND_RECOLOR ? 3 : 2;
+    if (kind == ON_TRIGGER_KIND_RECOLOR &&
+        !workshop_group_has_recolorable_object(object->trigger_group_id))
+        object->trigger_group_id = 3;
     if (kind == ON_TRIGGER_KIND_ROTATE && object->trigger_duration < 1)
         object->trigger_duration = 3;
     if (kind == ON_TRIGGER_KIND_GRAVITY && previous_kind != ON_TRIGGER_KIND_GRAVITY)
@@ -1524,7 +1535,7 @@ static void workshop_build_preview(OnPublishedLevel *level) {
                          .angle=workshop_player_angle,
                          .flip_x=workshop_player_flip_x,
                          .flip_y=workshop_player_flip_y,
-                         .color=0x5ab7e8u,.number=1,.visible=1};
+                         .color=0xffffffu,.number=1,.visible=1};
     snprintf(o->name, sizeof o->name, "%s", "Игрок");
     o = &level->objects[level->object_count++];
     *o = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
@@ -1533,7 +1544,7 @@ static void workshop_build_preview(OnPublishedLevel *level) {
                          .angle=workshop_goal_angle,
                          .flip_x=workshop_goal_flip_x,
                          .flip_y=workshop_goal_flip_y,
-                         .color=0xf2a76fu,.number=2,.visible=1};
+                         .color=0xffffffu,.number=2,.visible=1};
     snprintf(o->name, sizeof o->name, "%s", "Финиш");
     for (int i = 0; i < workshop_object_count &&
                     level->object_count < ON_LEVEL_OBJECT_CAP; ++i) {
@@ -1544,7 +1555,9 @@ static void workshop_build_preview(OnPublishedLevel *level) {
             .type=src->type,
             .x=src->x, .y=src->y, .w=src->w, .h=src->h, .angle=src->angle,
             .flip_x=src->flip_x, .flip_y=src->flip_y,
-            .color=workshop_colors[src->color_set % 4][src->color_index % 8],
+            .color=workshop_type_can_manually_recolor(src->type) ?
+                workshop_colors[src->color_set % 4][src->color_index % 8] :
+                0xffffffu,
             .number=src->group_id, .visible=1,
             .trigger_kind=src->trigger_kind,
             .trigger_event=src->trigger_event,
@@ -2432,19 +2445,21 @@ static void workshop_draw_world_object(lv_obj_t *root, int gx, int gy, int cell,
     int left = (int)lroundf(cx - shape_w * .5f);
     int top = (int)lroundf(cy - shape_h * .5f);
     int rotation = (int)lroundf(angle * 10.0f);
+    int has_art = art_id >= 0 && art_id < PV_ART_COUNT && pictures[art_id].data;
+    int can_recolor_art = workshop_type_can_manually_recolor(type);
     if (type == ON_LEVEL_PARTICLE) {
         lv_obj_t *marker = label(root, left, top, shape_w, shape_h, "P", 2,
                                  color, LV_TEXT_ALIGN_CENTER);
         lv_obj_set_style_transform_rotation(marker, rotation, 0);
         lv_obj_set_style_transform_pivot_x(marker, LV_PCT(50), 0);
         lv_obj_set_style_transform_pivot_y(marker, LV_PCT(50), 0);
-    } else if (type != ON_LEVEL_SLOPE) {
+    } else if (type != ON_LEVEL_SLOPE && (!has_art || can_recolor_art)) {
         lv_obj_t *shape = box(root, left, top, shape_w, shape_h, 4, color, 0);
         lv_obj_set_style_transform_rotation(shape, rotation, 0);
         lv_obj_set_style_transform_pivot_x(shape, LV_PCT(50), 0);
         lv_obj_set_style_transform_pivot_y(shape, LV_PCT(50), 0);
     }
-    if (art_id >= 0 && art_id < PV_ART_COUNT && pictures[art_id].data) {
+    if (has_art) {
         if (type == ON_LEVEL_GROUND && fabsf(angle) < .01f && w >= 2.0f) {
             int count = (int)ceilf(w / 2.0f);
             for (int i = 0; i < count; ++i) {
@@ -2464,8 +2479,10 @@ static void workshop_draw_world_object(lv_obj_t *root, int gx, int gy, int cell,
                 lv_obj_t *image = art_flipped(root, art_id, tile_cx, tile_cy,
                                               image_w, art_flip_x, flip_y);
                 if (image) {
-                    lv_obj_set_style_image_recolor(image, color, 0);
-                    lv_obj_set_style_image_recolor_opa(image, LV_OPA_50, 0);
+                    if (can_recolor_art) {
+                        lv_obj_set_style_image_recolor(image, color, 0);
+                        lv_obj_set_style_image_recolor_opa(image, LV_OPA_50, 0);
+                    }
                     lv_image_set_rotation(image, rotation);
                 }
             }
@@ -2483,8 +2500,10 @@ static void workshop_draw_world_object(lv_obj_t *root, int gx, int gy, int cell,
                                           (int)lroundf(cy), image_w,
                                           art_flip_x, flip_y);
             if (image) {
-                lv_obj_set_style_image_recolor(image, color, 0);
-                lv_obj_set_style_image_recolor_opa(image, LV_OPA_50, 0);
+                if (can_recolor_art) {
+                    lv_obj_set_style_image_recolor(image, color, 0);
+                    lv_obj_set_style_image_recolor_opa(image, LV_OPA_50, 0);
+                }
                 lv_image_set_rotation(image, rotation);
             }
         }
@@ -2617,12 +2636,12 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
     workshop_draw_world_object(map_clip, 0, 0, cell, ON_LEVEL_PLAYER,
         workshop_player_x, workshop_player_y, workshop_player_w, workshop_player_h,
         workshop_player_angle, workshop_player_flip_x, workshop_player_flip_y,
-        PV_ART_BREAD, C(5AB7E8),
+        PV_ART_BREAD, WS_CREAM,
         workshop_is_selected(-2));
     workshop_draw_world_object(map_clip, 0, 0, cell, ON_LEVEL_GOAL,
         workshop_goal_x, workshop_goal_y, workshop_goal_w, workshop_goal_h,
         workshop_goal_angle, workshop_goal_flip_x, workshop_goal_flip_y,
-        PV_ART_LEVEL_FLAG, C(F2A76F),
+        PV_ART_LEVEL_FLAG, WS_CREAM,
         workshop_is_selected(-3));
     for (int i = 0; i < workshop_object_count; ++i) {
         const WorkshopObject *o = &workshop_objects[i];
