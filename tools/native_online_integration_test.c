@@ -817,8 +817,8 @@ static void native_jetpack_portal_regression(void) {
     assert(!game_debug_custom_jetpack_active());
     game_set_lvgl_ui(1);
     lvgl_ui_frame(.016f, ui_pixels);
-    assert(lvgl_ui_test_label_present("Jetpack portal test"));
-    assert(!lvgl_ui_test_label_present("ID 2  ·  Jetpack portal test"));
+    assert(lvgl_ui_test_label_present("Уровень"));
+    assert(!lvgl_ui_test_label_present("ID —  ·  Уровень"));
     assert(lvgl_ui_test_label_present("Jetpack · ↑/W, ↓/S"));
     float parked_y = game_debug_custom_player_y();
     game_tick(.05f, NULL);
