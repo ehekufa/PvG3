@@ -17,6 +17,17 @@
 #include <string.h>
 #include <time.h>
 
+#ifdef PVG3_LVGL_TEST
+#undef assert
+#define assert(expression) do { \
+    if (!(expression)) { \
+        fprintf(stderr, "LVGL test assertion failed at %s:%d: %s\n", \
+                __FILE__, __LINE__, #expression); \
+        fflush(stderr);abort(); \
+    } \
+} while (0)
+#endif
+
 static struct {
     int present, map, host_role, guest_role;
     char room_id[ON_ROOM_ID_SIZE], host_id[ON_PLAYER_ID_SIZE];

@@ -31,10 +31,9 @@ jobs:
           exec > /tmp/pvg3-verify.log 2>&1
           verify_failed() {
             local status="$1" command="$2"
-            printf '::error title=Verification command failed::%s\n' "$command" >&3
-            tail -n 80 /tmp/pvg3-verify.log | sed 's/%/%25/g' | while IFS= read -r line; do
-              printf '::error::%s\n' "$line" >&3
-            done
+            local details
+            details=$(tail -n 80 /tmp/pvg3-verify.log | python3 -c 'import sys; print(sys.stdin.read().replace("%", "%25").replace("\\r", "%0D").replace("\\n", "%0A"), end="")')
+            printf '::error title=Verification command failed::%s%%0A%s\n' "$command" "$details" >&3
             exit "$status"
           }
           trap 'verify_failed "$?" "$BASH_COMMAND"' ERR
@@ -85,10 +84,8 @@ jobs:
             :
           else
             status=$?
-            printf '::error title=LVGL integration test failed::exit %s\n' "$status" >&3
-            tail -n 80 /tmp/pvg3-verify.log | sed 's/%/%25/g' | while IFS= read -r line; do
-              printf '::error::%s\n' "$line" >&3
-            done
+            details=$(tail -n 80 /tmp/pvg3-verify.log | python3 -c 'import sys; print(sys.stdin.read().replace("%", "%25").replace("\\r", "%0D").replace("\\n", "%0A"), end="")')
+            printf '::error title=LVGL integration test failed::exit %s%%0A%s\n' "$status" "$details" >&3
             exit "$status"
           fi
           clang -std=c11 -O2 -Wall -Wextra -Werror -Isrc \
