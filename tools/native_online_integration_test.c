@@ -1126,6 +1126,8 @@ static int run_lvgl_test(void) {
                    "Найди скрытый мост и монеты, затем доберись до финиша по платформам.") &&
            !strcmp(catalog.levels[1].id, ON_LEVEL_OFFICIAL_ID));
     assert(lvgl_ui_test_label_present("ОФИЦИАЛЬНЫЙ"));
+    assert(lvgl_ui_test_label_does_not_wrap("ОФИЦИАЛЬНЫЙ") &&
+           lvgl_ui_test_label_does_not_wrap(ON_LEVEL_OFFICIAL_ID));
     ui_tap(185, 318);tick_pump(3);
     assert(game_phase() == GAME_CUSTOM_PLAY);
     game_tick(.05f, NULL); /* settle on the ground before jumping */

@@ -23,6 +23,7 @@ void lvgl_ui_frame(float dt, uint32_t *game_rgba);
 #include "online_level.h"
 int lvgl_ui_test_art_loaded(int id);
 int lvgl_ui_test_label_present(const char *text);
+int lvgl_ui_test_label_does_not_wrap(const char *text);
 int lvgl_ui_test_workshop_level(OnPublishedLevel *level);
 #endif
 

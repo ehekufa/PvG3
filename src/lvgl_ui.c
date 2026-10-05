@@ -745,20 +745,24 @@ static void custom_levels_screen(lv_obj_t *root, const OnNetView *v) {
             lv_obj_set_style_border_width(card, 3, 0);
             lv_obj_set_style_border_color(card, C(000000), 0);
             box(card, 13, 15, 90, 47, 10, BUTTON_GRAY, 0);
-            label(card, 15, 17, 86, 43, v->levels[index].id, 2, BUTTON_TEXT,
-                  LV_TEXT_ALIGN_CENTER);
+            lv_obj_t *id_label = label(card, 15, 17, 86, 43,
+                  v->levels[index].id, 1, BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
+            lv_label_set_long_mode(id_label, LV_LABEL_LONG_MODE_CLIP);
             int official = on_level_id_is_official(v->levels[index].id);
-            label(card, 119, 7, official ? 258 : 410, 32,
-                  v->levels[index].title, 2, BUTTON_TEXT, LV_TEXT_ALIGN_LEFT);
+            lv_obj_t *title_label = label(card, 119, 7, official ? 249 : 410,
+                  32, v->levels[index].title, 2, BUTTON_TEXT, LV_TEXT_ALIGN_LEFT);
+            lv_label_set_long_mode(title_label, LV_LABEL_LONG_MODE_DOTS);
             if (official) {
-                box(card, 389, 10, 140, 25, 12, C(FFF1C7), 0);
-                label(card, 391, 10, 136, 25, "ОФИЦИАЛЬНЫЙ", 0,
-                      C(654600), LV_TEXT_ALIGN_CENTER);
+                box(card, 378, 10, 160, 25, 12, C(FFF1C7), 0);
+                lv_obj_t *official_label = label(card, 380, 10, 156, 25,
+                      "ОФИЦИАЛЬНЫЙ", 0, C(654600), LV_TEXT_ALIGN_CENTER);
+                lv_label_set_long_mode(official_label, LV_LABEL_LONG_MODE_CLIP);
             }
-            label(card, 121, 39, 410, 33,
+            lv_obj_t *description_label = label(card, 121, 39, 410, 33,
                   v->levels[index].description[0] ? v->levels[index].description :
                                                     "Нажми, чтобы играть в C-игре",
                   1, BUTTON_TEXT, LV_TEXT_ALIGN_LEFT);
+            lv_label_set_long_mode(description_label, LV_LABEL_LONG_MODE_DOTS);
         }
     } else if (!v->levels_busy) {
         box(root, 220, 322, 840, 190, 25, WHITE, 1);
@@ -4032,6 +4036,24 @@ static int lvgl_ui_test_tree_has_label(lv_obj_t *object, const char *text) {
 }
 int lvgl_ui_test_label_present(const char *text) {
     return text && lvgl_ui_test_tree_has_label(lv_screen_active(), text);
+}
+static int lvgl_ui_test_tree_label_does_not_wrap(lv_obj_t *object,
+                                                  const char *text) {
+    if (!object) return 0;
+    if (lv_obj_check_type(object, &lv_label_class)) {
+        const char *label_text = lv_label_get_text(object);
+        if (label_text && !strcmp(label_text, text))
+            return lv_label_get_long_mode(object) != LV_LABEL_LONG_MODE_WRAP;
+    }
+    uint32_t children = lv_obj_get_child_count(object);
+    for (uint32_t i = 0; i < children; ++i)
+        if (lvgl_ui_test_tree_label_does_not_wrap(
+                lv_obj_get_child(object, (int32_t)i), text)) return 1;
+    return 0;
+}
+int lvgl_ui_test_label_does_not_wrap(const char *text) {
+    return text &&
+           lvgl_ui_test_tree_label_does_not_wrap(lv_screen_active(), text);
 }
 int lvgl_ui_test_workshop_level(OnPublishedLevel *level) {
     if (!level) return 0;
