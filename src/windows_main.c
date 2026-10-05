@@ -11,6 +11,7 @@
 
 #include "game.h"
 #include "font.h"
+#include "preferences.h"
 #include "lvgl_ui.h"
 #include "online_net.h"
 
@@ -40,10 +41,11 @@ static wchar_t save_dir[PATH_CAP];
 static wchar_t campaign_file[PATH_CAP];
 static wchar_t garden_file[PATH_CAP];
 static wchar_t language_file[PATH_CAP];
+static wchar_t preferences_file[PATH_CAP];
 static wchar_t music_file[PATH_CAP];
 
 static int legacy_renderer_phase(int phase) {
-    return phase == GAME_MENU || phase == GAME_INTRO || phase == GAME_PLAY ||
+    return phase == GAME_INTRO || phase == GAME_PLAY ||
            phase == GAME_LEVEL_CLEAR || phase == GAME_WIN || phase == GAME_LOSE ||
            phase == GAME_GARDEN || phase == GAME_BOOK || phase == GAME_SELECT;
 }
@@ -109,6 +111,7 @@ static void initialize_paths(void) {
         join_path(campaign_file, PATH_CAP, save_dir, L"pvg3-campaign.v1");
         join_path(garden_file, PATH_CAP, save_dir, L"pvg3-garden.v1");
         join_path(language_file, PATH_CAP, save_dir, L"pvg3-language.v1");
+        join_path(preferences_file, PATH_CAP, save_dir, L"pvg3-settings.v1");
     }
     if (executable_dir[0]) {
         int n = swprintf(music_file, PATH_CAP,
@@ -128,6 +131,19 @@ static void load_language_preference(void) {
     if (WideCharToMultiByte(CP_ACP, 0, language_file, -1,
                             path, bytes, NULL, NULL) > 0)
         font_set_language_path(path);
+    free(path);
+}
+
+static void load_game_preferences(void) {
+    if (!preferences_file[0]) return;
+    int bytes = WideCharToMultiByte(CP_ACP, 0, preferences_file, -1,
+                                   NULL, 0, NULL, NULL);
+    if (bytes <= 0) return;
+    char *path = (char *)malloc((size_t)bytes);
+    if (!path) return;
+    if (WideCharToMultiByte(CP_ACP, 0, preferences_file, -1,
+                            path, bytes, NULL, NULL) > 0)
+        preferences_set_path(path);
     free(path);
 }
 
@@ -205,13 +221,19 @@ static void save_all(void) {
     garden_save();
 }
 
+static int music_is_playing = -1;
+
 static void set_music(int play) {
-    if (!play || !music_file[0]) {
+    int should_play = !!(play && preferences_music_enabled() && music_file[0]);
+    if (music_is_playing == should_play) return;
+    if (!should_play) {
         PlaySoundW(NULL, NULL, 0);
+        music_is_playing = 0;
         return;
     }
     PlaySoundW(music_file, NULL,
                SND_ASYNC | SND_FILENAME | SND_LOOP | SND_NODEFAULT);
+    music_is_playing = 1;
 }
 
 static void game_viewport(int client_w, int client_h, int *left, int *top,
@@ -346,6 +368,11 @@ static void render_frame(float dt) {
     if (fullscreen && !lvgl_ui_fullscreen(game_phase())) game_tick(0, game_pixels);
     if (ui_ready && !legacy_renderer_phase(game_phase()))
         lvgl_ui_frame(dt, game_pixels);
+    /* The whole composed game frame, including LVGL and sprite artwork, is
+     * monochrome; this also removes authored blue player tints. */
+    game_frame_apply_grayscale(game_pixels, (size_t)GAME_W * GAME_H);
+    /* Apply an in-game music toggle on the same frame as the UI change. */
+    set_music(focused && !IsIconic(window_handle));
     convert_pixels();
     InvalidateRect(window_handle, NULL, FALSE);
     UpdateWindow(window_handle);
@@ -486,6 +513,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous,
     SetProcessDPIAware();
     initialize_paths();
     load_language_preference();
+    load_game_preferences();
 
     game_init();
     campaign_load();

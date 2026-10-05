@@ -31,7 +31,6 @@ const WS_DB_STORE = 'drafts';
 const WS_LOCAL_FALLBACK_MAX = 1024 * 1024;
 let wsDbPromise = null;
 let wsDraftSaveTimer = 0;
-let wsDraftSaveMessage = 'Черновик сохранён на этом устройстве.';
 const wsPages = {home: $('ws-home-page'), editor: $('ws-editor-page'),
   preview: $('ws-preview-page'), catalog: $('ws-catalog-page')};
 let wsDraftFromLocalStorage = false;
@@ -189,13 +188,9 @@ function renderWorkshopHome() {
   $('ws-draft-status').textContent = wsDraft.publishedId ?
     `Последняя публикация: ID ${wsDraft.publishedId}` : '';
 }
-async function persistWorkshopDraft(message) {
+async function persistWorkshopDraft() {
   let serialized, localSaved = false;
-  try {serialized = JSON.stringify(wsDraft);}
-  catch {
-    $('ws-autosave-status').textContent = 'Не удалось подготовить черновик к сохранению.';
-    return;
-  }
+  try {serialized = JSON.stringify(wsDraft);} catch {return;}
   if (serialized.length <= WS_LOCAL_FALLBACK_MAX) {
     try {localStorage.setItem(WS_DRAFT_KEY, serialized);localSaved = true;} catch {}
   }
@@ -204,20 +199,13 @@ async function persistWorkshopDraft(message) {
     if (!localSaved) {
       try {localStorage.removeItem(WS_DRAFT_KEY);} catch {}
     }
-    $('ws-autosave-status').textContent = message;
-  } catch {
-    $('ws-autosave-status').textContent = localSaved ?
-      'Черновик сохранён в localStorage (резервная копия). Для больших черновиков нужна IndexedDB.' :
-      'Не удалось сохранить черновик. Проверь свободное место в хранилище браузера.';
-  }
+  } catch {}
 }
-function saveWorkshopDraft(message = 'Черновик сохранён на этом устройстве.') {
-  wsDraftSaveMessage = message;
+function saveWorkshopDraft() {
   clearTimeout(wsDraftSaveTimer);
-  $('ws-autosave-status').textContent = 'Сохранение черновика…';
   wsDraftSaveTimer = setTimeout(() => {
     wsDraftSaveTimer = 0;
-    void persistWorkshopDraft(wsDraftSaveMessage);
+    void persistWorkshopDraft();
   }, 250);
   $('ws-object-count').textContent = `${wsDraft.objects.length} / ${MAX_LEVEL_OBJECTS} объектов`;
   renderWorkshopHome();
@@ -225,7 +213,7 @@ function saveWorkshopDraft(message = 'Черновик сохранён на э�
 function flushWorkshopDraft() {
   if (!wsDraftSaveTimer) return;
   clearTimeout(wsDraftSaveTimer);wsDraftSaveTimer = 0;
-  void persistWorkshopDraft(wsDraftSaveMessage);
+  void persistWorkshopDraft();
 }
 function showWorkshopMessage(message = '') {
   const node = $('ws-editor-message');
@@ -492,9 +480,7 @@ function wsPointerDown(event) {
   const object = findObjectAt(wsDraft, point.x, point.y);
   showWorkshopMessage('');
   if (wsTool === 'build') {
-    if (!wsPaletteSelected) {
-      showWorkshopMessage('Сначала выбери объект в выбранной категории.');return;
-    }
+    if (!wsPaletteSelected) return;
     const objectType = wsType === 'block' ? wsBlockType :
       wsType === 'orb' ? wsOrbType :
       wsType === 'goal' ? wsGoalType :
@@ -627,8 +613,7 @@ function wsUpdateRotateLabels() {
 }
 function wsCopySelection() {
   wsClipboard = copyObjects(wsDraft, wsSelectedIds);
-  showWorkshopMessage(wsClipboard.length ? `Скопировано объектов: ${wsClipboard.length}.` :
-    'Игрок и финиш уникальны. Выбери обычный объект для копирования.');
+  showWorkshopMessage(wsClipboard.length ? `Скопировано объектов: ${wsClipboard.length}.` : '');
   wsRedrawEditor();
 }
 function wsPasteSelection() {
@@ -696,7 +681,7 @@ function beginNewDraft() {
   wsTriggerKind = 'move';wsGoalType = 'goal';wsPortalType = 'portal-normal';
   wsPaletteSelected = true;
   wsCamera = {x: 0, y: 0};
-  saveWorkshopDraft('Создан новый черновик.');setWorkshopPage('editor');
+  saveWorkshopDraft();setWorkshopPage('editor');
 }
 function setCatalogMessage(message = '') {
   const node = $('ws-catalog-message');node.textContent = message;
@@ -706,7 +691,7 @@ function renderWorkshopCatalog(levels) {
   const list = $('ws-catalog-list');list.replaceChildren();
   if (!levels.length) {
     const empty = document.createElement('p');empty.className = 'muted';
-    empty.textContent = 'В каталоге пока нет опубликованных уровней. Создай свой и нажми «Опубликовать».';
+    empty.textContent = 'В каталоге пока нет опубликованных уровней.';
     list.append(empty);return;
   }
   for (const level of levels) {
@@ -837,11 +822,11 @@ async function publishWorkshopDraft() {
   const check = validateDraft(wsDraft);
   if (!check.ok) {showWorkshopMessage(check.message);return;}
   const button = $('ws-publish');button.disabled = true;
-  showWorkshopMessage('');$('ws-autosave-status').textContent = 'Публикуем уровень…';
+  showWorkshopMessage('');
   try {
     const result = await publishLevel(wsDraft);
     wsDraft.publishedId = result.id;wsDraft.publishedAt = Date.now();
-    saveWorkshopDraft(`Опубликовано · ID ${result.id}. Запись появилась в каталоге.`);
+    saveWorkshopDraft();
     showWorkshopMessage(`Уровень опубликован под ID ${result.id}. Он доступен в каталоге и нативной игре.`);
     notice(`Уровень опубликован · ID ${result.id}`, 6000);
   } catch (error) {
@@ -849,7 +834,6 @@ async function publishWorkshopDraft() {
       error.status === 401 || error.status === 403 ?
       'Firebase отклонил запись. Для публикации правила должны разрешать создание записей в /levels и /levels-index. Правила базы автоматически не менялись.' :
       error.message;
-    $('ws-autosave-status').textContent = 'Черновик сохранён локально; публикация не подтверждена.';
     showWorkshopMessage(message);
   } finally {button.disabled = false;}
 }
@@ -896,7 +880,6 @@ async function refreshRooms() {
 function renderLobby() {
   if (!roomId || !room) return;
   $('room-code').textContent = roomId;
-  $('lobby-subtitle').textContent = `${room.map === 5 ? 'Водная карта' : 'Обычный газон'} · ${room.guest ? 'оба игрока подключены' : 'ждём второго игрока'}`;
   const mine = room[slot]?.role, otherSlot = slot === 'host' ? 'guest' : 'host';
   const other = room[otherSlot]?.role;
   for (const card of document.querySelectorAll('.side-card')) {
@@ -904,12 +887,6 @@ function renderLobby() {
     card.classList.toggle('selected', mine === role);
     card.disabled = !!room.state || (other === role && mine !== role);
   }
-  $('plants-taken').textContent = mine === 'plants' ? 'ТВОЯ СТОРОНА' : other === 'plants' ? 'Занято соперником' : 'Выбрать растения';
-  $('zombies-taken').textContent = mine === 'zombies' ? 'ТВОЯ СТОРОНА' : other === 'zombies' ? 'Занято соперником' : 'Выбрать зомби';
-  $('lobby-status').textContent = !room.guest ? 'Поделись ссылкой и жди друга. Сторону можно выбрать уже сейчас.' :
-    mine && other && mine !== other ? 'Оба игрока готовы! Бой начинается…' :
-    mine && mine === other ? 'Выбрана одна сторона. Одному игроку нужно поменять выбор.' :
-    mine ? 'Ты готов. Ждём выбора соперника…' : 'Выбери, за кого будешь играть.';
 }
 function enterMatch() {
   if (screen === 'match') return;
@@ -917,9 +894,6 @@ function enterMatch() {
   $('match-code').textContent = roomId;
   $('match-title').textContent = room?.[slot]?.role === 'plants' ? 'Защити Хлебушка' : 'Прорви защиту Кирилла';
   $('finish-wave').classList.toggle('hidden', room?.[slot]?.role !== 'zombies');
-  $('match-hint').textContent = room?.[slot]?.role === 'plants' ?
-    'Выбери пакетик и клетку. Монеты подсолнуха собираются касанием.' :
-    'Выбери вид утки слева и коснись нужного ряда на поле.';
 }
 async function enterRoom(id, alreadyJoined = false) {
   if (!validId(id)) {notice('Неверный код комнаты.');return;}

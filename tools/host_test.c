@@ -1,5 +1,5 @@
 /* Desktop screenshots: menu, book, Zen Garden, canal/lily, waves and robot.
- * clang -O2 -Wall -Wextra -Werror -Isrc src/game.c src/font.c \
+ * clang -O2 -Wall -Wextra -Werror -Isrc src/game.c src/font.c src/preferences.c \
  *     tools/host_test.c -o host_test -lm && ./host_test
  */
 #include <assert.h>
@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include "game.h"
 #include "font.h"
+#include "preferences.h"
 #include "online_net.h"
 
 static void test_language_preference(void) {
@@ -32,6 +33,95 @@ static void test_language_preference(void) {
     assert(font_language() == FONT_LANG_RU);
     font_set_language_path(NULL);
     assert(remove(path) == 0);
+}
+
+static void assert_frame_grayscale(const uint32_t *pixels, size_t count) {
+    for (size_t i = 0; i < count; ++i) {
+        unsigned red = pixels[i] & 255u;
+        unsigned green = (pixels[i] >> 8) & 255u;
+        unsigned blue = (pixels[i] >> 16) & 255u;
+        assert(red == green && green == blue);
+    }
+}
+
+static void test_frame_grayscale_filter(void) {
+    uint32_t pixels[] = {
+        0xff0000ffu, /* red in RGBA byte order */
+        0xff00ff00u, /* green */
+        0xffff0000u, /* blue */
+        0x80202020u  /* gray with non-opaque alpha */
+    };
+    game_frame_apply_grayscale(pixels, sizeof pixels / sizeof pixels[0]);
+    assert(pixels[0] == 0xff4d4d4du);
+    assert(pixels[1] == 0xff959595u);
+    assert(pixels[2] == 0xff1d1d1du);
+    assert(pixels[3] == 0x80202020u);
+    assert_frame_grayscale(pixels, sizeof pixels / sizeof pixels[0]);
+}
+
+static void test_blue_player_frame_grayscale(void) {
+    static uint32_t frame[GAME_W * GAME_H];
+    OnPublishedLevel level = {0};
+    level.width = 16;level.height = 10;level.object_count = 3;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+        .x=0,.y=8,.w=16,.h=2,.visible=1,.color=0xffffffu};
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
+        .x=2,.y=7,.w=.65f,.h=.85f,.visible=1,.color=0x0000ffu};
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.visible=1,.color=0xffffffu};
+    game_init();game_workshop_open();game_workshop_open_details();
+    game_workshop_open_editor();
+    assert(game_workshop_preview(&level));
+    game_tick(0, frame);
+    size_t colored_pixels = 0;
+    for (size_t i = 0; i < (size_t)GAME_W * GAME_H; ++i) {
+        unsigned red = frame[i] & 255u;
+        unsigned green = (frame[i] >> 8) & 255u;
+        unsigned blue = (frame[i] >> 16) & 255u;
+        colored_pixels += red != green || green != blue;
+    }
+    assert(colored_pixels == 0); /* including the blue-tinted player */
+    assert_frame_grayscale(frame, (size_t)GAME_W * GAME_H);
+    game_custom_level_exit();
+}
+
+static void test_game_preferences(void) {
+    const char *path = "pvg3-settings-test.preference";
+    if (remove(path) != 0) assert(errno == ENOENT);
+    preferences_set_path(path);
+    assert(preferences_music_enabled());
+    assert(preferences_neutral_background_enabled());
+    preferences_set_music_enabled(0);
+    preferences_set_neutral_background_enabled(0);
+    preferences_set_path(path);
+    assert(!preferences_music_enabled());
+    assert(!preferences_neutral_background_enabled());
+    preferences_set_music_enabled(1);
+    preferences_set_neutral_background_enabled(1);
+    preferences_set_path(path);
+    assert(preferences_music_enabled());
+    assert(preferences_neutral_background_enabled());
+    preferences_set_path(NULL);
+    assert(remove(path) == 0);
+}
+
+static void test_campaign_background_preference(void) {
+    static uint32_t frame[GAME_W * GAME_H];
+    game_init();
+    assert(preferences_neutral_background_enabled());
+    game_input_press(630, 80);
+    game_input_press(190, 260);
+    assert(game_phase() == GAME_PLAY);
+    game_tick(0, frame);
+    const uint32_t neutral = 0xff4a4a4au;
+    assert(frame[400 * GAME_W + 1000] == neutral);
+    preferences_set_neutral_background_enabled(0);
+    game_tick(0, frame);
+    assert(frame[400 * GAME_W + 1000] != neutral);
+    preferences_set_neutral_background_enabled(1);
+    game_tick(0, frame);
+    assert(frame[400 * GAME_W + 1000] == neutral);
+    game_init();
 }
 
 static void write_bmp(const char *path, int w, int h, const uint32_t *rgba) {
@@ -66,7 +156,10 @@ static void write_bmp(const char *path, int w, int h, const uint32_t *rgba) {
 }
 
 int main(void) {
+    test_frame_grayscale_filter();
     test_language_preference();
+    test_game_preferences();
+    assert(preferences_neutral_background_enabled());
     if (mkdir("shots", 0755) != 0 && errno != EEXIST) {
         perror("shots");
         return 1;
@@ -83,6 +176,10 @@ int main(void) {
     assert(fb[580 * GAME_W + 105] == 0xFFFFFFFFu); /* book is white */
     assert(fb[560 * GAME_W + 450] == 0xFFFFFFFFu); /* start is white */
     assert(fb[580 * GAME_W + 900] == 0xFFFFFFFFu); /* online is white */
+    assert(fb[538 * GAME_W + 1058] == 0xff999999u); /* no level-count caption */
+    assert(fb[689 * GAME_W + 640] == 0xff999999u); /* no autosave footer */
+    test_campaign_background_preference();
+    game_tick(0.016f, fb);
     write_bmp("shots/menu.bmp", GAME_W, GAME_H, fb);
     game_input_press(1058, 615);            /* native room browser */
     on_net_pump_once();                      /* desktop fake: no rooms */
@@ -103,6 +200,7 @@ int main(void) {
     game_input_press(1150, 50);             /* skip -> selector */
     game_input_press(1130, 50);             /* back to menu */
 
+    preferences_set_neutral_background_enabled(0); /* inspect supplied map art */
     game_input_press(1080, 85);             /* САД ДЗЕН */
     game_input_press(580, 70);              /* Kirill's blue coin sunflower */
     game_input_press(421, 176);
@@ -177,7 +275,7 @@ int main(void) {
     game_tick(0, fb);
     uint32_t water = fb[285 * GAME_W + 700];
     uint32_t land = fb[175 * GAME_W + 700];
-    assert(((water >> 16) & 255u) > ((land >> 16) & 255u) + 20u);
+    assert(((land >> 16) & 255u) > ((water >> 16) & 255u) + 20u);
     write_bmp("shots/water_empty.bmp", GAME_W, GAME_H, fb);
     game_input_press(125, 615);            /* lily packet */
     game_input_press(535, 288);            /* water row 2, column 3 */
@@ -185,5 +283,7 @@ int main(void) {
     game_input_press(535, 288);            /* peashooter on lily */
     game_tick(0, fb);
     write_bmp("shots/water_planted.bmp", GAME_W, GAME_H, fb);
+    preferences_set_neutral_background_enabled(1);
+    test_blue_player_frame_grayscale();
     return 0;
 }

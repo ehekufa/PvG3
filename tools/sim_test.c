@@ -1,6 +1,6 @@
 /* Deterministic desktop regression tests; no Android or framebuffer needed.
  * clang -std=c11 -O2 -Wall -Wextra -Werror -DGAME_TEST -Isrc \
- *     src/game.c src/font.c tools/sim_test.c -o sim_test -lm && ./sim_test
+ *     src/game.c src/font.c src/preferences.c tools/sim_test.c -o sim_test -lm && ./sim_test
  */
 #include <assert.h>
 #include <math.h>

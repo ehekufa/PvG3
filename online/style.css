@@ -48,6 +48,8 @@ button:disabled { opacity: .55; cursor: not-allowed; }
   padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
            max(28px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
 }
+/* Keep the requested monochrome appearance for web UI, canvas art and dialogs. */
+.shell, .toast, dialog { filter: grayscale(1); }
 main { min-width: 0; }
 .topbar {
   display: flex;
@@ -372,7 +374,6 @@ main { min-width: 0; }
 
 .lobby-top {  display: flex; align-items: end; justify-content: space-between; gap: 28px; }
 .lobby-top h1 { margin: 10px 0; }
-.lobby-top .muted { color: var(--ink); font-size: 18px; }
 .code-panel {
   min-width: 275px;
   padding: 16px;
@@ -399,11 +400,8 @@ main { min-width: 0; }
 .side-card.selected { border-width: 5px; }
 .side-card h2 { margin: 0 0 6px; font-size: 34px; }
 .side-card .overline, .side-card.duck-side .overline { color: var(--dark); }
-.side-card p { max-width: 430px; font-size: 17px; line-height: 1.4; }
-.side-card b { display: block; margin-top: 14px; padding: 9px 12px; border: 2px solid var(--outline); border-radius: 4px; color: var(--button-ink); background: var(--button-gray); }
 .side-art { display: flex; height: 152px; align-items: center; gap: 16px; position: relative; }
 .side-art img { width: 138px; height: 138px; object-fit: contain; image-rendering: pixelated; }
-.lobby-bottom { padding: 17px; border: 2px solid var(--outline); border-radius: 5px; color: var(--ink); background: var(--paper); text-align: center; }
 
 .match-heading { display: flex; align-items: center; justify-content: space-between; }
 .match-heading h2 { margin: 0 0 18px; color: var(--ink); font-size: 32px; }

@@ -9,6 +9,7 @@
 #include "game.h"
 #include "game_view.h"
 #include "font.h"
+#include "preferences.h"
 #include "online_net.h"
 #include "online_particle.h"
 
@@ -27,6 +28,18 @@ static int use_lvgl_ui;
 
 /* Constant-friendly color macro (usable in static initializers AND runtime). */
 #define COL(r,g,b) (0xFF000000u | ((b)<<16) | ((g)<<8) | (r))
+
+void game_frame_apply_grayscale(uint32_t *rgba, size_t pixel_count) {
+    if (!rgba) return;
+    for (size_t i = 0; i < pixel_count; ++i) {
+        uint32_t pixel = rgba[i];
+        unsigned red = pixel & 255u;
+        unsigned green = (pixel >> 8) & 255u;
+        unsigned blue = (pixel >> 16) & 255u;
+        unsigned gray = (77u * red + 150u * green + 29u * blue + 128u) >> 8;
+        rgba[i] = (pixel & 0xff000000u) | (gray * 0x00010101u);
+    }
+}
 
 static inline void setpix(int x, int y, uint32_t c) {
     if ((unsigned)x < GAME_W && (unsigned)y < GAME_H)
@@ -474,7 +487,8 @@ static OnPublishedLevel custom_level;
 #define CUSTOM_FALL_MARGIN_TILES 3.0f
 static int custom_object_count, custom_level_active, custom_level_won, custom_level_coins;
 static uint32_t custom_background_color = CUSTOM_BACKGROUND_DEFAULT;
-static float custom_fall_plane_y, custom_death_flash_time;
+static float custom_fall_plane_y;
+static int custom_player_dead;
 static int custom_player_index = -1;
 #define CUSTOM_ID_MAP_CAP 65536
 static int custom_id_map[CUSTOM_ID_MAP_CAP];
@@ -601,6 +615,7 @@ void game_custom_vertical_control(int vertical) {
 int game_custom_jetpack_mode(void) {
     return custom_level_active && custom_jetpack_mode;
 }
+int game_custom_player_dead(void) { return custom_player_dead; }
 
 static float spawn_t;
 static int to_spawn;
@@ -1570,6 +1585,17 @@ static void draw_background(void) {
         scene_level == WATER_LEVEL &&
         (phase == PH_PLAY || phase == PH_LEVEL_CLEAR ||
          phase == PH_LOSE || phase == PH_WIN || phase == PH_ONLINE_MATCH);
+    if (preferences_neutral_background_enabled()) {
+        /* Hide the saturated green map/sky by default, without changing any
+         * game art or water-row rules. The board stays legible in grayscale. */
+        rect(0, 0, GAME_W - 1, GAME_H - 1, COL(48, 52, 59));
+        rect(LAWN_X, LAWN_Y, GAME_W - 1,
+             LAWN_Y + ROWS * CELL_H - 1, COL(71, 75, 81));
+        if (water_scene)
+            rect(LAWN_X, LAWN_Y + CELL_H, GAME_W - 1,
+                 LAWN_Y + 3 * CELL_H - 1, COL(88, 92, 98));
+        return;
+    }
     int id = water_scene && sprite_pixels[SPR_WATER_MAP] ? SPR_WATER_MAP : SPR_MAP;
     rect(0, 0, GAME_W - 1, GAME_H - 1, COL(108, 171, 73));
     if (sprite_pixels[id]) {
@@ -1791,38 +1817,28 @@ static void draw_menu(void) {
 
     draw_button_white(98, 568, 392, 665, "КНИГА", 5);
     draw_button_white(440, 548, 840, 674, "СТАРТ", 8);
-    char status[75];
-    snprintf(status, sizeof(status), "ПРОЙДЕНО: %d / 10   •   СТАРТ: УРОВЕНЬ %d",
-             game_completed_level(), resume_level);
-    draw_text_c(1058, 538, 2, COL(68, 68, 68), status);
     draw_button_white(893, 569, 1223, 661, "ОНЛАЙН", 6);
     rect(926, 609, 946, 614, COL(17, 17, 17));
     rect(933, 602, 939, 621, COL(17, 17, 17));
-    draw_text_c(640, 689, 2, COL(68, 68, 68),
-                "АВТОСОХРАНЕНИЕ. РАСТЕНИЯ СОЗДАЛ КИРИЛЛ.");
 }
 
-/* Level 0 replays the story; any wave can be replayed. Progress and the
- * resume level use thicker neutral-black outlines rather than color fills. */
+/* Level 0 replays the story; any wave can be replayed. */
 static void draw_level_select(void) {
     rect(0, 0, GAME_W - 1, GAME_H - 1, COL(226, 226, 226));
     rect(0, 0, GAME_W - 1, 101, COL(190, 190, 190));
     rect(0, 99, GAME_W - 1, 102, COL(0, 0, 0));
     draw_text_c(630, 32, 6, COL(17, 17, 17), "ВЫБОР УРОВНЯ");
     draw_button_black(1045, 18, 1265, 85, "НАЗАД", 4);
-    char status[64];
-    snprintf(status, sizeof(status), "ПРОЙДЕНО: %d / 10", game_completed_level());
-    draw_text_c(640, 121, 3, COL(68, 68, 68), status);
     for (int n = 1; n <= MAX_LEVEL; n++) {
         int col = (n - 1) % 5, row = (n - 1) / 5;
-        int x = 100 + col * 220, y = 210 + row * 190;
+        int x = 100 + col * 220, y = 155 + row * 190;
         int active = resume_level == n;
-        int completed = !!(completed_mask & (1u << (n - 1)));
-        int inset = active ? 5 : completed ? 4 : 3;
+        int inset = active ? 5 : 3;
         rect(x, y, x + 180, y + 130, COL(0, 0, 0));
         rect(x + inset, y + inset, x + 180 - inset, y + 130 - inset,
              active ? COL(189, 189, 189) : COL(255, 255, 255));
-        int water_art = n == WATER_LEVEL && sprite_pixels[SPR_WATER_MAP];
+        int water_art = !preferences_neutral_background_enabled() &&
+                        n == WATER_LEVEL && sprite_pixels[SPR_WATER_MAP];
         if (water_art) {
             sprite_crop(SPR_WATER_MAP, x + inset, y + inset,
                         180 - 2 * inset, 130 - 2 * inset,
@@ -1839,12 +1855,8 @@ static void draw_level_select(void) {
         else snprintf(label, sizeof(label), "%d ВРАГОВ", 5 + n * 3);
         draw_text_c(x + 90, y + 97, 2, text_color, label);
     }
-    draw_text_c(640, 166, 2, COL(68, 68, 68),
-                "ВОЛНА ЗАКОНЧИТСЯ, КОГДА ВСЕ ЕЁ ВРАГИ ПОБЕЖДЕНЫ");
     draw_button_white(425, 567, 855, 641, "УРОВЕНЬ 0: КАТ-СЦЕНА", 4);
     draw_button_white(880, 567, 1240, 641, "КАТАЛОГ УРОВНЕЙ", 3);
-    draw_text_c(640, 668, 2, COL(68, 68, 68),
-                "ПОВТОР КАТ-СЦЕНЫ НЕ СБРАСЫВАЕТ СОХРАНЕНИЕ");
 }
 
 /* The fallback garden uses the same flat button style as every other screen. */
@@ -2017,7 +2029,6 @@ static void draw_intro(void) {
     int size = 5;
     while (size > 2 && text_w(size, line) > 990) size--;
     draw_text_c(640, 602, size, COL(17, 17, 17), line);
-    draw_text_c(1085, 690, 2, COL(230, 230, 230), "КОСНИСЬ: ДАЛЬШЕ");
 }
 
 static void draw_play_scene(void) {
@@ -2073,20 +2084,15 @@ static void draw_result(void) {
     rect(265, 182, 1015, 638, COL(245, 245, 245));
     if (phase == PH_LEVEL_CLEAR) {
         draw_text_c(640, 246, 7, COL(17, 17, 17), "УРОВЕНЬ ПРОЙДЕН!");
-        draw_text_c(640, 329, 3, COL(68, 68, 68), "ВСЯ ВОЛНА ПОБЕЖДЕНА!");
-        draw_text_c(570, 375, 4, COL(68, 68, 68), "СЛЕДУЮЩИЙ УРОВЕНЬ:");
-        draw_int(878, 375, 4, COL(17, 17, 17), level + 1);
         draw_button_white(390, 450, 890, 565, "ДАЛЬШЕ", 7);
         draw_button_black(480, 580, 800, 645, "В МЕНЮ", 3);
     } else if (phase == PH_LOSE) {
         draw_text_c(640, 254, 7, COL(17, 17, 17),
                     level == 10 && boss_phase ? "РОБОТ УНИЧТОЖИЛ ВСЕХ!" : "ЗАЩИТА ПРОРВАНА!");
-        draw_text_c(640, 361, 4, COL(68, 68, 68), "ПОПРОБУЙ ЕЩЁ РАЗ");
         draw_button_white(335, 460, 645, 565, "ПОВТОРИТЬ", 4);
         draw_button_black(660, 460, 975, 565, "В МЕНЮ", 4);
     } else if (phase == PH_WIN) {
         draw_text_c(640, 237, 7, COL(17, 17, 17), "РОБОТ ОСТАНОВЛЕН!");
-        draw_text_c(640, 340, 4, COL(68, 68, 68), "ФИНАЛ ПРОЙДЕН. ГУСИ СПАСЕНЫ!");
         draw_button_black(425, 460, 855, 580, "В МЕНЮ", 6);
     }
 }
@@ -2152,8 +2158,7 @@ static void draw_online_rooms(void) {
         char page_text[48];
         snprintf(page_text, sizeof page_text, "%d / %d", page + 1, (count + 7) / 8);
         draw_text_c(640, 670, 2, COL(68, 68, 68), page_text);
-    } else draw_text_c(640, 674, 2, COL(68, 68, 68),
-                       "КОСНИСЬ КОМНАТЫ ИЛИ СОЗДАЙ СВОЮ КНОПКОЙ +");
+    }
     if (online_search) {
         rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(20, 20, 20), 193);
         rect(222, 92, 1058, 667, COL(32, 32, 32));
@@ -2174,7 +2179,6 @@ static void draw_online_rooms(void) {
         char matches[80];snprintf(matches, sizeof matches, "ПОДХОДЯЩИХ КОМНАТ: %d", count);
         draw_text_c(640, 542, 2, COL(68, 68, 68), matches);
         draw_button_white(395, 568, 880, 644, "ВОЙТИ ПО КОДУ", 4);
-        if (online_hint_time > 0) draw_text_c(640, 654, 2, COL(68, 68, 68), online_hint);
     }
 }
 
@@ -2208,14 +2212,10 @@ static void draw_online_lobby(void) {
     rect(148, 603, 1132, 690, COL(32, 32, 32));
     if (!online_view.guest_id[0])
         draw_text_c(640, 611, 3, COL(255, 255, 255), "ЖДЁМ ВТОРОГО ИГРОКА...");
-    else if (!mine || !other)
-        draw_text_c(640, 611, 3, COL(255, 255, 255), "ВЫБЕРИТЕ РАЗНЫЕ СТОРОНЫ");
     else if (online_view.slot == ON_SLOT_GUEST && !online_view.has_state)
         draw_text_c(640, 611, 3, COL(255, 255, 255), "ХОЗЯИН ЗАПУСКАЕТ БОЙ...");
     if (online_view.notice[0])
         draw_text_c(640, 665, 2, COL(230, 230, 230), online_view.notice);
-    else draw_text_c(640, 665, 2, COL(215, 215, 215),
-                     "ХОЗЯИН И ГОСТЬ МОГУТ ИГРАТЬ ЗА ЛЮБУЮ СТОРОНУ");
 }
 
 static void draw_online_match(void) {
@@ -2256,9 +2256,7 @@ static void draw_online_match(void) {
     snprintf(title, sizeof title, "КОМНАТА %s    УТОК ОСТАЛОСЬ: %d",
              online_view.room_id, s->left + s->duck_count);
     draw_text(269, 22, 3, COL(17, 17, 17), title);
-    draw_text(277, 76, 2, COL(68, 68, 68),
-              s->map == 5 ? "ВОДА: СНАЧАЛА КУВШИНКА" :
-                            "ВЫБЕРИ КАРТОЧКУ, ЗАТЕМ КЛЕТКУ ИЛИ РЯД");
+
     draw_button_white(917, 20, 1088, 91, "КНИГА", 3);
     draw_button_black(1093, 17, 1265, 91, "ВЫЙТИ", 3);
     int n = plants ? PT_COUNT : 3;
@@ -2280,17 +2278,8 @@ static void draw_online_match(void) {
         draw_int(136, y + 57, 3, COL(17, 17, 17), cost);
         if (!affordable) rect_blend(17, y + 4, 230, y + 93, COL(64, 64, 64), 105);
     }
-    if (!plants) {
+    if (!plants)
         draw_button_white(15, 615, 232, 702, "ЗАКОНЧИТЬ", 2);
-        draw_text(17, 523, 2, COL(255, 255, 255), "ВЫБЕРИ УТКУ И РЯД");
-    }
-    rect_blend(250, 681, 1279, 719, COL(20, 20, 20), 218);
-    if (online_hint_time > 0) draw_text_c(760, 690, 2, COL(230, 230, 230), online_hint);
-    else if (online_view.notice[0]) draw_text_c(760, 690, 2, COL(230, 230, 230), online_view.notice);
-    else if (online_view.pending) draw_text_c(760, 690, 2, COL(230, 230, 230),
-                                              "ОЖИДАЕМ ПОДТВЕРЖДЕНИЯ ХОДА...");
-    else if (!online_view.guest_id[0]) draw_text_c(760, 690, 2, COL(230, 230, 230),
-                                                   "СОПЕРНИК ВЫШЕЛ. БОЙ ПРИОСТАНОВЛЕН.");
     if (s->winner) {
         rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(20, 20, 20), 198);
         rect(283, 197, 997, 585, COL(0, 0, 0));
@@ -2699,7 +2688,7 @@ static int custom_platformer_start(const OnPublishedLevel *source) {
     memset(custom_portal_inside, 0, sizeof custom_portal_inside);
     custom_jetpack_mode = custom_jetpack_active = 0;
     custom_background_color = CUSTOM_BACKGROUND_DEFAULT;
-    custom_death_flash_time = 0;
+    custom_player_dead = 0;
     custom_gravity = 1450.0f;custom_elapsed_time = 0;
     custom_player_collision_enabled = 1;
     custom_group_rotation_count = 0;
@@ -2722,7 +2711,8 @@ static int custom_platformer_start(const OnPublishedLevel *source) {
 static void custom_platformer_stop(void) {
     custom_level_active = 0;custom_level_won = 0;custom_object_count = 0;
     custom_checkpoint_id = 0;custom_respawn_x = custom_respawn_y = 0;
-    custom_fall_plane_y = custom_death_flash_time = 0;
+    custom_fall_plane_y = 0;
+    custom_player_dead = 0;
     custom_gravity = 1450.0f;custom_elapsed_time = 0;
     custom_group_rotation_count = 0;
     custom_control_axis = custom_control_vertical = 0;
@@ -2932,10 +2922,7 @@ static void custom_platformer_update(float dt) {
     if (!custom_level_active || custom_level_won) return;
     if (dt < 0) dt = 0;
     if (dt > .05f) dt = .05f;
-    if (custom_death_flash_time > 0) {
-        custom_death_flash_time -= dt;
-        if (custom_death_flash_time < 0) custom_death_flash_time = 0;
-    }
+    if (custom_player_dead) return;
     custom_elapsed_time += dt;
     custom_player_vx = (float)custom_control_axis * 250.0f;
     if (custom_control_axis < 0) custom_player_facing_left = 1;
@@ -2979,9 +2966,19 @@ static void custom_platformer_update(float dt) {
                            custom_fall_plane_y;
     int escaped_world_top = custom_player_y + custom_player_h <
                             -CUSTOM_WORLD_LIMIT * CUSTOM_TILE_H;
-    if (fell_below_level || escaped_world_top) {
+    if (fell_below_level) {
+        /* Falling is a terminal death: no checkpoint or automatic restart. */
+        custom_player_dead = 1;
+        custom_player_vx = custom_player_vy = 0;
+        custom_player_grounded = 0;
+        custom_jetpack_active = 0;
+        custom_control_axis = custom_control_vertical = 0;
+        custom_jump_request = custom_jump_held = 0;
+        custom_trigger_request = custom_trigger_held = 0;
+        return;
+    }
+    if (escaped_world_top) {
         custom_player_reset();
-        if (fell_below_level) custom_death_flash_time = .55f;
         player_respawned = 1;
     }
     if (custom_player_collision_enabled && !player_respawned) {
@@ -3190,10 +3187,12 @@ static void custom_draw_particle_effects(void) {
 static void custom_platformer_draw(void) {
     custom_camera_x = custom_player_x + custom_player_w * .5f - GAME_W * .40f;
     custom_camera_y = custom_player_y + custom_player_h * .5f - 411.0f;
+    uint32_t rendered_background = preferences_neutral_background_enabled() ?
+                                  CUSTOM_BACKGROUND_DEFAULT : custom_background_color;
     rect(0, 0, GAME_W - 1, GAME_H - 1,
-         COL((custom_background_color >> 16) & 255u,
-             (custom_background_color >> 8) & 255u,
-             custom_background_color & 255u));
+         COL((rendered_background >> 16) & 255u,
+             (rendered_background >> 8) & 255u,
+             rendered_background & 255u));
     /* A flat neutral backdrop keeps background colors from looking like
      * collision overlays; the level's own artwork remains visible. */
     for (int i = 0; i < custom_object_count; i++)
@@ -3213,7 +3212,7 @@ static void custom_platformer_draw(void) {
         player_flip_x = custom_player_facing_left;
         player_flip_y = player->flip_y;
     }
-    if (custom_level_active && player_visible) {
+    if (custom_level_active && player_visible && !custom_player_dead) {
         int px = (int)lrintf(custom_player_x - custom_camera_x);
         int py = (int)lrintf(custom_player_y - custom_camera_y);
         int player_art = !custom_jetpack_mode ? PV_ART_BREAD :
@@ -3230,11 +3229,6 @@ static void custom_platformer_draw(void) {
                 (int)custom_player_w, (int)custom_player_h,
                 player_flip_x, player_flip_y, player_tint, 128);
     }
-    if (custom_death_flash_time > 0) {
-        rect_blend(0, 103, GAME_W - 1, GAME_H - 1, COL(0, 0, 0), 90);
-        rect(410, 306, 870, 394, COL(0, 0, 0));
-        draw_text_c(640, 334, 4, COL(255, 255, 255), "ТЫ УПАЛ!");
-    }
     rect(0, 0, GAME_W - 1, 102, COL(190, 190, 190));
     rect(0, 100, GAME_W - 1, 102, COL(0, 0, 0));
     draw_text(24, 19, 3, COL(17, 17, 17), custom_level.title);
@@ -3246,7 +3240,6 @@ static void custom_platformer_draw(void) {
         rect(358, 264, 922, 447, COL(0, 0, 0));
         rect(365, 271, 915, 440, COL(245, 245, 245));
         draw_text_c(640, 304, 5, COL(17, 17, 17), "УРОВЕНЬ ПРОЙДЕН!");
-        draw_text_c(640, 373, 2, COL(68, 68, 68), "НАЖМИ «К УРОВНЯМ», ЧТОБЫ ВЕРНУТЬСЯ");
     }
 }
 
@@ -3396,7 +3389,14 @@ void game_tick(float dt, uint32_t *fb) {
             if (intro_t >= length[intro_step]) advance_intro();
         }
     }
-    if (fb) { FB = fb; render(); }
+    if (fb) {
+        FB = fb;
+        render();
+        /* Make the software-rendered frame monochrome at its source, so every
+         * host renderer and screenshot sees grayscale sprites as well. Native
+         * frontends repeat this after LVGL to cover UI drawn on top. */
+        game_frame_apply_grayscale(fb, (size_t)GAME_W * GAME_H);
+    }
 }
 
 int game_phase(void) { return (int)phase; }
@@ -3820,7 +3820,6 @@ int game_debug_custom_player_grounded(void) {return custom_player_grounded;}
 int game_debug_custom_player_facing_left(void) {return custom_player_facing_left;}
 float game_debug_custom_gravity(void) {return custom_gravity;}
 uint32_t game_debug_custom_background_color(void) {return custom_background_color;}
-float game_debug_custom_death_flash(void) {return custom_death_flash_time;}
 int game_debug_custom_checkpoint_id(void) {return custom_checkpoint_id;}
 int game_debug_custom_jetpack_mode(void) {return custom_jetpack_mode;}
 int game_debug_custom_jetpack_active(void) {return custom_jetpack_active;}

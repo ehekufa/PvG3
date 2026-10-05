@@ -35,7 +35,7 @@
             <button class="primary-button" id="create" type="button"><span class="plus icon-plus" aria-hidden="true"></span> Создать комнату</button>
           </section>
           <section class="panel list-panel" aria-labelledby="list-title">
-            <div class="panel-title"><span class="round-icon outline round-icon-grid" aria-hidden="true"></span><div><span class="overline">ВЫБЕРИ КОМНАТУ</span><h2 id="list-title">Свободные комнаты</h2></div>
+            <div class="panel-title"><span class="round-icon outline round-icon-grid" aria-hidden="true"></span><div><span class="overline">КОМНАТЫ</span><h2 id="list-title">Свободные комнаты</h2></div>
               <button class="refresh" id="refresh" type="button" title="Обновить список" aria-label="Обновить список"><img class="refresh-icon" src="../assets/art/Переворот-блоков.png" alt="" aria-hidden="true"></button></div>
             <div class="room-list" id="room-list"><p class="muted">Ищем открытые комнаты…</p></div>
             <p class="hint">Друг может поделиться ссылкой с кодом комнаты. Закрытые и занятые комнаты в список не попадают.</p>
@@ -186,7 +186,6 @@
                 </div>
                 <button class="small-button ws-delete-selected" id="ws-delete-selected" type="button">Удалить выбранное</button>
               </div>
-              <p class="ws-status" id="ws-autosave-status" aria-live="polite"></p>
             </aside>
           </div>
         </section>
@@ -215,7 +214,6 @@
         <section class="ws-page hidden" id="ws-catalog-page" aria-label="Каталог уровней игроков">
           <div class="ws-page-toolbar"><button class="small-button" id="ws-catalog-back" type="button">Назад · Мастерская</button>
             <h2>Уровни игроков</h2><button class="small-button" id="ws-catalog-refresh" type="button"><img class="refresh-icon" src="../assets/art/Переворот-блоков.png" alt="" aria-hidden="true">Обновить</button></div>
-          <p class="muted">Уровни доступны на вебе, Android и Windows. Выбери уровень, чтобы сыграть в браузере.</p>
           <div id="ws-catalog-list" class="ws-catalog-list"><p class="muted">Загружаем каталог…</p></div>
           <p id="ws-catalog-message" class="ws-error hidden" role="status" aria-live="polite"></p>
         </section>
@@ -223,17 +221,16 @@
 
       <section class="screen hidden" id="lobby-screen" aria-labelledby="lobby-title">
         <button type="button" class="back-link" id="leave-lobby">Выйти из комнаты</button>
-        <div class="lobby-top"><div><span class="eyebrow">ВЫ В КОМНАТЕ</span><h1 id="lobby-title">Выбери сторону</h1><p class="muted" id="lobby-subtitle">Ждём соперника…</p></div>
+        <div class="lobby-top"><div><span class="eyebrow">ВЫ В КОМНАТЕ</span><h1 id="lobby-title">Выбор стороны</h1></div>
           <div class="code-panel"><span class="overline">КОД КОМНАТЫ</span><strong id="room-code">------</strong><button type="button" id="share">Скопировать ссылку</button></div></div>
-        <div class="sides"><button type="button" class="side-card plant-side" data-side="plants"><div class="side-art"><img src="../assets/art/peashooter.png" alt="Горохострел"><img src="../assets/art/coin-sunflower.png" alt="Подсолнух"></div><span class="overline">ЗАЩИТА</span><h2>Растения</h2><p>Сажай растения Кирилла, подбирай монеты и не дай уткам пройти к дому.</p><b id="plants-taken">Свободно</b></button>
-          <button type="button" class="side-card duck-side" data-side="zombies"><div class="side-art"><img src="../assets/art/zombie-duck.png" alt="Утка-зомби"><img src="../assets/art/duck-cone.png" alt="Утка с конусом"><img src="../assets/art/duck-bucket.png" alt="Утка с ведром"></div><span class="overline">НАСТУПЛЕНИЕ</span><h2>Зомби-утки</h2><p>Покупай уток, выбирай ряд и прорвись через растения. Конус и ведро дают больше здоровья.</p><b id="zombies-taken">Свободно</b></button></div>
-        <div class="lobby-bottom" id="lobby-status">Оба игрока выбирают разные стороны. Бой начнётся автоматически.</div>
+        <div class="sides"><button type="button" class="side-card plant-side" data-side="plants"><div class="side-art"><img src="../assets/art/peashooter.png" alt="Горохострел"><img src="../assets/art/coin-sunflower.png" alt="Подсолнух"></div><span class="overline">ЗАЩИТА</span><h2>Растения</h2></button>
+          <button type="button" class="side-card duck-side" data-side="zombies"><div class="side-art"><img src="../assets/art/zombie-duck.png" alt="Утка-зомби"><img src="../assets/art/duck-cone.png" alt="Утка с конусом"><img src="../assets/art/duck-bucket.png" alt="Утка с ведром"></div><span class="overline">НАСТУПЛЕНИЕ</span><h2>Зомби-утки</h2></button></div>
       </section>
 
       <section class="screen hidden" id="match-screen" aria-label="Онлайн-бой">
         <div class="match-heading"><div><span class="eyebrow">КОМНАТА <span id="match-code"></span></span><h2 id="match-title">Онлайн-бой</h2></div><button type="button" class="back-link" id="leave-match">Выйти из боя ×</button></div>
-        <div class="canvas-wrap"><canvas id="battle" width="1280" height="720" aria-label="Игровое поле. Выбери карточку слева, затем клетку или ряд." role="img"></canvas></div>
-        <div class="match-controls"><span id="match-hint">Выбери карточку слева и коснись поля.</span><button type="button" id="finish-wave" class="small-button hidden">Закончить волну</button></div>
+        <div class="canvas-wrap"><canvas id="battle" width="1280" height="720" aria-label="Игровое поле" role="img"></canvas></div>
+        <div class="match-controls"><button type="button" id="finish-wave" class="small-button hidden">Закончить волну</button></div>
       </section>
     </main>
   </div>

@@ -8,6 +8,7 @@
 #include "lvgl_ui.h"
 #include "game_view.h"
 #include "font.h"
+#include "preferences.h"
 #endif
 
 #include <assert.h>
@@ -316,6 +317,13 @@ static void screenshot(const char *name) {
 /* Exercises actual LVGL pointer events and the existing in-memory Firebase.
  * Also writes screenshots if PVG3_LVGL_SHOTS=1; never touches the live DB. */
 static uint32_t ui_pixels[GAME_W * GAME_H];
+static uint32_t grayscale_pixel(uint32_t pixel) {
+    unsigned red = pixel & 255u;
+    unsigned green = (pixel >> 8) & 255u;
+    unsigned blue = (pixel >> 16) & 255u;
+    unsigned gray = (77u * red + 150u * green + 29u * blue + 128u) >> 8;
+    return (pixel & 0xff000000u) | (gray * 0x00010101u);
+}
 static void assert_platformer_art(void) {
     const int ids[] = {PV_ART_LEVEL_BLOCK, PV_ART_LEVEL_PLATFORM,
                        PV_ART_LEVEL_TRIGGER, PV_ART_LEVEL_TRIGGER_ROTATE,
@@ -349,6 +357,7 @@ static void assert_platformer_art(void) {
 static void ui_snapshot(const char *name) {
     game_tick(0, lvgl_ui_fullscreen(game_phase()) ? NULL : ui_pixels);
     lvgl_ui_frame(.050f, ui_pixels);
+    game_frame_apply_grayscale(ui_pixels, (size_t)GAME_W * GAME_H);
     const char *filter = getenv("PVG3_LVGL_SHOTS");
     if (!filter || !*filter || (strcmp(filter, "1") && strcmp(filter, name))) return;
     char path[100];snprintf(path, sizeof path, "shots/lvgl_%s.ppm", name);
@@ -685,7 +694,7 @@ static void native_trigger_runtime_regression(void) {
            game_debug_custom_checkpoint_id() == 5);
     game_custom_level_exit();
 
-    /* Falling below the playable level is a death and returns to the start. */
+    /* Falling below the playable level is terminal: checkpoints do not revive. */
     level.object_count = 2;
     level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_PLAYER,
         .x=1,.y=1,.w=.65f,.h=.85f,.visible=1,.number=1};
@@ -695,18 +704,23 @@ static void native_trigger_runtime_regression(void) {
     float start_y = game_debug_custom_player_y();
     int fell_and_died = 0;
     for (int i = 0; i < 100; ++i) {
-        float previous_y = game_debug_custom_player_y();
         game_tick(.05f, NULL);
-        if (previous_y > start_y + 200.0f &&
-            fabsf(game_debug_custom_player_y() - start_y) < .001f) {
-            fell_and_died = 1;
-            break;
-        }
+        if (game_custom_player_dead()) {fell_and_died = 1;break;}
     }
-    assert(fell_and_died && game_debug_custom_death_flash() > .5f);
+    assert(fell_and_died && game_custom_player_dead() &&
+           game_debug_custom_player_y() > start_y + 200.0f);
+    float dead_x = game_debug_custom_player_x();
+    float dead_y = game_debug_custom_player_y();
+    game_custom_control(1, 1, 1);
+    for (int i = 0; i < 20; ++i) game_tick(.05f, NULL);
+    assert(game_custom_player_dead() &&
+           fabsf(game_debug_custom_player_x() - dead_x) < .001f &&
+           fabsf(game_debug_custom_player_y() - dead_y) < .001f &&
+           game_debug_custom_player_vx() == 0.0f &&
+           game_debug_custom_player_vy() == 0.0f);
     game_custom_level_exit();
 
-    /* Falling beyond the world's hard limit also returns to the checkpoint. */
+    /* Falling at the world's hard limit also stays dead despite a checkpoint. */
     level.object_count = 3;
     level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_PLAYER,
         .x=1,.y=99999.0f,.w=.65f,.h=.85f,.visible=1,.number=1};
@@ -717,16 +731,12 @@ static void native_trigger_runtime_regression(void) {
     assert(game_workshop_preview(&level));
     game_tick(0, NULL);
     assert(game_debug_custom_checkpoint_id() == 3);
-    float fall_spawn_y = (99999.0f + 1.0f - .85f) * 72.0f;
-    int fell_to_checkpoint = 0;
+    int fell_at_world_limit = 0;
     for (int i = 0; i < 60; ++i) {
         game_tick(.05f, NULL);
-        if (game_debug_custom_death_flash() > 0 &&
-            fabsf(game_debug_custom_player_y() - fall_spawn_y) < .001f) {
-            fell_to_checkpoint = 1;break;
-        }
+        if (game_custom_player_dead()) {fell_at_world_limit = 1;break;}
     }
-    assert(fell_to_checkpoint && game_debug_custom_checkpoint_id() == 3 &&
+    assert(fell_at_world_limit && game_debug_custom_checkpoint_id() == 3 &&
            fabsf(game_debug_custom_player_vy()) < .001f &&
            fabsf(game_debug_custom_player_vx()) < .001f &&
            !game_debug_custom_player_grounded());
@@ -849,7 +859,7 @@ static void native_recolor_background_regression(void) {
     assert(game_workshop_preview(&level));
     game_tick(0, base_frame);
     assert(game_debug_custom_background_color() == 0x30343bu);
-    assert(base_frame[200 * GAME_W + 20] == 0xff3b3430u);
+    assert(base_frame[200 * GAME_W + 20] == 0xff343434u);
     game_custom_level_exit();
 
     level.object_count = 7;
@@ -870,15 +880,21 @@ static void native_recolor_background_regression(void) {
     assert(game_debug_custom_object(5, &untouched) &&
            untouched.color == 0x55c8eau);
     assert(game_debug_custom_background_color() == 0x4c82d0u);
+    assert(preferences_neutral_background_enabled());
     game_tick(0, changed_frame);
-    assert(changed_frame[160 * GAME_W + 20] ==
-           (0xff000000u | (0xd0u << 16) | (0x82u << 8) | 0x4cu));
+    assert(changed_frame[160 * GAME_W + 20] == 0xff343434u);
+    preferences_set_neutral_background_enabled(0);
+    game_tick(0, changed_frame);
+    assert(changed_frame[160 * GAME_W + 20] == 0xff7b7b7bu);
     int changed_pixels = 0;
     for (int y = 285; y < 390; ++y)
         for (int x = 875; x < 980; ++x)
             changed_pixels += base_frame[y * GAME_W + x] !=
                               changed_frame[y * GAME_W + x];
-    assert(changed_pixels > 100); /* recolor must visibly tint block artwork */
+    assert(changed_pixels > 100); /* object recoloring remains a separate feature */
+    preferences_set_neutral_background_enabled(1);
+    game_tick(0, changed_frame);
+    assert(changed_frame[160 * GAME_W + 20] == 0xff343434u);
     game_custom_level_exit();
 }
 
@@ -911,7 +927,7 @@ static void native_jetpack_portal_regression(void) {
     lvgl_ui_frame(.016f, ui_pixels);
     assert(lvgl_ui_test_label_present("Уровень"));
     assert(!lvgl_ui_test_label_present("ID —  ·  Уровень"));
-    assert(lvgl_ui_test_label_present("Jetpack · Вверх/W, Вниз/S"));
+    assert(!lvgl_ui_test_label_present("Jetpack · Вверх/W, Вниз/S"));
     float parked_y = game_debug_custom_player_y();
     game_tick(.05f, NULL);
     assert(!game_debug_custom_jetpack_active());
@@ -973,7 +989,7 @@ static void native_jetpack_portal_regression(void) {
     game_custom_control(0, 0, 0);
     assert(!game_custom_jetpack_mode());
     lvgl_ui_frame(.016f, ui_pixels);
-    assert(lvgl_ui_test_label_present("Прыжок · Пробел / Вверх"));
+    assert(!lvgl_ui_test_label_present("Прыжок · Пробел / Вверх"));
     for (int i = 0; i < 3; ++i) game_tick(.05f, NULL);
     assert(!game_custom_jetpack_mode());
 
@@ -985,6 +1001,33 @@ static void native_jetpack_portal_regression(void) {
     game_tick(.05f, NULL);
     assert(game_custom_jetpack_mode() && !game_debug_custom_jetpack_active());
     game_custom_level_exit();
+}
+
+static void native_terminal_fall_ui_regression(void) {
+    static OnPublishedLevel level;
+    memset(&level, 0, sizeof level);
+    snprintf(level.id, sizeof level.id, "%s", "fall-ui");
+    snprintf(level.title, sizeof level.title, "%s", "Terminal fall test");
+    level.width = 16;level.height = 10;level.object_count = 2;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_PLAYER,
+        .x=1,.y=1,.w=.65f,.h=.85f,.visible=1,.number=1};
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
+    game_workshop_open();game_workshop_open_details();game_workshop_open_editor();
+    assert(game_workshop_preview(&level));
+    for (int i = 0; i < 100 && !game_custom_player_dead(); ++i)
+        game_tick(.05f, NULL);
+    assert(game_custom_player_dead());
+    ui_snapshot("custom_dead");
+    assert(lvgl_ui_test_label_present("К уровням") &&
+           lvgl_ui_test_label_present("Настройки") &&
+           !lvgl_ui_test_label_present("ТЫ УПАЛ!") &&
+           !lvgl_ui_test_label_present("ТЫ УМЕР") &&
+           !lvgl_ui_test_label_present("Падение завершило уровень. Возрождения нет.") &&
+           !lvgl_ui_test_label_present("ПРЫЖОК") &&
+           !lvgl_ui_test_label_present("ВПЕРЁД"));
+    ui_tap(1140, 55); /* the only gameplay exit remains available after death */
+    assert(game_phase() == GAME_WORKSHOP_EDIT);
 }
 
 static void lvgl_trace(const char *name) {
@@ -1008,6 +1051,8 @@ static int run_lvgl_test(void) {
     lvgl_trace("recolor/background regression complete");
     native_jetpack_portal_regression();
     lvgl_trace("portal regression complete");
+    native_terminal_fall_ui_regression();
+    lvgl_trace("terminal fall UI regression complete");
     game_init();assert(game_save_export(after, bytes) && !memcmp(before, after, bytes));
     lvgl_trace("save integrity check complete");
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER));
@@ -1035,22 +1080,42 @@ static int run_lvgl_test(void) {
     assert(ui_pixels[580 * GAME_W + 100] == 0xFFFFFFFFu); /* book */
     assert(ui_pixels[560 * GAME_W + 420] == 0xFFFFFFFFu); /* start */
     assert(ui_pixels[580 * GAME_W + 905] == 0xFFFFFFFFu); /* online */
+    assert(ui_pixels[680 * GAME_W + 910] == 0xFFFFFFFFu); /* large settings button */
 
     assert(lvgl_ui_test_label_present("Настройки"));
-    ui_tap(1145, 684);
-    assert(lvgl_ui_test_label_present("Язык интерфейса"));
-    assert(lvgl_ui_test_label_present("Русский") &&
-           lvgl_ui_test_label_present("English"));
-    ui_tap(640, 388); /* choose English and keep the settings dialog open */
+    ui_tap(1042, 687);
+    assert(lvgl_ui_test_label_present("Язык интерфейса") &&
+           lvgl_ui_test_label_present("Музыка") &&
+           lvgl_ui_test_label_present("Фон уровня") &&
+           lvgl_ui_test_label_present("Однотонный") &&
+           lvgl_ui_test_label_present("Авторский"));
+    assert(lvgl_ui_test_label_present("Музыка: ВКЛ."));
+    ui_snapshot("settings");
+    ui_tap(640, 330); /* music really toggles off */
+    assert(!preferences_music_enabled() &&
+           lvgl_ui_test_label_present("Музыка: ВЫКЛ."));
+    ui_tap(640, 330); /* and back on */
+    assert(preferences_music_enabled() &&
+           lvgl_ui_test_label_present("Музыка: ВКЛ."));
+    ui_tap(792, 442); /* authored colored background option */
+    assert(!preferences_neutral_background_enabled());
+    ui_tap(487, 442); /* restore the requested plain neutral background */
+    assert(preferences_neutral_background_enabled());
+    ui_tap(792, 217); /* choose English and keep settings open */
     assert(font_language() == FONT_LANG_EN);
     assert(lvgl_ui_test_label_present("Interface language") &&
+           lvgl_ui_test_label_present("Music") &&
+           lvgl_ui_test_label_present("Level background") &&
+           lvgl_ui_test_label_present("Plain") &&
+           lvgl_ui_test_label_present("Artwork") &&
+           !lvgl_ui_test_label_present("The entire game is displayed in grayscale.") &&
            lvgl_ui_test_label_present("Plants vs. Geese 3") &&
            lvgl_ui_test_label_present("Settings"));
-    ui_tap(640, 531); /* close settings */
-    ui_tap(1145, 684);
-    ui_tap(640, 316); /* switch back to Russian */
+    ui_tap(640, 594); /* close settings */
+    ui_tap(1042, 687);
+    ui_tap(487, 217); /* switch back to Russian */
     assert(font_language() == FONT_LANG_RU);
-    ui_tap(640, 531);
+    ui_tap(640, 594);
 
     ui_tap(1080, 80);assert(game_phase() == GAME_CUSTOM_LEVELS);tick_pump(2);
     ui_snapshot("menu_player_catalog");
@@ -1472,21 +1537,24 @@ static int run_lvgl_test(void) {
     ui_tap(185, 318);tick_pump(3);
     assert(game_phase() == GAME_CUSTOM_PLAY);
     lvgl_ui_frame(.016f, ui_pixels);
-    assert(lvgl_ui_test_label_present("Кнопки · WASD"));
+    assert(!lvgl_ui_test_label_present("Кнопки · WASD"));
     ui_tap(910, 55); /* settings button in the native platformer HUD */
     assert(lvgl_ui_test_label_present("Язык интерфейса") &&
-           lvgl_ui_test_label_present("Обводки столкновений не рисуются."));
-    ui_tap(640, 388); /* English */
+           lvgl_ui_test_label_present("Музыка") &&
+           lvgl_ui_test_label_present("Фон уровня") &&
+           !lvgl_ui_test_label_present("Весь экран игры отображается в оттенках серого."));
+    ui_tap(792, 217); /* English */
     assert(font_language() == FONT_LANG_EN);
-    assert(lvgl_ui_test_label_present("Controls · WASD") &&
+    assert(!lvgl_ui_test_label_present("Controls · WASD") &&
            lvgl_ui_test_label_present("Back to levels") &&
            lvgl_ui_test_label_present("ACTION") &&
-           lvgl_ui_test_label_present("Collision outlines are not drawn."));
-    ui_tap(640, 531); /* close the settings overlay */
+           lvgl_ui_test_label_present("Music") &&
+           lvgl_ui_test_label_present("Level background"));
+    ui_tap(640, 594); /* close the settings overlay */
     assert(!lvgl_ui_test_label_present("Interface language"));
-    ui_tap(910, 55);ui_tap(640, 316); /* restore Russian for the other checks */
+    ui_tap(910, 55);ui_tap(487, 217); /* restore Russian for the other checks */
     assert(font_language() == FONT_LANG_RU);
-    ui_tap(640, 531);
+    ui_tap(640, 594);
     game_tick(.05f, NULL); /* settle on the ground before jumping */
     float custom_x = game_debug_custom_player_x();
     float custom_y = game_debug_custom_player_y();
@@ -1510,19 +1578,22 @@ static int run_lvgl_test(void) {
     ui_tap(1150, 76);assert(game_phase() == GAME_SELECT);
     ui_tap(1150, 76);assert(game_phase() == GAME_MENU);
     ui_snapshot("menu_after_custom");
+    preferences_set_neutral_background_enabled(0); /* test the supplied map PNG */
     ui_tap(830, 79);assert(game_phase() == GAME_GARDEN);
     ui_snapshot("garden");
-    /* Unoccupied soil/wood must be pixel-for-pixel from the author's PNG,
-     * not the old checkerboard, fake-green wash or a hidden wooden path. */
+    /* Unoccupied soil/wood must come from the author's PNG, then be shown
+     * in grayscale—not as a checkerboard, fake-green wash or hidden path. */
     int w, h;
     const uint32_t *map = game_art_rgba(PV_ART_LAWN, &w, &h);
     assert(map && w == 500 && h == 500);
     int wood_x = 190, soil_x = 1100, clear_y = 625;
     assert(ui_pixels[clear_y * GAME_W + wood_x] ==
-           map[(clear_y * h / GAME_H) * w + wood_x * (w / 2) / 250]);
+           grayscale_pixel(map[(clear_y * h / GAME_H) * w +
+                               wood_x * (w / 2) / 250]));
     assert(ui_pixels[clear_y * GAME_W + soil_x] ==
-           map[(clear_y * h / GAME_H) * w + w / 2 +
-               (soil_x - 250) * (w - w / 2) / (GAME_W - 250)]);
+           grayscale_pixel(map[(clear_y * h / GAME_H) * w + w / 2 +
+               (soil_x - 250) * (w - w / 2) / (GAME_W - 250)]));
+    preferences_set_neutral_background_enabled(1);
     uint8_t garden[GAME_GARDEN_CELLS], garden_after[GAME_GARDEN_CELLS];
     ui_tap(320, 55);ui_board_tap(424, 176); /* no more tap -> tap planting */
     game_garden_export(garden);assert(garden[1] == 0);
@@ -1536,6 +1607,7 @@ static int run_lvgl_test(void) {
     assert(garden_state.garden_mode == 1);
     ui_drag(450, 55, 649, 176, "garden_goose_hover");
     game_garden_export(garden);assert(garden[3] == 6);
+    preferences_set_neutral_background_enabled(0); /* original water illustration */
     ui_tap(180, 93); /* water map is selectable without losing placements */
     game_offline_ui_snapshot(&garden_state);
     assert(garden_state.garden_map == 5 && garden[3] == 6);
@@ -1548,7 +1620,7 @@ static int run_lvgl_test(void) {
     int garden_src_x = w / 2 + (garden_canal_x - 250) *
         (w - w / 2) / (GAME_W - 250);
     assert(ui_pixels[garden_canal_y * GAME_W + garden_canal_x] ==
-           garden_water[garden_src_y * w + garden_src_x]);
+           grayscale_pixel(garden_water[garden_src_y * w + garden_src_x]));
     ui_tap(60, 57); /* return to plants while keeping the water map */
     ui_drag(840, 55, 535, 288, "garden_water_lily");
     game_garden_export(garden);
@@ -1586,10 +1658,11 @@ static int run_lvgl_test(void) {
     int src_canal_y = h / 5 + (canal_y - 232) * (h * 27 / 50 - h / 5) / 224;
     int src_canal_x = w / 2 + (canal_x - 250) * (w - w / 2) / (GAME_W - 250);
     assert(ui_pixels[canal_y * GAME_W + canal_x] ==
-           water_map[src_canal_y * w + src_canal_x]);
+           grayscale_pixel(water_map[src_canal_y * w + src_canal_x]));
+    preferences_set_neutral_background_enabled(1);
     /* The lily illustration must survive recharge; no black/blank packet. */
     uint32_t lily_icon_pixel = ui_pixels[600 * GAME_W + 50];
-    assert(((lily_icon_pixel >> 8) & 255u) > 180u);
+    assert(((lily_icon_pixel >> 8) & 255u) > 40u);
     int initial_coins = game_debug_coin_balance();
     ui_tap(120, 610);ui_board_tap(535, 288);
     assert(!game_debug_lily_at(1, 2) && game_debug_coin_balance() == initial_coins);

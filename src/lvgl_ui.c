@@ -6,6 +6,7 @@
 #include "game.h"
 #include "game_view.h"
 #include "font.h"
+#include "preferences.h"
 #include "online_net.h"
 #include "online_particle.h"
 #include "vendor/lvgl/lvgl.h"
@@ -90,7 +91,8 @@ enum {
     U_WORKSHOP_GOAL_VARIANT_BASE = 1580,
     U_WORKSHOP_PORTAL_VARIANT_BASE = 1590,
     U_SETTINGS_OPEN = 1700, U_SETTINGS_CLOSE, U_SETTINGS_LANG_RU,
-    U_SETTINGS_LANG_EN
+    U_SETTINGS_LANG_EN, U_SETTINGS_MUSIC_TOGGLE,
+    U_SETTINGS_BG_NEUTRAL, U_SETTINGS_BG_ART
 };
 
 static lv_display_t *display;
@@ -423,11 +425,11 @@ static void menu_screen(lv_obj_t *root) {
     button(root, 90, 563, 280, 94, "Умная книга", 2, U_MENU_BOOK);
     button(root, 410, 548, 445, 125, "Начать игру", 3, U_MENU_PLAY);
     button(root, 895, 563, 295, 94, "Играть вдвоём", 2, U_MENU_ONLINE);
-    button(root, 1055, 662, 180, 45, "Настройки", 1, U_SETTINGS_OPEN);
+    button(root, 895, 662, 295, 50, "Настройки", 2, U_SETTINGS_OPEN);
 }
 
 static void levels_screen(lv_obj_t *root) {
-    header(root, "Выбери уровень", "Назад", U_MENU_BACK);
+    header(root, "Уровни", "Назад", U_MENU_BACK);
     for (int n = 1; n <= 10; n++) {
         int col = (n - 1) % 5, row = (n - 1) / 5;
         int x = 84 + col * 225, y = 194 + row * 188;
@@ -590,10 +592,6 @@ static void play_screen(lv_obj_t *root) {
     else snprintf(title, sizeof title, "Уровень %d  ·  Осталось: %d",
                   state.level, state.wave_remaining);
     label(root, 270, 32, 639, 45, title, 2, WHITE, LV_TEXT_ALIGN_LEFT);
-    label(root, 271, 75, 652, 42,
-          drag_notice_left > 0 ? drag_notice : state.level == 5 ?
-          "Тяни кувшинку на воду" : "Тяни растение на клетку",
-          2, drag_notice_left > 0 ? LIGHT_GRAY : C(D0D0D0), LV_TEXT_ALIGN_LEFT);
     button(root, 929, 43, 150, 64, "Книга", 2, U_OFFLINE_BOOK);
     button(root, 1094, 43, 165, 64, "В меню", 2, U_OFFLINE_MENU);
     for (int i = 0; i < 5; ++i) {
@@ -613,11 +611,6 @@ static void result_screen(lv_obj_t *root, int phase) {
                         phase == GAME_WIN ? "Робот остановлен!" :
                         "Защита прорвана";
     label(root, 347, 222, 586, 81, title, 4, INK, LV_TEXT_ALIGN_CENTER);
-    label(root, 355, 317, 570, 91,
-          phase == GAME_LEVEL_CLEAR ? "Волна побеждена. Готов к следующей?" :
-          phase == GAME_WIN ? "Кирилл и гуси спасены!" :
-          "Попробуй снова — сохранение не пропало.",
-          2, MUTED, LV_TEXT_ALIGN_CENTER);
     if (phase == GAME_LEVEL_CLEAR) {
         button(root, 392, 461, 496, 98, "Следующий уровень", 2, U_RESULT_NEXT);
         button(root, 480, 581, 320, 63, "В меню", 1, U_RESULT_MENU);
@@ -724,12 +717,9 @@ static void custom_levels_screen(lv_obj_t *root, const OnNetView *v) {
     box(root, 43, 165, 1195, 94, 20, PAPER, 1);
     label(root, 68, 179, 770, 34, "ПУБЛИЧНЫЙ КАТАЛОГ УРОВНЕЙ",
           1, MUTED, LV_TEXT_ALIGN_LEFT);
-    label(root, 68, 213, 830, 33,
-          v->levels_busy ? "Подключаемся к каталогу…" :
-          v->levels_notice[0] ? v->levels_notice :
-          v->level_count ? "Выбери уровень, чтобы запустить его в C-игре." :
-                           "Пока нет опубликованных уровней.",
-          2, v->levels_notice[0] ? MUTED : INK, LV_TEXT_ALIGN_LEFT);
+    if (v->levels_notice[0])
+        label(root, 68, 213, 830, 33, v->levels_notice, 2,
+              MUTED, LV_TEXT_ALIGN_LEFT);
     button(root, 824, 185, 177, 54, "Мастерская", 2,
            U_CUSTOM_WORKSHOP);
     lv_obj_t *refresh = button(root, 1015, 185, 193, 54, "", 2,
@@ -765,11 +755,12 @@ static void custom_levels_screen(lv_obj_t *root, const OnNetView *v) {
                       "ОФИЦИАЛЬНЫЙ", 0, C(654600), LV_TEXT_ALIGN_CENTER);
                 lv_label_set_long_mode(official_label, LV_LABEL_LONG_MODE_CLIP);
             }
-            lv_obj_t *description_label = label(card, 121, 39, 410, 33,
-                  v->levels[index].description[0] ? v->levels[index].description :
-                                                    "Нажми, чтобы играть в C-игре",
-                  1, BUTTON_TEXT, LV_TEXT_ALIGN_LEFT);
-            lv_label_set_long_mode(description_label, LV_LABEL_LONG_MODE_DOTS);
+            if (v->levels[index].description[0]) {
+                lv_obj_t *description_label = label(card, 121, 39, 410, 33,
+                      v->levels[index].description, 1, BUTTON_TEXT,
+                      LV_TEXT_ALIGN_LEFT);
+                lv_label_set_long_mode(description_label, LV_LABEL_LONG_MODE_DOTS);
+            }
         }
     } else if (!v->levels_busy) {
         box(root, 220, 322, 840, 190, 25, WHITE, 1);
@@ -1371,13 +1362,11 @@ static void workshop_copy_selection(void) {
         snprintf(workshop_notice, sizeof workshop_notice,
                  "Скопировано объектов: %d.", workshop_clipboard_count);
     else
-        snprintf(workshop_notice, sizeof workshop_notice, "%s",
-                 "Выбери объекты для копирования.");
+        workshop_notice[0] = 0;
 }
 static void workshop_paste_selection(void) {
     if (!workshop_clipboard_count) {
-        snprintf(workshop_notice, sizeof workshop_notice, "%s",
-                 "Сначала скопируй выбранные объекты.");return;
+        workshop_notice[0] = 0;return;
     }
     if (workshop_object_count + workshop_clipboard_count > WS_OBJECT_CAP) {
         snprintf(workshop_notice, sizeof workshop_notice, "%s",
@@ -3157,15 +3146,10 @@ static void custom_platformer_screen(lv_obj_t *root) {
     const char *title = view.loaded_level_title[0] ?
         view.loaded_level_title : "Уровень";
     label(root, 27, 18, 535, 66, title, 2, INK, LV_TEXT_ALIGN_LEFT);
-    label(root, 570, 18, 225, 34, "Кнопки · WASD", 1, MUTED,
-          LV_TEXT_ALIGN_CENTER);
-    label(root, 570, 52, 225, 32,
-          game_custom_jetpack_mode() ? "Jetpack · Вверх/W, Вниз/S" :
-                                      "Прыжок · Пробел / Вверх",
-          0, MUTED, LV_TEXT_ALIGN_CENTER);
     button(root, 805, 21, 210, 62, "Настройки", 1, U_SETTINGS_OPEN);
     button(root, 1033, 21, 215, 62, "К уровням", 2,
            U_CUSTOM_BACK);
+    if (game_custom_player_dead()) return;
 
     lv_obj_t *back = box(root, 58, 525, 100, 170, 12, BUTTON_WHITE, 0);
     vector_arrow(back, 13, 17, -1);
@@ -3212,14 +3196,14 @@ static void settings_dialog(lv_obj_t *root) {
     lv_obj_set_style_border_width(shade, 0, 0);
     lv_obj_set_style_radius(shade, 0, 0);
 
-    box(root, 355, 150, 570, 420, 22, PAPER, 1);
-    label(root, 395, 177, 490, 52, "Настройки", 3, INK,
+    box(root, 295, 65, 690, 590, 22, PAPER, 1);
+    label(root, 335, 83, 610, 56, "Настройки", 3, INK,
           LV_TEXT_ALIGN_CENTER);
-    label(root, 405, 235, 470, 40, "Язык интерфейса", 2, MUTED,
+    label(root, 350, 145, 580, 38, "Язык интерфейса", 2, MUTED,
           LV_TEXT_ALIGN_CENTER);
-    lv_obj_t *russian = button(root, 430, 286, 420, 60, "Русский", 2,
+    lv_obj_t *russian = button(root, 350, 187, 275, 60, "Русский", 2,
                                U_SETTINGS_LANG_RU);
-    lv_obj_t *english = button(root, 430, 358, 420, 60, "English", 2,
+    lv_obj_t *english = button(root, 655, 187, 275, 60, "English", 2,
                                U_SETTINGS_LANG_EN);
     button_fill(russian, font_language() == FONT_LANG_RU ?
                          BUTTON_GRAY : BUTTON_WHITE);
@@ -3229,10 +3213,29 @@ static void settings_dialog(lv_obj_t *root) {
         font_language() == FONT_LANG_RU ? 5 : 3, 0);
     lv_obj_set_style_border_width(english,
         font_language() == FONT_LANG_EN ? 5 : 3, 0);
-    label(root, 395, 427, 500, 54,
-          "Обводки столкновений не рисуются.",
-          0, MUTED, LV_TEXT_ALIGN_CENTER);
-    button(root, 530, 505, 220, 52, "Закрыть", 1, U_SETTINGS_CLOSE);
+
+    label(root, 350, 265, 580, 34, "Музыка", 2, MUTED,
+          LV_TEXT_ALIGN_CENTER);
+    const char *music = preferences_music_enabled() ?
+                        "Музыка: ВКЛ." : "Музыка: ВЫКЛ.";
+    button(root, 350, 301, 580, 58, music, 2,
+           U_SETTINGS_MUSIC_TOGGLE);
+
+    label(root, 350, 375, 580, 34, "Фон уровня", 2, MUTED,
+          LV_TEXT_ALIGN_CENTER);
+    lv_obj_t *neutral = button(root, 350, 413, 275, 58, "Однотонный",
+                               2, U_SETTINGS_BG_NEUTRAL);
+    lv_obj_t *artwork = button(root, 655, 413, 275, 58, "Авторский",
+                               2, U_SETTINGS_BG_ART);
+    button_fill(neutral, preferences_neutral_background_enabled() ?
+                         BUTTON_GRAY : BUTTON_WHITE);
+    button_fill(artwork, preferences_neutral_background_enabled() ?
+                         BUTTON_WHITE : BUTTON_GRAY);
+    lv_obj_set_style_border_width(neutral,
+        preferences_neutral_background_enabled() ? 5 : 3, 0);
+    lv_obj_set_style_border_width(artwork,
+        preferences_neutral_background_enabled() ? 3 : 5, 0);
+    button(root, 530, 566, 220, 56, "Закрыть", 1, U_SETTINGS_CLOSE);
 }
 
 static void lobby_screen(lv_obj_t *root, const OnNetView *v) {
@@ -3266,20 +3269,17 @@ static void lobby_screen(lv_obj_t *root, const OnNetView *v) {
             label(card, 155, 288, 220, 29, "Сторона занята", 1,
                   BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
     }
-    box(root, 90, 609, 1100, 78, 17, DARK, 0);
-    const char *status = v->notice[0] ? v->notice : !v->guest_id[0] ?
-                         "Ждём друга" : v->busy ? "Сохраняем выбор..." :
-                         !mine ? "Выбери сторону" : !other ?
-                         "Ждём выбор друга" : "Начинаем бой...";
-    label(root, 138, 623, 1004, 49, status, 2,
-          v->notice[0] ? LIGHT_GRAY : WHITE, LV_TEXT_ALIGN_CENTER);
+    if (v->notice[0]) {
+        box(root, 90, 609, 1100, 78, 17, DARK, 0);
+        label(root, 138, 623, 1004, 49, v->notice, 2,
+              LIGHT_GRAY, LV_TEXT_ALIGN_CENTER);
+    }
 }
 
 static void match_screen(lv_obj_t *root, const OnNetView *v) {
     OnMatch state;
     int role = 0;
-    char hint[110];float hint_left = 0;
-    game_online_ui_snapshot(&state, &role, NULL, hint, sizeof hint, &hint_left);
+    game_online_ui_snapshot(&state, &role, NULL, NULL, 0, NULL);
     int plants = role == ON_ROLE_PLANTS;
     box(root, 0, 0, 1280, 120, 0, BUTTON_GRAY, 0);
     box(root, 0, 118, 1280, 3, 0, BUTTON_BLACK, 0);
@@ -3293,14 +3293,6 @@ static void match_screen(lv_obj_t *root, const OnNetView *v) {
     snprintf(title, sizeof title, "Комната %s  ·  осталось: %d",
              v->room_id, state.left + state.duck_count);
     label(root, 272, 32, 634, 45, title, 2, INK, LV_TEXT_ALIGN_LEFT);
-    const char *message = drag_notice_left > 0 ? drag_notice :
-                          hint_left > 0 ? hint : v->notice[0] ? v->notice :
-                          v->pending ? "Ждём ход..." : !v->guest_id[0] ?
-                          "Друг вышел" : plants && state.map == 5 ?
-                          "Тяни кувшинку на воду" : plants ?
-                          "Тяни растение на клетку" : "Тяни утку на ряд";
-    label(root, 272, 75, 655, 42, message, 2, MUTED,
-          LV_TEXT_ALIGN_LEFT);
     button(root, 930, 43, 150, 66, "Книга", 2, U_MATCH_BOOK);
     button(root, 1094, 43, 165, 66, "Выйти", 2, U_MATCH_EXIT);
     static const int arts[5] = {PV_ART_PEA, PV_ART_WALNUT,
@@ -3439,12 +3431,13 @@ static uint32_t state_signature(int phase, const OnNetView *v) {
         h = mix(h, v->loaded_level_id, strlen(v->loaded_level_id));
         h = mix(h, v->loaded_level_title, strlen(v->loaded_level_title));
         int jetpack = game_custom_jetpack_mode();
+        int player_dead = game_custom_player_dead();
         h = mix(h, &jetpack, sizeof jetpack);
+        h = mix(h, &player_dead, sizeof player_dead);
     } else if (phase == GAME_ONLINE_MATCH) {
         OnMatch s;
-        int role, selected;float secs;
-        char hint[110];
-        game_online_ui_snapshot(&s, &role, &selected, hint, sizeof hint, &secs);
+        int role, selected;
+        game_online_ui_snapshot(&s, &role, &selected, NULL, 0, NULL);
         h = mix(h, &role, sizeof role);
         h = mix(h, &selected, sizeof selected);
         h = mix(h, &s.plant_cash, sizeof s.plant_cash);
@@ -3464,7 +3457,6 @@ static uint32_t state_signature(int phase, const OnNetView *v) {
         h = mix(h, &v->pending, sizeof v->pending);
         h = mix(h, v->guest_id, strlen(v->guest_id));
         h = mix(h, v->notice, strlen(v->notice));
-        if (secs > 0) h = mix(h, hint, strlen(hint));
     } else if (phase == GAME_GARDEN || phase == GAME_BOOK ||
                phase == GAME_INTRO || phase == GAME_PLAY) {
         GameOfflineUIState state;
@@ -3491,8 +3483,7 @@ static uint32_t state_signature(int phase, const OnNetView *v) {
             }
         }
     } else if (phase == GAME_MENU || phase == GAME_SELECT) {
-        int completed = game_completed_level(), resume = game_resume_level();
-        h = mix(h, &completed, sizeof completed);
+        int resume = game_resume_level();
         h = mix(h, &resume, sizeof resume);
     }
     return h;
@@ -3747,8 +3738,7 @@ static void pressed(lv_event_t *ev) {
     if (code >= U_WORKSHOP_NUDGE_BASE && code < U_WORKSHOP_NUDGE_BASE + 4) {
         int direction = code - U_WORKSHOP_NUDGE_BASE;
         if (!workshop_selection_count()) {
-            snprintf(workshop_notice, sizeof workshop_notice, "%s",
-                     "Сначала выбери объект.");
+            workshop_notice[0] = 0;
         } else {
             float dx = direction == 0 ? -.5f : direction == 3 ? .5f : 0.0f;
             float dy = direction == 1 ? -.5f : direction == 2 ? .5f : 0.0f;
@@ -3828,6 +3818,15 @@ static void pressed(lv_event_t *ev) {
         font_set_language(FONT_LANG_RU);dirty = 1;break;
     case U_SETTINGS_LANG_EN:
         font_set_language(FONT_LANG_EN);dirty = 1;break;
+    case U_SETTINGS_MUSIC_TOGGLE:
+        preferences_set_music_enabled(!preferences_music_enabled());
+        dirty = 1;break;
+    case U_SETTINGS_BG_NEUTRAL:
+        preferences_set_neutral_background_enabled(1);
+        dirty = 1;break;
+    case U_SETTINGS_BG_ART:
+        preferences_set_neutral_background_enabled(0);
+        dirty = 1;break;
     case U_MENU_PLAY: game_input_press(640, 600);break;
     case U_MENU_LEVELS: game_input_press(635, 85);break;
     case U_MENU_GARDEN: game_input_press(1040, 83);break;
@@ -3895,10 +3894,9 @@ static void pressed(lv_event_t *ev) {
     case U_WORKSHOP_DELETE_SELECTED:
         workshop_delete_selected();dirty = 1;break;
     case U_WORKSHOP_TRANSFORM_PANEL:
-        if (!workshop_selection_count())
-            snprintf(workshop_notice, sizeof workshop_notice, "%s",
-                     "Сначала выбери объект для размера и угла.");
-        else {workshop_dialog = WS_DIALOG_TRANSFORM;workshop_notice[0] = 0;}
+        if (workshop_selection_count())
+            workshop_dialog = WS_DIALOG_TRANSFORM;
+        workshop_notice[0] = 0;
         dirty = 1;break;
     case U_WORKSHOP_OBJECT_WIDTH_EDIT:
         workshop_open_keyboard_input(WS_INPUT_OBJECT_WIDTH);break;
@@ -4295,14 +4293,23 @@ static void custom_controls_clear(void) {
 }
 
 static void custom_settings_touch(int x, int y) {
-    if (x >= 430 && x < 850 && y >= 286 && y < 346) {
+    if (x >= 350 && x < 625 && y >= 187 && y < 247) {
         font_set_language(FONT_LANG_RU);
         dirty = 1;
-    } else if (x >= 430 && x < 850 && y >= 358 && y < 418) {
+    } else if (x >= 655 && x < 930 && y >= 187 && y < 247) {
         font_set_language(FONT_LANG_EN);
         dirty = 1;
-    } else if ((x >= 530 && x < 750 && y >= 505 && y < 557) ||
-               x < 355 || x >= 925 || y < 150 || y >= 570) {
+    } else if (x >= 350 && x < 930 && y >= 301 && y < 359) {
+        preferences_set_music_enabled(!preferences_music_enabled());
+        dirty = 1;
+    } else if (x >= 350 && x < 625 && y >= 413 && y < 471) {
+        preferences_set_neutral_background_enabled(1);
+        dirty = 1;
+    } else if (x >= 655 && x < 930 && y >= 413 && y < 471) {
+        preferences_set_neutral_background_enabled(0);
+        dirty = 1;
+    } else if ((x >= 530 && x < 750 && y >= 566 && y < 622) ||
+               x < 295 || x >= 985 || y < 65 || y >= 655) {
         settings_open = 0;
         dirty = 1;
     }
@@ -4333,6 +4340,7 @@ int lvgl_ui_touch_pointer(int pointer_id, int x, int y, int down) {
         dirty = 1;
         return 1;
     }
+    if (game_custom_player_dead()) return 1;
     CustomTouch *touch = custom_touch_find(pointer_id);
     if (!down) {
         if (touch) memset(touch, 0, sizeof *touch);

@@ -10,6 +10,69 @@ import {LEVEL_TYPES, TYPE_LABELS, TRIGGER_KINDS, WORLD_LIMIT, MAX_LEVEL_OBJECTS,
         canManuallyRecolorType, normalizeParticleEmitter, sampleParticleEmitter,
         drawParticleEmitterPreview, drawEditorCanvas, drawPreviewCanvas} from '../workshop.js';
 
+test('browser UI and every canvas preview are displayed in grayscale', () => {
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+  assert.match(styles, /\.shell,\s*\.toast,\s*dialog\s*\{\s*filter:\s*grayscale\(1\);\s*\}/);
+  assert.match(html, /class="shell"[\s\S]*id="ws-preview-canvas"/);
+  assert.match(html, /class="shell"[\s\S]*id="battle"/);
+});
+
+test('native output removes color after composing the player, HUD, and LVGL', () => {
+  const android = readFileSync(new URL('../../src/android_main.c', import.meta.url), 'utf8');
+  const windows = readFileSync(new URL('../../src/windows_main.c', import.meta.url), 'utf8');
+  const game = readFileSync(new URL('../../src/game.c', import.meta.url), 'utf8');
+  const gameTick = game.slice(game.indexOf('void game_tick('));
+  assert(gameTick.indexOf('render();') <
+         gameTick.indexOf('game_frame_apply_grayscale(fb'),
+         'even a direct bash/host render is grayscale');
+  assert.match(android, /float gray = dot\(pixel\.rgb, vec3\(0\.299, 0\.587, 0\.114\)\)/);
+  assert.match(android, /gl_FragColor = vec4\(vec3\(gray\), pixel\.a\)/);
+  assert(android.indexOf('lvgl_ui_frame(dt, fb)') <
+         android.indexOf('game_frame_apply_grayscale(fb'),
+         'Android filters after LVGL draws the full interface');
+  assert(windows.indexOf('lvgl_ui_frame(dt, game_pixels)') <
+         windows.indexOf('game_frame_apply_grayscale(game_pixels'),
+         'Windows filters after LVGL draws the full interface');
+  assert(windows.indexOf('game_frame_apply_grayscale(game_pixels') <
+         windows.indexOf('convert_pixels();'),
+         'Windows filters before display conversion');
+});
+
+test('saving stays active without autosave or control-hint captions', () => {
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const app = readFileSync(new URL('../app.js', import.meta.url), 'utf8');
+  assert.equal(html.includes('ws-autosave-status'), false);
+  assert.equal(app.includes('ws-autosave-status'), false);
+  assert.match(app, /function saveWorkshopDraft\(\)/);
+  assert.match(app, /wsDraftSaveTimer = setTimeout\(/);
+  assert.match(app, /localStorage\.setItem\(WS_DRAFT_KEY, serialized\)/);
+  assert.match(app, /writeWorkshopDraftToDb\(serialized\)/);
+  assert.match(app, /void persistWorkshopDraft\(\)/);
+  assert.equal(html.includes('id="match-hint"'), false);
+  assert.equal(app.includes('match-hint'), false);
+  assert.equal(html.includes('id="lobby-status"'), false);
+  assert.equal(app.includes('lobby-status'), false);
+  assert.equal(html.includes('id="lobby-subtitle"'), false);
+  assert(html.includes('id="lobby-title">Выбор стороны</h1>'));
+  assert(html.includes('<h2>Растения</h2>') && html.includes('<h2>Зомби-утки</h2>'));
+});
+
+test('remaining menu and editor controls show no instructional hints', () => {
+  const app = readFileSync(new URL('../app.js', import.meta.url), 'utf8');
+  const native = readFileSync(new URL('../../src/lvgl_ui.c', import.meta.url), 'utf8');
+  const legacy = readFileSync(new URL('../../src/game.c', import.meta.url), 'utf8');
+  const font = readFileSync(new URL('../../src/font.c', import.meta.url), 'utf8');
+  for (const [source, content] of [['browser editor', app], ['native editor', native],
+                                  ['legacy game', legacy], ['translations', font]]) {
+    for (const hint of ['Выбери объекты для копирования',
+                        'Сначала выбери объект',
+                        'ВЫБЕРИТЕ РАЗНЫЕ СТОРОНЫ',
+                        'Создай свой и нажми «Опубликовать»'])
+      assert.equal(content.includes(hint), false, `${source} omits ${hint}`);
+  }
+});
+
 test('editor keeps section and control names but omits instructional hints', () => {
   const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
   const editor = html.match(/<section class="ws-page hidden" id="ws-editor-page"[\s\S]*?<\/section>/)?.[0];

@@ -53,6 +53,8 @@ void game_custom_control(int horizontal, int jump, int trigger);
 /* Jetpack-only held axis: +1 ascends, -1 descends, 0 hovers in place. */
 void game_custom_vertical_control(int vertical);
 int game_custom_jetpack_mode(void);
+/* A fall is terminal for the current level; leave it through the level-list button. */
+int game_custom_player_dead(void);
 
 /* The native platformer workshop is a separate editor from the public catalog. */
 void game_workshop_open(void);
@@ -61,9 +63,12 @@ void game_workshop_open_editor(void);
 void game_workshop_back(void);
 int game_workshop_preview(const OnPublishedLevel *level);
 
-/* Advance by dt seconds. If fb is non-NULL, render to GAME_W*GAME_H pixels
- * in RGBA8 byte order. Pass NULL to simulate without drawing (tests). */
+/* Advance by dt seconds. If fb is non-NULL, render a grayscale GAME_W*GAME_H
+ * frame in RGBA8 byte order. Pass NULL to simulate without drawing (tests). */
 void game_tick(float dt, uint32_t *fb);
+/* Convert every RGB pixel in a rendered frame to grayscale, preserving alpha.
+ * Native frontends apply this after game and LVGL have finished drawing. */
+void game_frame_apply_grayscale(uint32_t *rgba, size_t pixel_count);
 /* Android's LVGL adapter draws the online match HUD itself. Keep the old HUD
  * for independent renderer tests and as a fallback if LVGL cannot initialize. */
 void game_set_lvgl_ui(int enabled);
@@ -118,7 +123,6 @@ int game_debug_custom_player_grounded(void);
 int game_debug_custom_player_facing_left(void);
 float game_debug_custom_gravity(void);
 uint32_t game_debug_custom_background_color(void);
-float game_debug_custom_death_flash(void);
 int game_debug_custom_checkpoint_id(void);
 int game_debug_custom_jetpack_mode(void);
 int game_debug_custom_jetpack_active(void);
