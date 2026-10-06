@@ -8,7 +8,8 @@
 #include <stdio.h>
 #include <string.h>
 
-/* The configured address is decoded once, then reused for every request. */
+/* The configured address is decoded once, then reused for every request.
+ * It is a value, not a literal, so callers use "%s" instead of pasting. */
 static const char *base_url(void) {
     static char base[256];
     static int ready;
@@ -79,7 +80,7 @@ int on_http_request(const char *path, const char *method, const char *body,
     jstring address = NULL, verb = NULL;
     jbyteArray bytes = NULL;
     char full[192];
-    int n = snprintf(full, sizeof full, BASE "%s", path);
+    int n = snprintf(full, sizeof full, "%s%s", base_url(), path);
     if (n <= 0 || (size_t)n >= sizeof full) goto done;
     url_class = (*env)->FindClass(env, "java/net/URL");
     http_class = (*env)->FindClass(env, "java/net/HttpURLConnection");
