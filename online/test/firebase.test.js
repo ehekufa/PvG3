@@ -5,6 +5,9 @@ import {validId, listRooms, createRoom, getRoom, joinRoom, chooseRole,
         validLevelId, listPublishedLevels, getPublishedLevel, publishLevel} from '../firebase.js';
 import {newDraft, addObject} from '../workshop.js';
 import {newMatch, validMatch, applyCommand} from '../rules.js';
+/* The address lives in the config (or in the gitignored build secret), so the
+ * tests never spell it out themselves. */
+import {DATABASE_HOST as CONFIGURED_HOST} from '../firebase-config.js';
 
 // Fake the RTDB REST surface; never write fixtures to the user's real DB.
 test('room creation, list, compare-and-set join, role choice, actions and exit', async () => {
@@ -12,7 +15,7 @@ test('room creation, list, compare-and-set join, role choice, actions and exit',
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url, opts) => {
     const route = new URL(url);
-    assert.equal(route.hostname, 'pvg3-ae824-default-rtdb.firebaseio.com');
+    assert.equal(route.hostname, CONFIGURED_HOST);
     assert(route.pathname.endsWith('.json'));
     const segments = route.pathname.slice(1,-5).split('/');
     let parent = rooms, key = segments[0];
@@ -85,7 +88,7 @@ test('publishing creates a compatible level and catalog entry using only the fak
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url, opts) => {
     const route = new URL(url), path = route.pathname.slice(1, -5).split('/');
-    assert.equal(route.hostname, 'pvg3-ae824-default-rtdb.firebaseio.com');
+    assert.equal(route.hostname, CONFIGURED_HOST);
     assert(['levels', 'levels-index'].includes(path[0]));
     let parent = database;
     for (const segment of path.slice(0, -1)) parent = parent[segment] ||= {};

@@ -2,8 +2,15 @@
  * privileged service account is embedded in the website or the APK. Demo
  * rules must permit the relevant /rooms and public-level catalog operations. */
 import {isPublishedRecord, publishedRecord, validateDraft} from './workshop.js';
+import * as config from './firebase-config.js';
 
-export const DATABASE = 'https://pvg3-ae824-default-rtdb.firebaseio.com';
+/* Optional build-time override (online/firebase-secret.js, gitignored). */
+let secret = {};
+try {secret = await import('./firebase-secret.js');} catch { /* not generated */ }
+
+export const DATABASE_HOST = secret.DATABASE_HOST || config.DATABASE_HOST;
+export const DATABASE_AUTH = secret.DATABASE_AUTH || config.DATABASE_AUTH;
+export const DATABASE = `https://${DATABASE_HOST}`;
 const ROOM_PATH = 'rooms';
 const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const validId = id => typeof id === 'string' && /^[A-Z2-9]{6}$/.test(id);
@@ -13,7 +20,7 @@ class FirebaseError extends Error {
   constructor(status, message) {super(message);this.status = status;}
 }
 
-async function request(path, method = 'GET', body, ifMatch = '') {
+export async function request(path, method = 'GET', body, ifMatch = '') {
   const controller = new AbortController();
   // A 20k-object level is a multi-megabyte payload; keep normal room polls
   // snappy while allowing large level reads and writes to finish on mobile.
@@ -23,7 +30,10 @@ async function request(path, method = 'GET', body, ifMatch = '') {
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     if (ifMatch) headers['If-Match'] = ifMatch;
     const [node, query] = path.split('?');
-    const response = await fetch(`${DATABASE}/${node}.json${query ? `?${query}` : ''}`, {
+    const params = [];
+    if (DATABASE_AUTH) params.push(`auth=${encodeURIComponent(DATABASE_AUTH)}`);
+    if (query) params.push(query);
+    const response = await fetch(`${DATABASE}/${node}.json${params.length ? `?${params.join('&')}` : ''}`, {
       method, headers, body: body === undefined ? undefined : JSON.stringify(body),
       signal: controller.signal, cache: 'no-store', referrerPolicy: 'no-referrer',
     });
@@ -165,13 +175,18 @@ function randomLevelId() {
   return String(value[0] % 999999 + 1);
 }
 
-export async function publishLevel(draft) {
+/* `author` is the optional signed-in player: {login, tok}. It travels with the
+ * record so the rules can attribute the level and reject banned nicks. */
+export async function publishLevel(draft, author) {
   const check = validateDraft(draft);
   if (!check.ok) throw new Error(check.message);
+  const credited = author && author.login && author.tok ?
+    {login: String(author.login), tok: String(author.tok)} : null;
   let lastCollision;
   for (let attempt = 0; attempt < 5; attempt++) {
     const id = randomLevelId();
     const record = publishedRecord(id, draft);
+    if (credited) record.author = {...credited};
     try {
       await request(`levels/${id}`, 'PUT', record, 'null_etag');
     } catch (e) {
@@ -180,6 +195,7 @@ export async function publishLevel(draft) {
     }
     const summary = {id, title: record.title, description: record.description,
       updatedAt: Date.now()};
+    if (credited) summary.author = credited.login;
     try {
       await request(`levels-index/${id}`, 'PUT', summary, 'null_etag');
     } catch (e) {

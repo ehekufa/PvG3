@@ -387,15 +387,22 @@ int on_protocol_level_index(const char *json, OnPublishedLevelSummary *out, int 
             int id_token = field(&d, value, "id");
             int title_token = field(&d, value, "title");
             int description_token = field(&d, value, "description");
+            int official_token = field(&d, value, "official");
+            int official = 0;
             char stored_id[ON_LEVEL_ID_SIZE];
             int description_ok = description_token < 0 ||
                 text_string(&d, description_token, description, sizeof description);
+            /* A moderator's badge is optional, and a malformed one never hides
+             * the level: the entry is simply shown without the mark. */
+            if (official_token >= 0) {int flag = 0;
+                if (bool_field(&d, value, "official", &flag)) official = flag;}
             if (str(&d, id_token, stored_id, sizeof stored_id) && !strcmp(id, stored_id) &&
                 text_string(&d, title_token, title, sizeof title) && title[0] &&
                 description_ok && count < cap && count < ON_LEVEL_LIST_CAP) {
                 snprintf(tmp[count].id, sizeof tmp[count].id, "%s", id);
                 snprintf(tmp[count].title, sizeof tmp[count].title, "%s", title);
                 snprintf(tmp[count].description, sizeof tmp[count].description, "%s", description);
+                tmp[count].official = !!official;
                 count++;
             }
         }
@@ -551,6 +558,9 @@ int on_protocol_published_level(const char *json, const char *expected_id,
         if (description_token >= 0 &&
             !text_string(&d, description_token, value->description, sizeof value->description)) ok = 0;
     }
+    int record_official_token = field(&d, 0, "official");
+    if (ok && record_official_token >= 0 &&
+        !bool_field(&d, 0, "official", &value->official)) ok = 0;
     int objects = field(&d, project, "objects");
     if (ok && (objects < 0 || d.t[objects].type != 'a' ||
                d.t[objects].count < 1 || d.t[objects].count > ON_LEVEL_OBJECT_CAP)) ok = 0;
@@ -1132,7 +1142,9 @@ size_t on_protocol_published_level_json(const OnPublishedLevel *level,
         }
         put(&w, "}");
     }
-    put(&w, "]}}");
+    put(&w, "]}");
+    if (level->official) put(&w, ",\"official\":true");
+    put(&w, "}");
     if (w.bad) {if (out) out[0] = 0;return 0;}
     return w.at;
 }
@@ -1143,7 +1155,9 @@ size_t on_protocol_level_summary_json(const OnPublishedLevel *level,
     put(&w, "{\"id\":");put_json_string(&w, level->id);
     put(&w, ",\"title\":");put_json_string(&w, level->title);
     put(&w, ",\"description\":");put_json_string(&w, level->description);
-    put(&w, ",\"updatedAt\":%lld}", (long long)updated_at);
+    put(&w, ",\"updatedAt\":%lld", (long long)updated_at);
+    if (level->official) put(&w, ",\"official\":true");
+    put(&w, "}");
     if (w.bad) {out[0] = 0;return 0;}
     return w.at;
 }

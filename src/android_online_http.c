@@ -2,12 +2,13 @@
  * external browser, insecure HTTP, embedded credentials or Java APK code.
  * Called only by online_net.c's background pthread, never from game_tick. */
 #include "android_online_http.h"
+#include "online_config.h"
 #include "online_net.h"
 
 #include <stdio.h>
 #include <string.h>
 
-#define BASE "https://pvg3-ae824-default-rtdb.firebaseio.com/"
+#define BASE "https://" PVG3_DATABASE_HOST "/"
 static JavaVM *vm;
 void android_online_set_vm(JavaVM *jvm) { vm = jvm; }
 
@@ -26,7 +27,8 @@ static void property(JNIEnv *env, jobject conn, jmethodID setter,
 }
 /* Restrict HTTPS requests to the room protocol and public level catalog. */
 static int safe_path(const char *path) {
-    static const char *const roots[] = {"rooms", "levels", "levels-index"};
+    static const char *const roots[] = {"rooms", "levels", "levels-index",
+        "accounts", "tokens", "admins", "bans", "comments"};
     if (!path) return 0;
     int allowed = 0;
     for (size_t i = 0; i < sizeof roots / sizeof roots[0]; i++) {

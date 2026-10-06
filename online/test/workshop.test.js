@@ -186,12 +186,18 @@ test('block-turn artwork replaces the circular refresh symbol across the UI', ()
   assert.equal(styles.includes('.refresh-icon::after'), false);
 });
 
-test('only published level ID 338069 receives the official marker', () => {
+test('the historic ID 338069 and a moderator flag both mark a level official', () => {
   assert.equal(OFFICIAL_LEVEL_ID, '338069');
   assert.equal(isOfficialLevel('338069'), true);
   assert.equal(isOfficialLevel(338069), true);
   assert.equal(isOfficialLevel('338068'), false);
   assert.equal(isOfficialLevel('1338069'), false);
+  /* Any level a moderator flagged in the database is official too, so the
+   * native catalog and the browser one agree. */
+  assert.equal(isOfficialLevel('5150', {id: '5150', official: true}), true);
+  assert.equal(isOfficialLevel('5150', {id: '5150', official: false}), false);
+  assert.equal(isOfficialLevel('5150', {id: '5150'}), false);
+  assert.equal(isOfficialLevel('5150', null), false);
 });
 
 function recordingCanvas() {

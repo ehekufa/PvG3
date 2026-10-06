@@ -377,6 +377,28 @@ main { min-width: 0; }
 .ws-official-badge { display: inline-flex; align-items: center; padding: 3px 8px; border: 1px solid #b98220; border-radius: 999px; color: #654600; background: #fff1c7; font-size: 10px; font-weight: 800; letter-spacing: .04em; line-height: 1.2; white-space: nowrap; }
 .ws-official-badge-heading { margin-left: 8px; vertical-align: middle; font-size: .58em; }
 .ws-level-card button { min-width: 110px; min-height: 45px; padding: 8px 14px; border-radius: 4px; background: var(--button-gray); font-weight: bold; }
+.ws-level-card > .ws-level-footer, .ws-level-card > .ws-comments { grid-column: 1 / -1; }
+.ws-level-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; padding-top: 9px; border-top: 2px solid var(--gray-light); }
+.ws-level-author { color: var(--muted); font-size: 13px; font-weight: bold; }
+.ws-comments-toggle { min-width: 0; min-height: 34px; padding: 5px 12px; border: 2px solid var(--outline); border-radius: 4px; background: var(--button-white); font-size: 13px; font-weight: bold; }
+.ws-mod-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-left: auto; }
+.ws-mod-actions .small-button { min-height: 34px; padding: 5px 11px; font-size: 13px; }
+.ws-ban-reason { min-width: 130px; min-height: 34px; padding: 4px 8px; border: 2px solid var(--outline); border-radius: 4px; background: var(--white); font: inherit; font-size: 13px; }
+.ws-comments { display: grid; gap: 7px; padding-top: 9px; border-top: 2px solid var(--gray-light); }
+.ws-comments > p { margin: 0; }
+.ws-comment { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; padding: 7px 9px; border: 2px solid var(--gray-light); border-radius: 4px; background: var(--paper); font-size: 14px; line-height: 1.4; }
+.ws-comment strong { color: var(--dark); }
+.ws-comment span { flex: 1 1 200px; overflow-wrap: anywhere; }
+.ws-comment-hide { min-width: 0; min-height: 28px; padding: 3px 9px; border: 2px solid var(--outline); border-radius: 4px; background: var(--button-white); font-size: 12px; }
+.ws-comment-form { display: flex; flex-wrap: wrap; gap: 7px; }
+.ws-comment-form input { flex: 1 1 200px; min-height: 40px; padding: 6px 9px; border: 2px solid var(--outline); border-radius: 4px; background: var(--white); font: inherit; }
+.ws-comment-form .small-button { min-height: 40px; }
+.ws-account-bar { display: flex; align-items: center; gap: 9px; margin-left: auto; }
+.ws-account-status { color: var(--muted); font-size: 14px; font-weight: bold; }
+.ws-account-form { display: grid; gap: 11px; padding: 16px 0; }
+.ws-account-form p { margin: 0; }
+.ws-account-form label { display: grid; gap: 5px; }
+.ws-account-form input { min-height: 44px; padding: 7px 10px; border: 2px solid var(--outline); border-radius: 4px; background: var(--white); font: inherit; }
 
 .lobby-top {  display: flex; align-items: end; justify-content: space-between; gap: 28px; }
 .lobby-top h1 { margin: 10px 0; }

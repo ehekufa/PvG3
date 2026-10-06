@@ -3,6 +3,7 @@ import {PLANTS, DUCKS, W, H, X, Y, CW, CH, ROWS, COLS,
 import {DATABASE, validId, randomPlayerId, listRooms, getRoom, createRoom,
         joinRoom, chooseRole, writeState, writeCommand, heartbeat, leaveRoom,
         listPublishedLevels, getPublishedLevel, publishLevel} from './firebase.js';
+import {rotateToken} from './accounts.js';
 import {preloadArtwork, drawGame} from './draw.js';
 import {LEVEL_WIDTH, LEVEL_HEIGHT, MAX_LEVEL_OBJECTS, WORLD_LIMIT,
         MIN_OBJECT_SIZE, MAX_OBJECT_WIDTH, MAX_OBJECT_HEIGHT, TILE_W, TILE_H,
@@ -14,6 +15,9 @@ import {LEVEL_WIDTH, LEVEL_HEIGHT, MAX_LEVEL_OBJECTS, WORLD_LIMIT,
         drawEditorCanvas, drawPreviewCanvas, normalizeParticleEmitter,
         drawParticleEmitterPreview,
         resolveControlMode, createTouchButtonState} from './workshop.js';
+import {currentSession, createAccount, signIn, signOut, isModerator, onSessionChange,
+        loadBans, isBanned, loadComments, postComment, hideComment, banAccount,
+        unbanAccount, setLevelOfficial, MAX_COMMENT} from './accounts.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('battle');
@@ -43,6 +47,7 @@ let wsSelectedId = 0, wsSelectedIds = new Set(), wsClipboard = [];
 let wsDrag = null, wsPanDrag = null, wsCatalogGeneration = 0, wsCatalog = [];
 let wsCamera = {x: 0, y: 0};
 let wsPreviewState = null, wsPreviewLevel = null, wsPreviewReturn = 'editor';
+let wsBans = {};
 let wsParticleDialogObjectId = 0, wsParticlePreviewTime = 0, wsParticleAnimation = 0;
 let wsControlPreference = localSetting(WS_CONTROL_KEY, 'auto'), wsControlMode = 'keyboard';
 // Tool captions such as «ЗЕРКАЛЬНОЕ ОТРАЖЕНИЕ» are a tutorial aid only.
@@ -707,7 +712,7 @@ function renderWorkshopCatalog(levels) {
     list.append(empty);return;
   }
   for (const level of levels) {
-    const official = isOfficialLevel(level.id);
+    const official = isOfficialLevel(level.id, level);
     const card = document.createElement('article');
     card.className = official ? 'ws-level-card ws-level-card-official' : 'ws-level-card';
     const content = document.createElement('div');
@@ -724,8 +729,123 @@ function renderWorkshopCatalog(levels) {
     content.append(meta, title, description);
     const button = document.createElement('button');button.type = 'button';button.textContent = 'Играть';
     button.addEventListener('click', () => playPublishedLevel(level.id, button));
-    card.append(content, button);list.append(card);
+    const panel = document.createElement('div');
+    panel.className = 'ws-comments hidden';
+    card.append(content, button, levelFooter(level, official, panel), panel);
+    list.append(card);
   }
+}
+function levelFooter(level, official, panel) {
+  const footer = document.createElement('div');footer.className = 'ws-level-footer';
+  if (level.author) {
+    const author = document.createElement('small');author.className = 'ws-level-author';
+    author.textContent = isBanned(wsBans, level.author) ?
+      `Автор: ${level.author} (забанен)` : `Автор: ${level.author}`;
+    footer.append(author);
+  }
+  const toggle = document.createElement('button');toggle.type = 'button';
+  toggle.className = 'ws-comments-toggle';toggle.textContent = 'Комментарии';
+  toggle.addEventListener('click', () => {
+    panel.classList.toggle('hidden');
+    if (!panel.classList.contains('hidden')) renderComments(level.id, panel);
+  });
+  footer.append(toggle);
+  if (isModerator()) footer.append(moderatorActions(level, official));
+  return footer;
+}
+function moderatorActions(level, official) {
+  const wrap = document.createElement('div');wrap.className = 'ws-mod-actions';
+  const officialButton = document.createElement('button');
+  officialButton.type = 'button';officialButton.className = 'small-button';
+  officialButton.textContent = official ? 'Снять «официальный»' : 'Сделать официальным';
+  officialButton.addEventListener('click', async () => {
+    officialButton.disabled = true;
+    try {await setLevelOfficial(level.id, !official);notice('Готово.');await loadWorkshopCatalog();}
+    catch (error) {setCatalogMessage(error.message);}
+    finally {officialButton.disabled = false;}
+  });
+  wrap.append(officialButton);
+  if (!level.author) return wrap;
+  const banned = isBanned(wsBans, level.author);
+  const reason = document.createElement('input');
+  reason.type = 'text';reason.maxLength = 140;reason.className = 'ws-ban-reason';
+  reason.placeholder = banned ? 'Причина разбана' : 'Причина бана';
+  const banButton = document.createElement('button');
+  banButton.type = 'button';banButton.className = 'small-button';
+  banButton.textContent = banned ? 'Разбанить автора' : 'Забанить автора';
+  banButton.addEventListener('click', async () => {
+    banButton.disabled = true;
+    try {
+      if (banned) await unbanAccount(level.author, reason.value);
+      else await banAccount(level.author, reason.value);
+      wsBans = await loadBans().catch(() => ({}));
+      notice('Готово.');await loadWorkshopCatalog();
+    } catch (error) {setCatalogMessage(error.message);}
+    finally {banButton.disabled = false;}
+  });
+  wrap.append(reason, banButton);
+  return wrap;
+}
+async function renderComments(levelId, panel) {
+  panel.replaceChildren();
+  const loading = document.createElement('p');loading.className = 'muted';
+  loading.textContent = 'Загружаем сообщения…';panel.append(loading);
+  let comments;
+  try {
+    comments = (await loadComments(levelId))
+      .filter(comment => !comment.hidden && !isBanned(wsBans, comment.login));
+  } catch (error) {
+    panel.replaceChildren();
+    const note = document.createElement('p');note.className = 'muted';
+    note.textContent = `Сообщения не загрузились: ${error.message}`;panel.append(note);return;
+  }
+  panel.replaceChildren();
+  if (!comments.length) {
+    const note = document.createElement('p');note.className = 'muted';
+    note.textContent = 'Сообщений пока нет.';panel.append(note);
+  }
+  for (const comment of comments) panel.append(commentNode(levelId, comment, panel));
+  if (currentSession()) panel.append(commentForm(levelId, panel));
+  else {
+    const note = document.createElement('p');note.className = 'muted';
+    note.textContent = 'Писать сообщения могут только игроки с аккаунтом.';
+    panel.append(note);
+  }
+}
+function commentNode(levelId, comment, panel) {
+  const row = document.createElement('div');row.className = 'ws-comment';
+  const author = document.createElement('strong');author.textContent = comment.login;
+  const text = document.createElement('span');text.textContent = comment.text;
+  row.append(author, text);
+  const active = currentSession();
+  if (active && (active.admin || active.login === comment.login)) {
+    const hide = document.createElement('button');hide.type = 'button';
+    hide.className = 'ws-comment-hide';hide.textContent = 'Скрыть';
+    hide.addEventListener('click', async () => {
+      hide.disabled = true;
+      try {await hideComment(levelId, comment.id);await renderComments(levelId, panel);}
+      catch (error) {setCatalogMessage(error.message);}
+      finally {hide.disabled = false;}
+    });
+    row.append(hide);
+  }
+  return row;
+}
+function commentForm(levelId, panel) {
+  const form = document.createElement('form');form.className = 'ws-comment-form';
+  const input = document.createElement('input');
+  input.type = 'text';input.maxLength = MAX_COMMENT;input.placeholder = 'Сообщение под уровнем';
+  const submit = document.createElement('button');
+  submit.type = 'submit';submit.className = 'small-button';submit.textContent = 'Отправить';
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    submit.disabled = true;
+    try {await postComment(levelId, input.value);input.value = '';await renderComments(levelId, panel);}
+    catch (error) {setCatalogMessage(error.message);}
+    finally {submit.disabled = false;}
+  });
+  form.append(input, submit);
+  return form;
 }
 async function loadWorkshopCatalog() {
   const generationId = ++wsCatalogGeneration;
@@ -733,9 +853,10 @@ async function loadWorkshopCatalog() {
   const list = $('ws-catalog-list');list.replaceChildren();
   const loading = document.createElement('p');loading.className = 'muted';loading.textContent = 'Загружаем каталог…';list.append(loading);
   try {
-    const levels = await listPublishedLevels();
+    const [levels, bans] = await Promise.all([listPublishedLevels(),
+      loadBans().catch(() => ({}))]);
     if (generationId !== wsCatalogGeneration || wsPage !== 'catalog') return;
-    wsCatalog = levels;renderWorkshopCatalog(levels);
+    wsCatalog = levels;wsBans = bans;renderWorkshopCatalog(levels);
   } catch (error) {
     if (generationId !== wsCatalogGeneration || wsPage !== 'catalog') return;
     list.replaceChildren();
@@ -750,7 +871,7 @@ async function playPublishedLevel(id, button) {
   try {
     const record = await getPublishedLevel(id);
     const level = draftFromPublished(record);
-    startWorkshopPreview(level, record.title, 'catalog', isOfficialLevel(record.id));
+    startWorkshopPreview(level, record.title, 'catalog', isOfficialLevel(record.id, record));
   } catch (error) {
     setCatalogMessage(error.status === 401 || error.status === 403 ?
       'Firebase запретил чтение /levels. Проверь правила базы.' : error.message);
@@ -787,6 +908,31 @@ function previewJumpPointerDown(event) {
   if (screen !== 'workshop' || wsPage !== 'preview' || !wsPreviewState) return;
   event.preventDefault();
   if (!wsPreviewState.jetpack) wsJumpQueued = true;
+}
+function setAccountMessage(message = '') {
+  const node = $('ws-account-message');
+  node.textContent = message;node.classList.toggle('hidden', !message);
+}
+function renderAccountStatus() {
+  const active = currentSession();
+  $('ws-account-status').textContent = !active ? 'Гость' :
+    active.admin ? `${active.login} · модератор` : active.login;
+  $('ws-account-signout').disabled = !active;
+}
+async function submitAccount(kind) {
+  const login = $('ws-account-login').value, password = $('ws-account-password').value;
+  const button = $(kind === 'create' ? 'ws-account-create' : 'ws-account-signin');
+  button.disabled = true;setAccountMessage('');
+  try {
+    const session = kind === 'create' ?
+      await createAccount(login, password) : await signIn(login, password);
+    $('ws-account-password').value = '';
+    $('ws-account-dialog').close();
+    notice(`Вход выполнен · ${session.login}`);
+    if (wsPage === 'catalog') await loadWorkshopCatalog();
+  } catch (error) {
+    setAccountMessage(error.message);
+  } finally {button.disabled = false;}
 }
 function applyWorkshopTutorial(enabled) {
   wsTutorialHints = enabled === true;
@@ -844,7 +990,11 @@ async function publishWorkshopDraft() {
   const button = $('ws-publish');button.disabled = true;
   showWorkshopMessage('');
   try {
-    const result = await publishLevel(wsDraft);
+    const active = currentSession();
+    const result = await publishLevel(wsDraft,
+      active ? {login: active.login, tok: active.token} : null);
+    /* The record we just published carries our session token, so retire it. */
+    if (active) await rotateToken().catch(() => {});
     wsDraft.publishedId = result.id;wsDraft.publishedAt = Date.now();
     saveWorkshopDraft();
     showWorkshopMessage(`Уровень опубликован под ID ${result.id}. Он доступен в каталоге и нативной игре.`);
@@ -1214,6 +1364,19 @@ $('ws-trigger-color').addEventListener('input', e => updateSelectedTrigger('colo
 $('ws-trigger-action').addEventListener('change', e => updateSelectedTrigger('action', e.target.value));
 $('ws-control-select').addEventListener('change', e => applyWorkshopControl(e.target.value));
 $('ws-tutorial-toggle').addEventListener('change', e => applyWorkshopTutorial(e.target.checked));
+$('ws-account-open').addEventListener('click', () => {
+  setAccountMessage('');$('ws-account-dialog').showModal();
+});
+$('ws-account-close').addEventListener('click', () => $('ws-account-dialog').close());
+$('ws-account-signin').addEventListener('click', () => submitAccount('signin'));
+$('ws-account-create').addEventListener('click', () => submitAccount('create'));
+$('ws-account-password').addEventListener('keydown', event => {
+  if (event.key === 'Enter') submitAccount('signin');
+});
+$('ws-account-signout').addEventListener('click', async () => {
+  signOut();notice('Выход выполнен.');
+  if (wsPage === 'catalog') await loadWorkshopCatalog();
+});
 for (const button of document.querySelectorAll('[data-ws-hold]')) {
   const direction = button.dataset.wsHold;
   button.addEventListener('pointerdown', event => {
@@ -1290,6 +1453,7 @@ $('music').addEventListener('click', async () => {
 });
 canvas.addEventListener('pointerdown', pointer);
 applyWorkshopTutorial(wsTutorialHints);
+onSessionChange(renderAccountStatus);renderAccountStatus();
 populateBook();preloadArtwork();
 requestAnimationFrame(frame);
 let previous = null;

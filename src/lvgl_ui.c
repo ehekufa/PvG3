@@ -754,7 +754,8 @@ static void custom_levels_screen(lv_obj_t *root, const OnNetView *v) {
             lv_obj_t *id_label = label(card, 15, 17, 86, 43,
                   v->levels[index].id, 1, BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
             lv_label_set_long_mode(id_label, LV_LABEL_LONG_MODE_CLIP);
-            int official = on_level_id_is_official(v->levels[index].id);
+            int official = on_level_is_official(v->levels[index].id,
+                                                v->levels[index].official);
             lv_obj_t *title_label = label(card, 119, 7, official ? 249 : 410,
                   32, v->levels[index].title, 2, BUTTON_TEXT, LV_TEXT_ALIGN_LEFT);
             lv_label_set_long_mode(title_label, LV_LABEL_LONG_MODE_DOTS);

@@ -215,7 +215,9 @@
 
         <section class="ws-page hidden" id="ws-catalog-page" aria-label="Каталог уровней игроков">
           <div class="ws-page-toolbar"><button class="small-button" id="ws-catalog-back" type="button">Назад · Мастерская</button>
-            <h2>Уровни игроков</h2><button class="small-button" id="ws-catalog-refresh" type="button"><img class="refresh-icon" src="../assets/art/Переворот-блоков.png" alt="" aria-hidden="true">Обновить</button></div>
+            <h2>Уровни игроков</h2>
+            <div class="ws-account-bar"><span id="ws-account-status" class="ws-account-status" aria-live="polite">Гость</span><button class="small-button" id="ws-account-open" type="button">Аккаунт</button></div>
+            <button class="small-button" id="ws-catalog-refresh" type="button"><img class="refresh-icon" src="../assets/art/Переворот-блоков.png" alt="" aria-hidden="true">Обновить</button></div>
           <div id="ws-catalog-list" class="ws-catalog-list"><p class="muted">Загружаем каталог…</p></div>
           <p id="ws-catalog-message" class="ws-error hidden" role="status" aria-live="polite"></p>
         </section>
@@ -281,6 +283,24 @@
     <footer class="ws-particle-dialog-foot">
       <button id="ws-particle-reset" class="small-button" type="button">По умолчанию</button>
       <button id="ws-particle-close-bottom" class="small-button primary" type="button">Готово</button>
+    </footer>
+  </dialog>
+  <dialog id="ws-account-dialog" class="book-dialog" aria-label="Аккаунт игрока">
+    <header class="ws-particle-dialog-head">
+      <span class="overline">МАСТЕРСКАЯ</span>
+      <h2>Аккаунт</h2>
+      <button id="ws-account-close" class="round-icon" type="button" aria-label="Закрыть">×</button>
+    </header>
+    <div class="ws-account-form">
+      <p class="muted">Ник — только латинские буквы a–z, цифры 0–9 и подчёркивание, от 3 до 24 знаков: без пробелов, без @, ₽, ?, ! и прочих символов. Один ник — один аккаунт: занятый ник создать не даст база.</p>
+      <label>Ник<input id="ws-account-login" type="text" maxlength="24" autocomplete="username" spellcheck="false"></label>
+      <label>Пароль<input id="ws-account-password" type="password" maxlength="72" autocomplete="current-password"></label>
+      <p id="ws-account-message" class="ws-error hidden" role="status" aria-live="polite"></p>
+    </div>
+    <footer class="ws-particle-dialog-foot">
+      <button id="ws-account-signout" class="small-button" type="button">Выйти</button>
+      <button id="ws-account-create" class="small-button" type="button">Создать аккаунт</button>
+      <button id="ws-account-signin" class="small-button primary" type="button">Войти</button>
     </footer>
   </dialog>
   <audio id="soundtrack" src="../assets/music/kirill-pond-loop.wav" preload="none" loop></audio>

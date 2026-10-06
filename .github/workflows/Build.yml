@@ -18,6 +18,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Write Firebase configuration from repository secrets
+        if: ${{ secrets.PVG3_DATABASE_HOST != '' || secrets.PVG3_DATABASE_AUTH != '' }}
+        env:
+          PVG3_DATABASE_HOST: ${{ secrets.PVG3_DATABASE_HOST }}
+          PVG3_DATABASE_AUTH: ${{ secrets.PVG3_DATABASE_AUTH }}
+        run: sh tools/write_online_config.sh
+
       - name: Check preinstalled Android toolchain
         id: android-toolchain
         run: |

@@ -14,6 +14,10 @@
 static inline int on_level_id_is_official(const char *id) {
     return id && strcmp(id, ON_LEVEL_OFFICIAL_ID) == 0;
 }
+/* The badge follows the flag a moderator set, and the historic ID as before. */
+static inline int on_level_is_official(const char *id, int flagged) {
+    return !!flagged || on_level_id_is_official(id);
+}
 #define ON_LEVEL_DESCRIPTION_SIZE 481 /* 160 UTF-16 code units, worst-case UTF-8 */
 #define ON_LEVEL_OBJECT_NAME_SIZE 145 /* 48 UTF-16 code units, worst-case UTF-8 */
 #define ON_LEVEL_LIST_CAP 24
@@ -47,6 +51,8 @@ typedef struct {
     char id[ON_LEVEL_ID_SIZE];
     char title[ON_LEVEL_TITLE_SIZE];
     char description[ON_LEVEL_DESCRIPTION_SIZE];
+    /* A moderator marks a level official; the historic ID stays official too. */
+    int official;
 } OnPublishedLevelSummary;
 
 typedef struct {
@@ -108,6 +114,7 @@ typedef struct {
     char description[ON_LEVEL_DESCRIPTION_SIZE];
     int width, height;
     int object_count;
+    int official; /* moderator's «ОФИЦИАЛЬНЫЙ» badge, 0 for ordinary levels */
     OnLevelObject objects[ON_LEVEL_OBJECT_CAP];
 } OnPublishedLevel;
 

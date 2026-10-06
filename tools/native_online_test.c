@@ -494,10 +494,61 @@ static void published_default_color(void) {
     assert(!on_protocol_published_level(broken, "45121", &decoded));
 }
 
+/* A moderator's «official» mark travels with the record and the catalog entry,
+ * while levels without it keep their exact, smaller payload. */
+static void test_level_official_flag(void) {
+    static OnPublishedLevel level;
+    static OnPublishedLevel decoded;
+    static char body[ON_LEVEL_JSON_CAP];
+    memset(&level, 0, sizeof level);
+    snprintf(level.id, sizeof level.id, "%s", "45122");
+    snprintf(level.title, sizeof level.title, "%s", "Official");
+    level.width = 16;level.height = 10;level.object_count = 2;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_PLAYER,
+        .x=1,.y=7,.w=.65f,.h=.85f,.color=0xffffffu,.visible=1};
+    snprintf(level.objects[0].name, sizeof level.objects[0].name, "%s", "Player");
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.color=0xffffffu,.visible=1};
+    snprintf(level.objects[1].name, sizeof level.objects[1].name, "%s", "Finish");
+
+    size_t plain = on_protocol_published_level_json(&level, body, sizeof body);
+    assert(plain && !strstr(body, "\"official\"") &&
+           on_protocol_published_level(body, "45122", &decoded));
+    assert(!decoded.official);
+
+    level.official = 1;
+    size_t marked = on_protocol_published_level_json(&level, body, sizeof body);
+    assert(marked > plain && strstr(body, "\"official\":true") &&
+           on_protocol_published_level(body, "45122", &decoded));
+    assert(decoded.official == 1);
+
+    static char summary[512];
+    size_t summary_size = on_protocol_level_summary_json(&level, summary,
+        sizeof summary, 1700000000000ll);
+    assert(summary_size && strstr(summary, "\"official\":true"));
+
+    OnPublishedLevelSummary list[4];
+    int count = on_protocol_level_index(
+        "{\"45122\":{\"id\":\"45122\",\"title\":\"Official\",\"description\":\"\","
+        "\"updatedAt\":1,\"official\":true},"
+        "\"45123\":{\"id\":\"45123\",\"title\":\"Plain\",\"description\":\"\","
+        "\"updatedAt\":2}}", list, 4);
+    assert(count == 2 && list[0].official == 1 && !list[1].official);
+    assert(on_level_is_official(list[0].id, list[0].official));
+    assert(!on_level_is_official(list[1].id, list[1].official));
+    assert(on_level_is_official(ON_LEVEL_OFFICIAL_ID, 0));
+    /* A malformed flag does not break the catalog entry. */
+    assert(on_protocol_level_index(
+        "{\"45124\":{\"id\":\"45124\",\"title\":\"Weird\",\"description\":\"\","
+        "\"updatedAt\":3,\"official\":\"yes\"}}", list, 4) == 1);
+    assert(!list[0].official);
+}
+
 int main(int argc, char **argv) {
     assert(on_level_id_is_official(ON_LEVEL_OFFICIAL_ID));
     assert(on_level_id_is_official("338069"));
     assert(!on_level_id_is_official("338068"));
+    test_level_official_flag();
     assert(!on_level_id_is_official("1338069"));
     match_codec();
     rooms_and_commands();
