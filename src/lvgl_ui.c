@@ -89,6 +89,7 @@ enum {
     U_ACCOUNT_SIGN_OUT, U_ACCOUNT_LOGIN_FIELD, U_ACCOUNT_PASSWORD_FIELD,
     U_ACCOUNT_BAN_NICK, U_ACCOUNT_BAN, U_ACCOUNT_UNBAN,
     U_COMMENTS_OPEN, U_COMMENT_CLOSE, U_COMMENT_WRITE, U_COMMENT_SEND,
+    U_COMMENT_BAN_AUTHOR,
     U_WORKSHOP_CELL_BASE = 1200,
     U_WORKSHOP_PALETTE_BASE = 1400, U_WORKSHOP_COLOR_BASE = 1420,
     U_WORKSHOP_LAYER_BASE = 1450, U_WORKSHOP_LOCK_X_BASE = 1460,
@@ -816,13 +817,27 @@ static void catalog_draw_account_dialog(lv_obj_t *root, const OnNetView *v) {
 }
 
 static void catalog_draw_comments_dialog(lv_obj_t *root, const OnNetView *v) {
-    char title[ON_LEVEL_ID_SIZE + 40];
+    char title[ON_LEVEL_ID_SIZE + 40], author[ON_LOGIN_SIZE + 24] = {0};
     catalog_shade(root);
     box(root, 92, 34, 1096, 652, 17, WS_BROWN, 0);
     box(root, 103, 45, 1074, 76, 12, WS_BROWN_DARK, 0);
     snprintf(title, sizeof title, "%s %s", font_translate("Сообщения · ID"),
              catalog_selected);
     label(root, 120, 58, 1040, 49, title, 3, WS_CREAM, LV_TEXT_ALIGN_CENTER);
+    for (int i = 0; i < v->level_count; i++)
+        if (!strcmp(v->levels[i].id, catalog_selected) && v->levels[i].author[0])
+            snprintf(author, sizeof author, "%s: %s",
+                     font_translate("Автор"), v->levels[i].author);
+    if (author[0]) {
+        lv_obj_t *author_label = label(root, 320, 112, 740, 34, author, 1,
+                                       WS_CREAM, LV_TEXT_ALIGN_RIGHT);
+        lv_label_set_long_mode(author_label, LV_LABEL_LONG_MODE_DOTS);
+    }
+    /* A moderator bans the level itself — an impossible level is a reason
+     * even when its author never wrote a single message. */
+    if (v->account.admin && v->account.signed_in)
+        button(root, 860, 52, 300, 60, "Забанить автора", 1,
+               U_COMMENT_BAN_AUTHOR);
     if (v->comments_busy && !v->comment_count)
         label(root, 120, 150, 1040, 44, "Загружаю сообщения…", 1, WS_CREAM,
               LV_TEXT_ALIGN_LEFT);
@@ -935,6 +950,17 @@ static void custom_levels_screen(lv_obj_t *root, const OnNetView *v) {
                    official ? "Снять метку" : "Официальный", 1,
                    U_CUSTOM_OFFICIAL);
         }
+        for (int i = 0; i < v->level_count; i++)
+            if (!strcmp(v->levels[i].id, catalog_selected) &&
+                v->levels[i].author[0]) {
+                char author[ON_LOGIN_SIZE + 24];
+                snprintf(author, sizeof author, "%s: %s",
+                         font_translate("Автор"), v->levels[i].author);
+                lv_obj_t *author_label = label(root, 760, 662, 270, 34,
+                                               author, 1, MUTED,
+                                               LV_TEXT_ALIGN_LEFT);
+                lv_label_set_long_mode(author_label, LV_LABEL_LONG_MODE_DOTS);
+            }
         button(root, 1040, 656, 170, 43, "Отмена", 1, U_CUSTOM_DESELECT);
     } else if (pages > 1) {
         button(root, 69, 658, 170, 43, "‹ Назад", 1, U_CUSTOM_PREV);
@@ -4200,6 +4226,18 @@ static void pressed(lv_event_t *ev) {
             on_net_comment_post(catalog_selected, comment_input);
             comment_input[0] = 0;
         }
+        dirty = 1;return;
+    }
+    if (code == U_COMMENT_BAN_AUTHOR) {
+        OnNetView view;
+        on_net_view(&view);
+        for (int i = 0; i < view.level_count; i++)
+            if (!strcmp(view.levels[i].id, catalog_selected) &&
+                view.levels[i].author[0]) {
+                on_net_account_ban(view.levels[i].author,
+                                   font_translate("Уровень непроходимый"), 1);
+                break;
+            }
         dirty = 1;return;
     }
     if (code >= U_COMMENT_HIDE_BASE && code < U_COMMENT_HIDE_BASE + 4) {

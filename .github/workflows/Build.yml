@@ -89,7 +89,8 @@ jobs:
           test -s src/vendor/lvgl/src/libs/tiny_ttf/LICENSE.txt
           node tools/emit_online_fixture.mjs > /tmp/pvg3-browser-state.json
           clang -std=c11 -O2 -Wall -Wextra -Werror -Isrc \
-            src/online_rules.c src/online_protocol.c tools/native_online_test.c \
+            src/online_rules.c src/online_protocol.c src/online_account.c \
+            tools/native_online_test.c \
             -o native_online_test -lm
           ./native_online_test /tmp/pvg3-browser-state.json
           clang -std=c11 -O2 -Wall -Wextra -Werror -Isrc \

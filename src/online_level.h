@@ -1,4 +1,5 @@
 #ifndef PVG3_ONLINE_LEVEL_H
+#include "online_account.h"
 #define PVG3_ONLINE_LEVEL_H
 
 #include <stdint.h>
@@ -53,6 +54,8 @@ typedef struct {
     char description[ON_LEVEL_DESCRIPTION_SIZE];
     /* A moderator marks a level official; the historic ID stays official too. */
     int official;
+    /* Login of the account that published the level, empty for older levels. */
+    char author[ON_LOGIN_SIZE];
 } OnPublishedLevelSummary;
 
 typedef struct {
@@ -115,6 +118,8 @@ typedef struct {
     int width, height;
     int object_count;
     int official; /* moderator's «ОФИЦИАЛЬНЫЙ» badge, 0 for ordinary levels */
+    /* Login of the account that published the level, empty for older levels. */
+    char author[ON_LOGIN_SIZE];
     OnLevelObject objects[ON_LEVEL_OBJECT_CAP];
 } OnPublishedLevel;
 

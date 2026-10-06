@@ -361,6 +361,14 @@ int on_net_level_publish(const OnPublishedLevel *level) {
         pthread_mutex_unlock(&mu);return 0;
     }
     net.level_to_publish = *level;
+    /* The signed-in account owns what it publishes: the record and the
+     * catalog card then carry its login, and the rules stop strangers from
+     * overwriting the level. Without a session the level stays anonymous and
+     * behaves exactly like before. */
+    if (net.view.account.signed_in && on_account_valid_login(net.view.account.login))
+        snprintf(net.level_to_publish.author, sizeof net.level_to_publish.author,
+                 "%s", net.view.account.login);
+    else net.level_to_publish.author[0] = 0;
     net.level_publish_requested = 1;
     net.level_publish_generation++;
     net.view.level_publish_busy = 1;

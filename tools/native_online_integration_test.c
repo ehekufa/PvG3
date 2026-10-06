@@ -101,12 +101,13 @@ static const char *build_room(void) {
 typedef struct {
     int account_written, token_written, ban_written, ban_value;
     int comment_written, official_written, official_value;
-    int author_written, index_official_written;
+    int author_written, index_official_written, index_author_written;
     char account_login[ON_LOGIN_SIZE], account_body[512];
     char token_login[ON_LOGIN_SIZE], token_body[256];
     char ban_login[ON_LOGIN_SIZE], ban_body[ON_REASON_SIZE + 256];
     char comments[8192];
     char official_level[ON_LEVEL_ID_SIZE], official_body[32];
+    char author_login[ON_LOGIN_SIZE], author_level[ON_LEVEL_ID_SIZE];
     int comment_count;
 } AccountDb;
 static AccountDb accounts;
@@ -159,15 +160,18 @@ static int branch_key(const char *path, char branch[32], char key[ON_LOGIN_SIZE]
     return 1;
 }
 
-/* Adds "official":true to one entry of a /levels-index payload, so the catalog
- * sees the flag a moderator just wrote. */
-static int inject_official(const char *json, const char *id, char *out,
-                           size_t cap) {
+/* Adds one field to an entry of a /levels-index payload, so the catalog sees
+ * what a moderator just wrote: "official":true or "author":"login". */
+static int inject_field(const char *json, const char *id, const char *field,
+                        const char *value, int quoted, char *out, size_t cap) {
     char key[32];
+    char addition[128];
     const char *at, *brace, *end;
     int depth = 0;
     size_t head;
     snprintf(key, sizeof key, "\"%s\":", id);
+    snprintf(addition, sizeof addition, ",\"%s\":%s%s%s", field,
+             quoted ? "\"" : "", value, quoted ? "\"" : "");
     at = strstr(json, key);
     if (!at) return 0;
     brace = strchr(at + strlen(key) - 1, '{');
@@ -179,10 +183,10 @@ static int inject_official(const char *json, const char *id, char *out,
     }
     if (!end) return 0;
     head = (size_t)(end - json);
-    if (head + strlen(",\"official\":true") + strlen(end) + 1 >= cap) return 0;
+    if (head + strlen(addition) + strlen(end) + 1 >= cap) return 0;
     memcpy(out, json, head);
     out[head] = 0;
-    strcat(out, ",\"official\":true");
+    strcat(out, addition);
     strcat(out, end);
     return 1;
 }
@@ -200,13 +204,16 @@ int on_http_request(const char *path, const char *method, const char *body,
                                 uploaded_index_body);
             if (used < 0 || (size_t)used >= sizeof index_body) return -2;
         }
+        char step[4096];
         if (accounts.official_written && accounts.index_official_written &&
-            accounts.official_value) {
-            char flagged[4224];
-            if (inject_official(index_body, accounts.official_level, flagged,
-                                sizeof flagged))
-                return answer(response, cap, flagged, 200);
-        }
+            accounts.official_value &&
+            inject_field(index_body, accounts.official_level, "official", "true",
+                         0, step, sizeof step))
+            snprintf(index_body, sizeof index_body, "%s", step);
+        if (accounts.index_author_written && accounts.author_login[0] &&
+            inject_field(index_body, accounts.author_level, "author",
+                         accounts.author_login, 1, step, sizeof step))
+            snprintf(index_body, sizeof index_body, "%s", step);
         return answer(response, cap, index_body, 200);
     }
     {
@@ -275,16 +282,33 @@ int on_http_request(const char *path, const char *method, const char *body,
             int author = !strcmp(sub, "author");
             if (!official && !author) return -1;
             if (!body) return answer(response, cap, "null", 400);
+            if (!on_protocol_valid_level_id(key)) return -1;
             if (official) {
                 if (!strcmp(branch, "levels")) {
                     accounts.official_written = 1;
                     accounts.official_value = strstr(body, "true") ? 1 : 0;
-                    if (!on_protocol_valid_level_id(key)) return -1;
                     strcpy(accounts.official_level, key);
                 } else accounts.index_official_written = 1;
                 snprintf(accounts.official_body, sizeof accounts.official_body,
                          "%s", body);
-            } else accounts.author_written = 1;
+            } else {
+                accounts.author_written = 1;
+                if (strcmp(branch, "levels")) {
+                    /* The catalog card carries a plain login, the level
+                     * record carries login plus token. */
+                    accounts.index_author_written = 1;
+                    strcpy(accounts.author_level, key);
+                    /* The body is a bare JSON string: "login". */
+                    size_t body_length = strlen(body);
+                    if (body_length > 2 && body_length < ON_LOGIN_SIZE + 2 &&
+                        body[0] == '"' && body[body_length - 1] == '"') {
+                        memcpy(accounts.author_login, body + 1, body_length - 2);
+                        accounts.author_login[body_length - 2] = 0;
+                        if (!on_account_valid_login(accounts.author_login))
+                            accounts.author_login[0] = 0;
+                    }
+                }
+            }
             return answer(response, cap, "null", 200);
         }
     }
@@ -1884,13 +1908,31 @@ static int run_lvgl_test(void) {
     assert(accounts.official_written && accounts.official_value == 1 &&
            accounts.index_official_written && accounts.author_written &&
            !strcmp(accounts.official_level, "104"));
+    /* Reload the catalog: the card now carries the badge and its author. */
+    ui_tap(1111, 212);tick_pump(4);ui_snapshot("catalog_flagged");
     OnNetView official_view = view();
-    int official_now = 0;
+    int official_now = 0;const char *level_author = "";
     for (int i = 0; i < official_view.level_count; i++)
-        if (!strcmp(official_view.levels[i].id, "104"))
+        if (!strcmp(official_view.levels[i].id, "104")) {
             official_now = on_level_is_official(official_view.levels[i].id,
                                                 official_view.levels[i].official);
-    assert(official_now);
+            level_author = official_view.levels[i].author;
+        }
+    assert(official_now && !strcmp(level_author, "qwertyuiopaj1234"));
+    assert(lvgl_ui_test_label_present("ОФИЦИАЛЬНЫЙ"));
+    /* «Забанить автора» punishes an impossible level even when its author
+     * never wrote a message. */
+    ui_tap(365, 678); /* Сообщения */
+    tick_pump(4);ui_snapshot("comments_author");
+    assert(lvgl_ui_test_label_present("Забанить автора") &&
+           lvgl_ui_test_label_present("Автор: qwertyuiopaj1234"));
+    ui_tap(1010, 82); /* Забанить автора */
+    tick_pump(8);
+    assert(accounts.ban_written && accounts.ban_value == 1 &&
+           !strcmp(accounts.ban_login, "qwertyuiopaj1234") &&
+           strstr(accounts.ban_body, "Уровень непроходимый"));
+    ui_tap(990, 646); /* Закрыть */
+    assert(game_phase() == GAME_CUSTOM_LEVELS);
     on_net_account_sign_out();
     tick_pump(2);
     assert(!view().account.signed_in);

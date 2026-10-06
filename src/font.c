@@ -203,6 +203,9 @@ static const FontTranslation translations[] = {
      "обменивает его на токен сессии.",
      "The password is never stored or sent: the game derives a PBKDF2 hash and "
      "exchanges it for a session token."},
+    {"Автор", "Author"},
+    {"Забанить автора", "Ban the author"},
+    {"Уровень непроходимый", "Unplayable level"},
     /* Answers the database and the client give. */
     {"Ник: только a-z, 0-9 и _, от 3 до 24 знаков.",
      "Nickname: a-z, 0-9 and _ only, 3 to 24 characters."},

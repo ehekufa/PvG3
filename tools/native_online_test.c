@@ -542,6 +542,27 @@ static void test_level_official_flag(void) {
         "{\"45124\":{\"id\":\"45124\",\"title\":\"Weird\",\"description\":\"\","
         "\"updatedAt\":3,\"official\":\"yes\"}}", list, 4) == 1);
     assert(!list[0].official);
+
+    /* The account that published a level travels with the record and with its
+     * catalog card; a nonsense author is dropped instead of hiding the level. */
+    snprintf(level.author, sizeof level.author, "%s", "qwertyuiopaj1234");
+    size_t authored = on_protocol_published_level_json(&level, body, sizeof body);
+    assert(authored > marked && strstr(body, "\"author\":\"qwertyuiopaj1234\"") &&
+           on_protocol_published_level(body, "45122", &decoded));
+    assert(!strcmp(decoded.author, level.author));
+    summary_size = on_protocol_level_summary_json(&level, summary,
+        sizeof summary, 1700000000000ll);
+    assert(summary_size && strstr(summary, "\"author\":\"qwertyuiopaj1234\""));
+    count = on_protocol_level_index(
+        "{\"45122\":{\"id\":\"45122\",\"title\":\"Official\",\"description\":\"\","
+        "\"updatedAt\":1,\"official\":true,\"author\":\"qwertyuiopaj1234\"},"
+        "\"45123\":{\"id\":\"45123\",\"title\":\"Plain\",\"description\":\"\","
+        "\"updatedAt\":2,\"author\":\"Bad Nick!\"}}", list, 4);
+    assert(count == 2 && !strcmp(list[0].author, "qwertyuiopaj1234"));
+    assert(!list[1].author[0]);
+    snprintf(level.author, sizeof level.author, "%s", "Bad Nick!");
+    assert(!on_protocol_published_level_json(&level, body, sizeof body));
+    level.author[0] = 0;
 }
 
 int main(int argc, char **argv) {
