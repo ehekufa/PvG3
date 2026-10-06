@@ -918,33 +918,65 @@ static void native_trigger_runtime_regression(void) {
            game_debug_custom_checkpoint_id() == 5);
     game_custom_level_exit();
 
-    /* Falling below the playable level is terminal: checkpoints do not revive. */
+    /* Falling below the level respawns at the player start if no checkpoint
+     * has been reached, and the player can immediately continue. */
     level.object_count = 2;
     level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_PLAYER,
         .x=1,.y=1,.w=.65f,.h=.85f,.visible=1,.number=1};
     level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_GOAL,
         .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
     assert(game_workshop_preview(&level));
+    float start_x = game_debug_custom_player_x();
     float start_y = game_debug_custom_player_y();
-    int fell_and_died = 0;
+    int respawned_at_start = 0;
     for (int i = 0; i < 100; ++i) {
+        float previous_y = game_debug_custom_player_y();
         game_tick(.05f, NULL);
-        if (game_custom_player_dead()) {fell_and_died = 1;break;}
+        if (previous_y > start_y + 200.0f &&
+            fabsf(game_debug_custom_player_x() - start_x) < .001f &&
+            fabsf(game_debug_custom_player_y() - start_y) < .001f) {
+            respawned_at_start = 1;break;
+        }
     }
-    assert(fell_and_died && game_custom_player_dead() &&
-           game_debug_custom_player_y() > start_y + 200.0f);
-    float dead_x = game_debug_custom_player_x();
-    float dead_y = game_debug_custom_player_y();
-    game_custom_control(1, 1, 1);
-    for (int i = 0; i < 20; ++i) game_tick(.05f, NULL);
-    assert(game_custom_player_dead() &&
-           fabsf(game_debug_custom_player_x() - dead_x) < .001f &&
-           fabsf(game_debug_custom_player_y() - dead_y) < .001f &&
-           game_debug_custom_player_vx() == 0.0f &&
-           game_debug_custom_player_vy() == 0.0f);
+    assert(respawned_at_start && game_debug_custom_player_vx() == 0.0f &&
+           game_debug_custom_player_vy() == 0.0f &&
+           !game_debug_custom_player_grounded());
+    game_custom_control(1, 0, 0);
+    game_tick(.05f, NULL);
+    assert(game_debug_custom_player_x() > start_x);
+    game_custom_control(0, 0, 0);
     game_custom_level_exit();
 
-    /* Falling at the world's hard limit also stays dead despite a checkpoint. */
+    /* If a checkpoint has been activated, a fall returns to that marker. */
+    level.object_count = 3;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_PLAYER,
+        .x=1,.y=1,.w=.65f,.h=.85f,.visible=1,.number=1};
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_CHECKPOINT,
+        .x=1,.y=1,.w=1,.h=1,.visible=1,.number=3};
+    assert(game_workshop_preview(&level));
+    game_tick(0, NULL);
+    assert(game_debug_custom_checkpoint_id() == 3);
+    float checkpoint_x = (1.0f + .5f - .65f * .5f) * 80.0f;
+    float checkpoint_y = (1.0f + 1.0f - .85f) * 72.0f;
+    int respawned_at_checkpoint = 0;
+    for (int i = 0; i < 100; ++i) {
+        float previous_y = game_debug_custom_player_y();
+        game_tick(.05f, NULL);
+        if (previous_y > checkpoint_y + 200.0f &&
+            fabsf(game_debug_custom_player_x() - checkpoint_x) < .001f &&
+            fabsf(game_debug_custom_player_y() - checkpoint_y) < .001f) {
+            respawned_at_checkpoint = 1;break;
+        }
+    }
+    assert(respawned_at_checkpoint && game_debug_custom_checkpoint_id() == 3 &&
+           fabsf(game_debug_custom_player_vy()) < .001f &&
+           fabsf(game_debug_custom_player_vx()) < .001f &&
+           !game_debug_custom_player_grounded());
+    game_custom_level_exit();
+
+    /* The fall plane remains clamped to the world's hard limit. */
     level.object_count = 3;
     level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_PLAYER,
         .x=1,.y=99999.0f,.w=.65f,.h=.85f,.visible=1,.number=1};
@@ -955,15 +987,22 @@ static void native_trigger_runtime_regression(void) {
     assert(game_workshop_preview(&level));
     game_tick(0, NULL);
     assert(game_debug_custom_checkpoint_id() == 3);
-    int fell_at_world_limit = 0;
+    float world_checkpoint_x = (1.0f + .5f - .65f * .5f) * 80.0f;
+    float world_checkpoint_y = (99999.0f + 1.0f - .85f) * 72.0f;
+    int respawned_at_world_limit = 0;
     for (int i = 0; i < 60; ++i) {
+        float previous_vy = game_debug_custom_player_vy();
         game_tick(.05f, NULL);
-        if (game_custom_player_dead()) {fell_at_world_limit = 1;break;}
+        if (previous_vy > 0.0f &&
+            fabsf(game_debug_custom_player_x() - world_checkpoint_x) < .001f &&
+            fabsf(game_debug_custom_player_y() - world_checkpoint_y) < .01f &&
+            fabsf(game_debug_custom_player_vy()) < .001f) {
+            respawned_at_world_limit = 1;break;
+        }
     }
-    assert(fell_at_world_limit && game_debug_custom_checkpoint_id() == 3 &&
-           fabsf(game_debug_custom_player_vy()) < .001f &&
+    assert(respawned_at_world_limit && game_debug_custom_checkpoint_id() == 3 &&
            fabsf(game_debug_custom_player_vx()) < .001f &&
-           !game_debug_custom_player_grounded());
+           fabsf(game_debug_custom_player_vy()) < .001f);
     game_custom_level_exit();
 
     /* The art-free particle emitter draws its own trail in the native runtime. */
@@ -1289,11 +1328,11 @@ static void native_jetpack_portal_regression(void) {
     game_custom_level_exit();
 }
 
-static void native_terminal_fall_ui_regression(void) {
+static void native_fall_respawn_ui_regression(void) {
     static OnPublishedLevel level;
     memset(&level, 0, sizeof level);
     snprintf(level.id, sizeof level.id, "%s", "fall-ui");
-    snprintf(level.title, sizeof level.title, "%s", "Terminal fall test");
+    snprintf(level.title, sizeof level.title, "%s", "Fall respawn test");
     level.width = 16;level.height = 10;level.object_count = 2;
     level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_PLAYER,
         .x=1,.y=1,.w=.65f,.h=.85f,.visible=1,.number=1};
@@ -1301,18 +1340,26 @@ static void native_terminal_fall_ui_regression(void) {
         .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
     game_workshop_open();game_workshop_open_details();game_workshop_open_editor();
     assert(game_workshop_preview(&level));
-    for (int i = 0; i < 100 && !game_custom_player_dead(); ++i)
+    float start_x = game_debug_custom_player_x();
+    float start_y = game_debug_custom_player_y();
+    int respawned = 0;
+    for (int i = 0; i < 100; ++i) {
+        float previous_y = game_debug_custom_player_y();
         game_tick(.05f, NULL);
-    assert(game_custom_player_dead());
-    ui_snapshot("custom_dead");
+        if (previous_y > start_y + 200.0f &&
+            fabsf(game_debug_custom_player_x() - start_x) < .001f &&
+            fabsf(game_debug_custom_player_y() - start_y) < .001f) {
+            respawned = 1;break;
+        }
+    }
+    assert(respawned);
+    ui_snapshot("custom_fall_respawn");
     assert(lvgl_ui_test_label_present("К уровням") &&
            lvgl_ui_test_label_present("Настройки") &&
-           !lvgl_ui_test_label_present("ТЫ УПАЛ!") &&
-           !lvgl_ui_test_label_present("ТЫ УМЕР") &&
-           !lvgl_ui_test_label_present("Падение завершило уровень. Возрождения нет.") &&
-           !lvgl_ui_test_label_present("ПРЫЖОК") &&
-           !lvgl_ui_test_label_present("ВПЕРЁД"));
-    ui_tap(1140, 55); /* the only gameplay exit remains available after death */
+           lvgl_ui_test_label_present("ПРЫЖОК") &&
+           lvgl_ui_test_label_present("НАЗАД") &&
+           lvgl_ui_test_label_present("ВПЕРЁД"));
+    ui_tap(1140, 55); /* controls remain live after respawn; leave the preview */
     assert(game_phase() == GAME_WORKSHOP_EDIT);
 }
 
@@ -1340,8 +1387,8 @@ static int run_lvgl_test(void) {
     lvgl_trace("default color regression complete");
     native_jetpack_portal_regression();
     lvgl_trace("portal regression complete");
-    native_terminal_fall_ui_regression();
-    lvgl_trace("terminal fall UI regression complete");
+    native_fall_respawn_ui_regression();
+    lvgl_trace("fall respawn UI regression complete");
     game_init();assert(game_save_export(after, bytes) && !memcmp(before, after, bytes));
     lvgl_trace("save integrity check complete");
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER));

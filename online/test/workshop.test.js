@@ -838,6 +838,20 @@ test('workshop editor and preview use the supplied level artwork and tile wide p
   assert.equal(preview.images.filter(call => call.image.type === 'ground').length, 16);
 });
 
+test('falling below the level respawns at the player start when no checkpoint is active', () => {
+  const state = createPreviewState(newDraft('fall-respawn-start'));
+  const spawn = {...state.spawn};
+  state.x = spawn.x + 120;
+  state.y = state.fallPlaneY + 1;
+  state.vx = 80;state.vy = 780;
+  stepPreview(state, {}, 0);
+  assert.equal(state.x, spawn.x);assert.equal(state.y, spawn.y);
+  assert.equal(state.vx, 0);assert.equal(state.vy, 0);
+  assert.equal(state.checkpointId, 0);
+  stepPreview(state, {axis: 1}, .05);
+  assert(state.x > spawn.x, 'the player can keep playing after respawning');
+});
+
 test('checkpoints show their active art and respawn at the most recently touched marker', () => {
   const level = newDraft('checkpoint-runtime');
   const first = addObject(level, 'checkpoint', 2, 7);
@@ -846,7 +860,7 @@ test('checkpoints show their active art and respawn at the most recently touched
   assert.equal(validateDraft(level).ok, true);
   const state = createPreviewState(level);
   const activationOrder = [];
-  let previousCheckpoint = 0, died = false;
+  let previousCheckpoint = 0, respawned = false;
   for (let frame = 0; frame < 80; frame++) {
     const previousX = state.x;
     stepPreview(state, {axis: 1}, .05);
@@ -854,11 +868,11 @@ test('checkpoints show their active art and respawn at the most recently touched
       activationOrder.push(state.checkpointId);previousCheckpoint = state.checkpointId;
     }
     if (state.checkpointId === latest.id && previousX > state.spawn.x + 100 &&
-        state.x === state.spawn.x) {died = true;break;}
+        state.x === state.spawn.x) {respawned = true;break;}
   }
   assert.deepEqual(activationOrder, [first.id, latest.id],
     'each touched marker replaces the saved checkpoint in encounter order');
-  assert(died, 'the hazard should kill the player after both checkpoint activations');
+  assert(respawned, 'the hazard should respawn the player at the latest checkpoint');
   assert.equal(state.checkpointId, latest.id);
   assert(Math.abs(state.x - (latest.x + latest.w / 2 - .65 / 2) * 80) < 1e-6);
   assert(Math.abs(state.y - (latest.y + latest.h - .85) * 72) < 1e-6);
@@ -878,7 +892,8 @@ test('checkpoints show their active art and respawn at the most recently touched
     'only the most recently activated checkpoint uses active artwork');
   assert.equal(preview.images.filter(call => call.image === inactiveArt).length, 1);
 
-  state.y = WORLD_LIMIT * 72 + 10;state.vx = 40;state.vy = 800;state.grounded = true;
+  state.x += 120;
+  state.y = state.fallPlaneY + 10;state.vx = 40;state.vy = 800;state.grounded = true;
   stepPreview(state, {}, 0);
   assert.equal(state.x, state.spawn.x);assert.equal(state.y, state.spawn.y);
   assert.equal(state.vx, 0);assert.equal(state.vy, 0);

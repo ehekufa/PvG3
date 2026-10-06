@@ -630,9 +630,15 @@ export function createPreviewState(level) {
   const objects = copy(level.objects);
   for (const object of objects)
     if (object.type === 'particle') object.emitter = normalizeParticleEmitter(object.emitter);
+  let lowestObjectBottom = Number.isFinite(level.height) && level.height > 0 ?
+    level.height : LEVEL_HEIGHT;
+  for (const object of objects)
+    if (object.visible !== false && object.type !== 'trigger' && object.type !== 'particle')
+      lowestObjectBottom = Math.max(lowestObjectBottom, object.y + object.h);
+  const fallPlaneY = Math.min(lowestObjectBottom + 3, WORLD_LIMIT) * TILE_H;
   const state = {objects, x: player.x * TILE_W, y: player.y * TILE_H,
     vx: 0, vy: 0, gravity: 1450, backgroundColor: PREVIEW_BACKGROUND_COLOR,
-    grounded: false, time: 0, coins: 0, won: false,
+    fallPlaneY, grounded: false, time: 0, coins: 0, won: false,
     collected: [], triggerFired: [], triggerActive: [], triggerTimers: Object.create(null),
     invisible: [], noCollision: [], groupRotations: [], jumpHeld: false,
     orbActivated: false, checkpointId: 0,
@@ -1009,7 +1015,10 @@ export function stepPreview(state, input = {}, dt = 1 / 60) {
     if (playerCollisionEnabled) resolvePreviewPlayer(state, player, solids);
   }
   let playerRespawned = false;
-  if (state.y > WORLD_LIMIT * TILE_H) {
+  const playerBottom = state.y + player.h * TILE_H;
+  const fellBelowLevel = playerBottom > state.fallPlaneY;
+  const escapedWorldTop = playerBottom < -WORLD_LIMIT * TILE_H;
+  if (fellBelowLevel || escapedWorldTop) {
     resetPreviewPlayer(state);playerRespawned = true;
   }
   if (playerCollisionEnabled && !playerRespawned) {

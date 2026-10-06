@@ -53,8 +53,6 @@ void game_custom_control(int horizontal, int jump, int trigger);
 /* Jetpack-only held axis: +1 ascends, -1 descends, 0 hovers in place. */
 void game_custom_vertical_control(int vertical);
 int game_custom_jetpack_mode(void);
-/* A fall is terminal for the current level; leave it through the level-list button. */
-int game_custom_player_dead(void);
 
 /* The native platformer workshop is a separate editor from the public catalog. */
 void game_workshop_open(void);

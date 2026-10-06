@@ -488,7 +488,6 @@ static OnPublishedLevel custom_level;
 static int custom_object_count, custom_level_active, custom_level_won, custom_level_coins;
 static uint32_t custom_background_color = CUSTOM_BACKGROUND_DEFAULT;
 static float custom_fall_plane_y;
-static int custom_player_dead;
 static int custom_player_index = -1;
 #define CUSTOM_ID_MAP_CAP 65536
 static int custom_id_map[CUSTOM_ID_MAP_CAP];
@@ -616,8 +615,6 @@ void game_custom_vertical_control(int vertical) {
 int game_custom_jetpack_mode(void) {
     return custom_level_active && custom_jetpack_mode;
 }
-int game_custom_player_dead(void) { return custom_player_dead; }
-
 static float spawn_t;
 static int to_spawn;
 static int total_zombies;
@@ -2690,7 +2687,6 @@ static int custom_platformer_start(const OnPublishedLevel *source) {
     memset(custom_portal_inside, 0, sizeof custom_portal_inside);
     custom_jetpack_mode = custom_jetpack_active = 0;
     custom_background_color = CUSTOM_BACKGROUND_DEFAULT;
-    custom_player_dead = 0;
     custom_gravity = 1450.0f;custom_elapsed_time = 0;
     custom_player_collision_enabled = 1;
     custom_group_rotation_count = 0;
@@ -2714,7 +2710,6 @@ static void custom_platformer_stop(void) {
     custom_level_active = 0;custom_level_won = 0;custom_object_count = 0;
     custom_checkpoint_id = 0;custom_respawn_x = custom_respawn_y = 0;
     custom_fall_plane_y = 0;
-    custom_player_dead = 0;
     custom_gravity = 1450.0f;custom_elapsed_time = 0;
     custom_group_rotation_count = 0;
     custom_control_axis = custom_control_vertical = 0;
@@ -2932,7 +2927,6 @@ static void custom_platformer_update(float dt) {
     if (!custom_level_active || custom_level_won) return;
     if (dt < 0) dt = 0;
     if (dt > .05f) dt = .05f;
-    if (custom_player_dead) return;
     custom_elapsed_time += dt;
     custom_player_vx = (float)custom_control_axis * 250.0f;
     if (custom_control_axis < 0) custom_player_facing_left = 1;
@@ -2976,18 +2970,9 @@ static void custom_platformer_update(float dt) {
                            custom_fall_plane_y;
     int escaped_world_top = custom_player_y + custom_player_h <
                             -CUSTOM_WORLD_LIMIT * CUSTOM_TILE_H;
-    if (fell_below_level) {
-        /* Falling is a terminal death: no checkpoint or automatic restart. */
-        custom_player_dead = 1;
-        custom_player_vx = custom_player_vy = 0;
-        custom_player_grounded = 0;
-        custom_jetpack_active = 0;
-        custom_control_axis = custom_control_vertical = 0;
-        custom_jump_request = custom_jump_held = 0;
-        custom_trigger_request = custom_trigger_held = 0;
-        return;
-    }
-    if (escaped_world_top) {
+    if (fell_below_level || escaped_world_top) {
+        /* A fall is handled like a spike hit: return to the latest checkpoint,
+         * or to the level start if the player has not reached one yet. */
         custom_player_reset();
         player_respawned = 1;
     }
@@ -3238,7 +3223,7 @@ static void custom_platformer_draw(void) {
         player_flip_x = custom_player_facing_left;
         player_flip_y = player->flip_y;
     }
-    if (custom_level_active && player_visible && !custom_player_dead) {
+    if (custom_level_active && player_visible) {
         int px = (int)lrintf(custom_player_x - custom_camera_x);
         int py = (int)lrintf(custom_player_y - custom_camera_y);
         int player_art = !custom_jetpack_mode ? PV_ART_BREAD :

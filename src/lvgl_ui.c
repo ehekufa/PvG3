@@ -3521,7 +3521,6 @@ static void custom_platformer_screen(lv_obj_t *root) {
     button(root, 805, 21, 210, 62, "Настройки", 1, U_SETTINGS_OPEN);
     button(root, 1033, 21, 215, 62, "К уровням", 2,
            U_CUSTOM_BACK);
-    if (game_custom_player_dead()) return;
 
     lv_obj_t *back = box(root, 58, 525, 100, 170, 12, BUTTON_WHITE, 0);
     vector_arrow(back, 13, 17, -1);
@@ -3825,9 +3824,7 @@ static uint32_t state_signature(int phase, const OnNetView *v) {
         h = mix(h, v->loaded_level_id, strlen(v->loaded_level_id));
         h = mix(h, v->loaded_level_title, strlen(v->loaded_level_title));
         int jetpack = game_custom_jetpack_mode();
-        int player_dead = game_custom_player_dead();
         h = mix(h, &jetpack, sizeof jetpack);
-        h = mix(h, &player_dead, sizeof player_dead);
     } else if (phase == GAME_ONLINE_MATCH) {
         OnMatch s;
         int role, selected;
@@ -4888,7 +4885,6 @@ int lvgl_ui_touch_pointer(int pointer_id, int x, int y, int down) {
         dirty = 1;
         return 1;
     }
-    if (game_custom_player_dead()) return 1;
     CustomTouch *touch = custom_touch_find(pointer_id);
     if (!down) {
         if (touch) memset(touch, 0, sizeof *touch);
