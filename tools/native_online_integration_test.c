@@ -1160,6 +1160,15 @@ static int run_lvgl_test(void) {
     assert(!preferences_neutral_background_enabled());
     ui_tap(487, 442); /* restore the requested plain neutral background */
     assert(preferences_neutral_background_enabled());
+    /* The tutorial mode owns the workshop hints and starts switched off. */
+    assert(!preferences_tutorial_hints_enabled() &&
+           lvgl_ui_test_label_present("Обучение: ВЫКЛ."));
+    ui_tap(640, 519); /* switch the tutorial mode on */
+    assert(preferences_tutorial_hints_enabled() &&
+           lvgl_ui_test_label_present("Обучение: ВКЛ."));
+    ui_tap(640, 519); /* and back off again */
+    assert(!preferences_tutorial_hints_enabled() &&
+           lvgl_ui_test_label_present("Обучение: ВЫКЛ."));
     ui_tap(792, 217); /* choose English and keep settings open */
     assert(font_language() == FONT_LANG_EN);
     assert(!strcmp(font_translate("По умолчанию"), "Default") &&
@@ -1203,12 +1212,34 @@ static int run_lvgl_test(void) {
     ui_snapshot("workshop_details_named");
     ui_tap(964, 600);assert(game_phase() == GAME_WORKSHOP_EDIT);
     ui_snapshot("workshop_editor");
-    assert(lvgl_ui_test_label_present("ЗЕРКАЛО"));
+    /* «ЗЕРКАЛО», «ПОВОРОТ» and «ДВИГАТЬ ОБЪЕКТЫ» are tutorial captions:
+     * they are off until the player asks for them. */
+    assert(!lvgl_ui_test_label_present("ЗЕРКАЛО") &&
+           !lvgl_ui_test_label_present("ПОВОРОТ") &&
+           !lvgl_ui_test_label_present("ДВИГАТЬ ОБЪЕКТЫ") &&
+           lvgl_ui_test_label_present("Обучение: ВЫКЛ."));
+    ui_tap(605, 679); /* tutorial mode on */
+    assert(preferences_tutorial_hints_enabled() &&
+           lvgl_ui_test_label_present("ЗЕРКАЛО") &&
+           lvgl_ui_test_label_present("ПОВОРОТ") &&
+           lvgl_ui_test_label_present("ДВИГАТЬ ОБЪЕКТЫ") &&
+           lvgl_ui_test_label_present("Обучение: ВКЛ."));
+    ui_snapshot("workshop_tutorial_hints");
+    ui_tap(605, 679); /* tutorial mode off again */
+    assert(!preferences_tutorial_hints_enabled() &&
+           !lvgl_ui_test_label_present("ЗЕРКАЛО"));
     assert(!lvgl_ui_test_label_present("Зеркало: горизонтально или вертикально."));
     assert(!lvgl_ui_test_label_present(
         "Зелёные стрелки двигают на 0,5 блока; бирюзовые — окно карты."));
     assert(!lvgl_ui_test_label_present("Выбери категорию и клетку карты"));
     ui_tap(191, 205);ui_snapshot("workshop_block_added");
+#ifdef PVG3_LVGL_TEST
+    /* Nothing was picked, so a fresh block shows the author's own artwork. */
+    static OnPublishedLevel fresh_probe;
+    assert(lvgl_ui_test_workshop_level(&fresh_probe));
+    assert(fresh_probe.object_count > 0 &&
+           fresh_probe.objects[fresh_probe.object_count - 1].color_default == 1);
+#endif
 
     /* Multi-select, move as a group, copy/paste, and delete the temporary
      * copies without disturbing the earlier block used by trigger tests. */
@@ -1289,15 +1320,15 @@ static int run_lvgl_test(void) {
     ui_snapshot("workshop_color_dialog");
     assert(lvgl_ui_test_label_present("Цвет объекта") &&
            lvgl_ui_test_label_present("По умолчанию"));
-    ui_tap(850, 520); /* default: keep the object's own artwork */
-    ui_snapshot("workshop_color_default");
+    /* The block was placed with nothing picked: its own picture is already
+     * on, and the dialog says so. */
     assert(lvgl_ui_test_label_present("Обычная картинка"));
 #ifdef PVG3_LVGL_TEST
     assert(lvgl_ui_test_workshop_level(&editor_probe));
     assert(editor_probe.objects[3].color_default == 1);
 #endif
     ui_tap(520, 208); /* bright palette */
-    ui_tap(350, 320); /* first swatch: back to a picked color */
+    ui_tap(350, 320); /* first swatch: picking a color leaves the default */
     ui_snapshot("workshop_color_picked");
 #ifdef PVG3_LVGL_TEST
     assert(lvgl_ui_test_workshop_level(&editor_probe));
@@ -1305,6 +1336,8 @@ static int run_lvgl_test(void) {
            editor_probe.objects[3].color == 0xf27652u);
 #endif
     ui_tap(850, 520); /* and back to the default picture */
+    ui_snapshot("workshop_color_default");
+    assert(lvgl_ui_test_label_present("Обычная картинка"));
 #ifdef PVG3_LVGL_TEST
     assert(lvgl_ui_test_workshop_level(&editor_probe));
     assert(editor_probe.objects[3].color_default == 1);

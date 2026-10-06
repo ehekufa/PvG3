@@ -9,6 +9,7 @@
 /* Keep authored artwork enabled by default; plain blue-gray is optional. */
 static int music_enabled = 1;
 static int neutral_background_enabled;
+static int tutorial_hints_enabled;
 static char preferences_path[PREFERENCES_PATH_CAP];
 
 static void save_preferences(void) {
@@ -21,8 +22,9 @@ static void save_preferences(void) {
     FILE *file = fopen(temporary, "wb");
     if (!file) return;
     int ok = fprintf(file,
-        "PVG3-PREFERENCES %d\nmusic=%d\nneutral_background=%d\n",
-        PREFERENCES_VERSION, music_enabled, neutral_background_enabled) > 0;
+        "PVG3-PREFERENCES %d\nmusic=%d\nneutral_background=%d\ntutorial_hints=%d\n",
+        PREFERENCES_VERSION, music_enabled, neutral_background_enabled,
+        tutorial_hints_enabled) > 0;
     if (fclose(file) != 0) ok = 0;
     if (ok) {
         remove(preferences_path);
@@ -43,6 +45,7 @@ void preferences_set_path(const char *path) {
 
     music_enabled = 1;
     neutral_background_enabled = 0;
+    tutorial_hints_enabled = 0;
     FILE *file = fopen(preferences_path, "rb");
     if (!file) return;
 
@@ -61,6 +64,9 @@ void preferences_set_path(const char *path) {
                  !strncmp(line, "neutral_background=", 19) &&
                  (line[19] == '0' || line[19] == '1'))
             neutral_background_enabled = line[19] == '1';
+        else if (!strncmp(line, "tutorial_hints=", 15) &&
+                 (line[15] == '0' || line[15] == '1'))
+            tutorial_hints_enabled = line[15] == '1';
     }
     fclose(file);
 
@@ -86,5 +92,16 @@ void preferences_set_neutral_background_enabled(int enabled) {
     enabled = !!enabled;
     if (neutral_background_enabled == enabled) return;
     neutral_background_enabled = enabled;
+    save_preferences();
+}
+
+int preferences_tutorial_hints_enabled(void) {
+    return tutorial_hints_enabled;
+}
+
+void preferences_set_tutorial_hints_enabled(int enabled) {
+    enabled = !!enabled;
+    if (tutorial_hints_enabled == enabled) return;
+    tutorial_hints_enabled = enabled;
     save_preferences();
 }

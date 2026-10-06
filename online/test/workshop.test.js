@@ -85,6 +85,11 @@ test('editor keeps section and control names but omits instructional hints', () 
     'Состояние группы остаётся таким',
   ]) assert.equal(editor.includes(hint), false, `removed editor hint: ${hint}`);
   assert.equal(editor.includes('title='), false, 'editor buttons have no hover tooltips');
+  assert.equal((editor.match(/class="overline ws-hint"/g) || []).length, 3,
+    'transform captions are tutorial hints, switched off by default');
+  assert(editor.includes('id="ws-tutorial-toggle"'),
+    'the tutorial mode has its own switch in the editor');
+  assert(editor.includes('Обучение'));
   assert(editor.includes('КАТЕГОРИИ ОБЪЕКТОВ'));
   assert(editor.includes('ЗЕРКАЛЬНОЕ ОТРАЖЕНИЕ'));
   assert.equal((editor.match(/Переворот-блоков\.png/g) || []).length, 2,
@@ -412,8 +417,10 @@ test('recolor and background triggers round-trip, target groups, and update the 
   other.number = 43;
   const recolor = addObject(level, 'trigger', 100, 100, 'recolor');
   Object.assign(recolor.trigger, {event:'start', groupId:42, color:'#e547b2'});
+  recolor.defaultColor = false;
   const background = addObject(level, 'trigger', 102, 100, 'background');
   Object.assign(background.trigger, {event:'start', color:'#468bd0'});
+  background.defaultColor = false;
 
   assert.equal(validateDraft(level).ok, true);
   const record = publishedRecord('712', level);
@@ -454,7 +461,7 @@ test('the default color option keeps the object\'s own picture and round-trips',
   const plain = addObject(level, 'block', 6, 6);
   plain.number = 42;plain.color = '#123456';plain.defaultColor = true;
   const tinted = addObject(level, 'block', 8, 6);
-  tinted.number = 43;tinted.color = '#e547b2';
+  tinted.number = 43;tinted.color = '#e547b2';tinted.defaultColor = false;
   const player = level.objects.find(object => object.type === 'player');
   player.defaultColor = true;
   const recolor = addObject(level, 'trigger', 100, 100, 'recolor');
@@ -466,6 +473,13 @@ test('the default color option keeps the object\'s own picture and round-trips',
 
   assert.equal(usesDefaultArtwork(plain), true);
   assert.equal(usesDefaultArtwork(tinted), false);
+  // Nothing picked yet: a fresh recolorable object keeps the author artwork.
+  const untouched = newDraft('fresh-color');
+  const freshBlock = addObject(untouched, 'block', 6, 6);
+  const freshCoin = addObject(untouched, 'coin', 8, 6);
+  assert.equal(freshBlock.defaultColor, true, 'a new block shows its own picture');
+  assert.equal(usesDefaultArtwork(freshBlock), true);
+  assert.equal(freshCoin.defaultColor, undefined, 'fixed sprites need no switch');
   assert.equal(usesDefaultArtwork(player), false,
     'fixed sprites always keep their own artwork and need no switch');
   assert.equal(defaultObjectColor('block'), '#55c8ea');
@@ -711,7 +725,7 @@ test('control mode defaults to buttons on touch devices and can be chosen explic
 test('web artwork uses cached alpha-preserving tints in both editor and gameplay preview', () => {
   const level = newDraft('sprite-recolor');
   const block = addObject(level, 'block', 6, 6);
-  block.color = '#e547b2';
+  block.color = '#e547b2';block.defaultColor = false;
   const source = {naturalWidth:32, naturalHeight:32};
   const offscreen = [];
   const hadDocument = Object.hasOwn(globalThis, 'document');

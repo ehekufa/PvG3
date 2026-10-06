@@ -27,8 +27,9 @@
 #define MUTED C(5D7287)
 #define BUTTON_WHITE C(FFFDF8)
 #define BUTTON_GRAY C(DCE8EF)
-#define BUTTON_BLACK C(243B52)
-#define BUTTON_TEXT C(243B52)
+/* Buttons are true black: the old navy read as «bluish-black» on phones. */
+#define BUTTON_BLACK C(000000)
+#define BUTTON_TEXT C(000000)
 #define BUTTON_LIGHT_TEXT C(FFFDF8)
 #define WS_BACKGROUND C(172C40)
 #define WS_GRID C(344B60)
@@ -93,7 +94,7 @@ enum {
     U_WORKSHOP_PORTAL_VARIANT_BASE = 1590,
     U_SETTINGS_OPEN = 1700, U_SETTINGS_CLOSE, U_SETTINGS_LANG_RU,
     U_SETTINGS_LANG_EN, U_SETTINGS_MUSIC_TOGGLE,
-    U_SETTINGS_BG_NEUTRAL, U_SETTINGS_BG_ART
+    U_SETTINGS_BG_NEUTRAL, U_SETTINGS_BG_ART, U_TUTORIAL_TOGGLE
 };
 
 static lv_display_t *display;
@@ -243,7 +244,7 @@ static lv_obj_t *box(lv_obj_t *parent, int x, int y, int w, int h, int radius,
     lv_obj_set_style_radius(o, radius, 0);
     if (w >= 22 && h >= 22) {
         lv_obj_set_style_border_width(o, 2, 0);
-        lv_obj_set_style_border_color(o, C(243B52), 0);
+        lv_obj_set_style_border_color(o, BUTTON_BLACK, 0);
         lv_obj_set_style_border_opa(o, LV_OPA_COVER, 0);
     }
     lv_obj_set_style_shadow_width(o, 0, 0);
@@ -329,7 +330,7 @@ static lv_obj_t *button(lv_obj_t *parent, int x, int y, int w, int h,
     lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(o, 5, 0);
     lv_obj_set_style_border_width(o, 3, 0);
-    lv_obj_set_style_border_color(o, C(243B52), 0);
+    lv_obj_set_style_border_color(o, BUTTON_BLACK, 0);
     lv_obj_set_style_border_opa(o, LV_OPA_COVER, 0);
     lv_obj_set_style_shadow_width(o, 0, 0);
     lv_obj_set_style_bg_color(o, button_face, LV_STATE_PRESSED);
@@ -640,7 +641,7 @@ static void rooms_screen(lv_obj_t *root, const OnNetView *v) {
     button_fill(water, chosen_map == 5 ? BUTTON_GRAY : BUTTON_WHITE);
     lv_obj_set_style_border_width(chosen_map == 1 ? lawn : water, 5, 0);
     lv_obj_set_style_border_color(chosen_map == 1 ? lawn : water,
-                                  C(243B52), 0);
+                                  BUTTON_BLACK, 0);
     button(root, 650, 179, 187, 62, "Поиск", 2, U_SEARCH);
     button(root, 856, 179, 208, 62, "+ Создать", 2, U_CREATE);
     button(root, 1070, 179, 149, 62, "Мастерская", 1, U_MENU_WORKSHOP);
@@ -748,7 +749,7 @@ static void custom_levels_screen(lv_obj_t *root, const OnNetView *v) {
             lv_obj_t *card = button(root, x, y, 548, 78, "", 1,
                                     U_CUSTOM_LEVEL_BASE + i);
             lv_obj_set_style_border_width(card, 3, 0);
-            lv_obj_set_style_border_color(card, C(243B52), 0);
+            lv_obj_set_style_border_color(card, BUTTON_BLACK, 0);
             box(card, 13, 15, 90, 47, 10, BUTTON_GRAY, 0);
             lv_obj_t *id_label = label(card, 15, 17, 86, 43,
                   v->levels[index].id, 1, BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
@@ -843,7 +844,8 @@ static void workshop_reset_draft(void) {
     workshop_ground_color_custom = 0;
     workshop_ground_color_default = 0;
     workshop_color_set = workshop_color_index = 0;
-    workshop_color_default = 0;
+    /* Nothing chosen yet: new objects keep their own picture. */
+    workshop_color_default = 1;
     workshop_draft_exists = 0;
     workshop_name[0] = 0;workshop_description[0] = 0;
     snprintf(workshop_name, sizeof workshop_name, "%s", "Новый уровень");
@@ -2641,6 +2643,16 @@ static void workshop_draw_world_object(lv_obj_t *root, int gx, int gy, int cell,
     }
 }
 
+/* Tool captions such as «ЗЕРКАЛО» are only a tutorial aid: they stay hidden
+ * until the player switches the tutorial mode on, and it is remembered. */
+static int workshop_hints_on(void) {
+    return preferences_tutorial_hints_enabled();
+}
+
+static const char *workshop_tutorial_text(void) {
+    return workshop_hints_on() ? "Обучение: ВКЛ." : "Обучение: ВЫКЛ.";
+}
+
 static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
     box(root, 0, 0, GAME_W, GAME_H, 0, WS_BACKGROUND, 0);
     for (int x = 0; x < GAME_W; x += 64)
@@ -2894,8 +2906,9 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
     workshop_button(root, 724, 565, 38, 62, "P", 2,
                     U_WORKSHOP_PALETTE_BASE + 9,
                     workshop_palette_type == ON_LEVEL_PARTICLE ? WS_CYAN : BUTTON_GRAY);
-    label(root, 43, 637, 193, 28, "ДВИГАТЬ ОБЪЕКТЫ", 0,
-          WS_YELLOW, LV_TEXT_ALIGN_LEFT);
+    if (workshop_hints_on())
+        label(root, 43, 637, 193, 28, "ДВИГАТЬ ОБЪЕКТЫ", 0,
+              WS_YELLOW, LV_TEXT_ALIGN_LEFT);
     workshop_nudge_button(root, 43, 666, 46, 44,
                           U_WORKSHOP_NUDGE_BASE, WS_ACCENT, -1);
     workshop_nudge_button(root, 92, 666, 46, 44,
@@ -2904,18 +2917,23 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
                           U_WORKSHOP_NUDGE_BASE + 2, WS_ACCENT, 2);
     workshop_nudge_button(root, 190, 666, 46, 44,
                           U_WORKSHOP_NUDGE_BASE + 3, WS_ACCENT, 1);
-    label(root, 252, 637, 96, 28, "ПОВОРОТ", 0,
-          WS_YELLOW, LV_TEXT_ALIGN_CENTER);
+    if (workshop_hints_on())
+        label(root, 252, 637, 96, 28, "ПОВОРОТ", 0,
+              WS_YELLOW, LV_TEXT_ALIGN_CENTER);
     workshop_rotation_button(root, 252, 666, 46, 44,
                              U_WORKSHOP_ROTATE_BASE, WS_ACCENT, -1, NULL, 0);
     workshop_rotation_button(root, 303, 666, 46, 44,
                              U_WORKSHOP_ROTATE_BASE + 1, WS_ACCENT, 1, NULL, 0);
-    label(root, 354, 637, 98, 28, "ЗЕРКАЛО", 0,
-          WS_YELLOW, LV_TEXT_ALIGN_CENTER);
+    if (workshop_hints_on())
+        label(root, 354, 637, 98, 28, "ЗЕРКАЛО", 0,
+              WS_YELLOW, LV_TEXT_ALIGN_CENTER);
     workshop_mirror_button(root, 354, 666, 46, 44,
                            U_WORKSHOP_FLIP_BASE, WS_ACCENT, 0);
     workshop_mirror_button(root, 405, 666, 46, 44,
                            U_WORKSHOP_FLIP_BASE + 1, WS_ACCENT, 1);
+    workshop_button(root, 480, 652, 250, 54, workshop_tutorial_text(), 1,
+                    U_TUTORIAL_TOGGLE,
+                    workshop_hints_on() ? WS_CYAN : BUTTON_GRAY);
     const char *publish_status = workshop_notice[0] ? workshop_notice :
         view->level_publish_busy ? "Публикуем уровень в общий каталог…" :
         view->level_publish_notice[0] ? view->level_publish_notice :
@@ -3239,13 +3257,13 @@ static void custom_platformer_screen(lv_obj_t *root) {
 
     lv_obj_t *trigger = box(root, 910, 567, 128, 99, 19, BUTTON_WHITE, 1);
     lv_obj_set_style_border_width(trigger, 2, 0);
-    lv_obj_set_style_border_color(trigger, C(243B52), 0);
+    lv_obj_set_style_border_color(trigger, BUTTON_BLACK, 0);
     label(trigger, 5, 21, 118, 56, "ДЕЙСТВИЕ", 1, BUTTON_TEXT,
           LV_TEXT_ALIGN_CENTER);
     if (!game_custom_jetpack_mode()) {
         lv_obj_t *jump = box(root, 1081, 525, 169, 169, 84, BUTTON_GRAY, 1);
         lv_obj_set_style_border_width(jump, 3, 0);
-        lv_obj_set_style_border_color(jump, C(243B52), 0);
+        lv_obj_set_style_border_color(jump, BUTTON_BLACK, 0);
         vector_arrow(jump, 47, 13, 0);
         label(jump, 4, 102, 161, 44, "ПРЫЖОК", 1, BUTTON_TEXT,
               LV_TEXT_ALIGN_CENTER);
@@ -3254,8 +3272,8 @@ static void custom_platformer_screen(lv_obj_t *root) {
         lv_obj_t *down = box(root, 1168, 525, 82, 169, 12, BUTTON_GRAY, 1);
         lv_obj_set_style_border_width(up, 3, 0);
         lv_obj_set_style_border_width(down, 3, 0);
-        lv_obj_set_style_border_color(up, C(243B52), 0);
-        lv_obj_set_style_border_color(down, C(243B52), 0);
+        lv_obj_set_style_border_color(up, BUTTON_BLACK, 0);
+        lv_obj_set_style_border_color(down, BUTTON_BLACK, 0);
         vector_arrow(up, 4, 9, 0);
         vector_arrow(down, 4, 9, 2);
         label(up, 1, 91, 80, 54, "ВВЕРХ", 0, BUTTON_TEXT,
@@ -3312,6 +3330,8 @@ static void settings_dialog(lv_obj_t *root) {
         preferences_neutral_background_enabled() ? 5 : 3, 0);
     lv_obj_set_style_border_width(artwork,
         preferences_neutral_background_enabled() ? 3 : 5, 0);
+    button(root, 350, 490, 580, 58, workshop_tutorial_text(), 2,
+           U_TUTORIAL_TOGGLE);
     button(root, 530, 566, 220, 56, "Закрыть", 1, U_SETTINGS_CLOSE);
 }
 
@@ -3909,6 +3929,9 @@ static void pressed(lv_event_t *ev) {
         dirty = 1;break;
     case U_SETTINGS_BG_ART:
         preferences_set_neutral_background_enabled(0);
+        dirty = 1;break;
+    case U_TUTORIAL_TOGGLE:
+        preferences_set_tutorial_hints_enabled(!workshop_hints_on());
         dirty = 1;break;
     case U_MENU_PLAY: game_input_press(640, 600);break;
     case U_MENU_LEVELS: game_input_press(635, 85);break;

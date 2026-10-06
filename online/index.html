@@ -78,7 +78,8 @@
           <div class="ws-page-toolbar">
             <button class="small-button" id="ws-editor-back" type="button">Назад · Мастерская</button>
             <div class="ws-main-actions">
-              <button class="small-button" id="ws-preview" type="button"><span class="icon-play" aria-hidden="true"></span>Проверить</button>
+              <label class="ws-tutorial-toggle"><input id="ws-tutorial-toggle" type="checkbox">Обучение</label>
+            <button class="small-button" id="ws-preview" type="button"><span class="icon-play" aria-hidden="true"></span>Проверить</button>
               <button class="primary-button" id="ws-publish" type="button">Опубликовать</button>
             </div>
           </div>
@@ -96,7 +97,7 @@
               <div class="ws-tool-group"><span class="overline">РЕЖИМ</span>
                 <div class="ws-mode-buttons"><button type="button" data-ws-tool="build" class="active">Строить</button><button type="button" data-ws-tool="select">Выбрать</button><button type="button" data-ws-tool="multi">Мульти</button><button type="button" data-ws-tool="delete">Удалить</button><button type="button" data-ws-tool="pan">Карта</button></div></div>
               <div class="ws-tool-group ws-transform-tools">
-                <span class="overline">ВЫДЕЛЕНИЕ И ПРЕОБРАЗОВАНИЕ</span>
+                <span class="overline ws-hint">ВЫДЕЛЕНИЕ И ПРЕОБРАЗОВАНИЕ</span>
                 <strong id="ws-selection-count" aria-live="polite">0 выбрано</strong>
                 <div class="ws-transform-actions"><button id="ws-copy-selected" type="button" disabled>Копировать</button><button id="ws-paste-selected" type="button" disabled>Вставить</button></div>
                 <div class="ws-transform-move">
@@ -116,14 +117,14 @@
                   <button type="button" data-ws-rotate="-1" aria-label="Повернуть против часовой стрелки"><img class="ws-rotate-icon rotate-ccw" src="../assets/art/Переворот-блоков.png" alt="" aria-hidden="true"><span data-ws-rotate-label>-45°</span></button>
                   <button type="button" data-ws-rotate="1" aria-label="Повернуть по часовой стрелке"><img class="ws-rotate-icon rotate-cw" src="../assets/art/Переворот-блоков.png" alt="" aria-hidden="true"><span data-ws-rotate-label>+45°</span></button>
                 </div>
-                <span class="overline">ЗЕРКАЛЬНОЕ ОТРАЖЕНИЕ</span>
+                <span class="overline ws-hint">ЗЕРКАЛЬНОЕ ОТРАЖЕНИЕ</span>
                 <div class="ws-flip-actions" role="group" aria-label="Отразить выделение">
                   <button type="button" data-ws-flip="x" aria-label="Отразить слева направо"><svg class="ws-flip-icon" viewBox="0 0 32 32" aria-hidden="true"><path class="mirror-axis" d="M16 3v26"/><path d="M12 8 5 16l7 8z"/><path d="m20 8 7 8-7 8z"/></svg><span>Слева ↔ справа</span></button>
                   <button type="button" data-ws-flip="y" aria-label="Отразить сверху вниз"><svg class="ws-flip-icon" viewBox="0 0 32 32" aria-hidden="true"><path class="mirror-axis" d="M3 16h26"/><path d="m8 12 8-7 8 7z"/><path d="m8 20 8 7 8-7z"/></svg><span>Сверху ↕ снизу</span></button>
                 </div>
               </div>
               <div class="ws-tool-group ws-map-pan-tools">
-                <span class="overline">ПЕРЕМЕЩЕНИЕ КАРТЫ</span>
+                <span class="overline ws-hint">ПЕРЕМЕЩЕНИЕ КАРТЫ</span>
                 <div class="ws-transform-move">
                   <label>Шаг карты<input id="ws-pan-step" type="number" min="0.1" max="100" step="0.1" value="1"></label>
                   <div class="ws-nudge-grid ws-pan-grid" role="group" aria-label="Сдвинуть окно карты">

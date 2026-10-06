@@ -26,6 +26,7 @@ let lastFrame = performance.now(), lastPing = 0, generation = 0;
 let toastTimer;
 const WS_DRAFT_KEY = 'pvg3-workshop-draft-v1';
 const WS_CONTROL_KEY = 'pvg3-workshop-control-v1';
+const WS_TUTORIAL_KEY = 'pvg3-workshop-tutorial-v1';
 const WS_DB_NAME = 'pvg3-workshop';
 const WS_DB_STORE = 'drafts';
 const WS_LOCAL_FALLBACK_MAX = 1024 * 1024;
@@ -44,6 +45,8 @@ let wsCamera = {x: 0, y: 0};
 let wsPreviewState = null, wsPreviewLevel = null, wsPreviewReturn = 'editor';
 let wsParticleDialogObjectId = 0, wsParticlePreviewTime = 0, wsParticleAnimation = 0;
 let wsControlPreference = localSetting(WS_CONTROL_KEY, 'auto'), wsControlMode = 'keyboard';
+// Tool captions such as «ЗЕРКАЛЬНОЕ ОТРАЖЕНИЕ» are a tutorial aid only.
+let wsTutorialHints = localSetting(WS_TUTORIAL_KEY, '0') === '1';
 let wsJumpQueued = false, wsTriggerQueued = false;
 const wsTouchButtons = createTouchButtonState();
 const wsKeys = new Set();
@@ -785,6 +788,14 @@ function previewJumpPointerDown(event) {
   event.preventDefault();
   if (!wsPreviewState.jetpack) wsJumpQueued = true;
 }
+function applyWorkshopTutorial(enabled) {
+  wsTutorialHints = enabled === true;
+  try {localStorage.setItem(WS_TUTORIAL_KEY, wsTutorialHints ? '1' : '0');} catch {}
+  const box = $('ws-tutorial-toggle');
+  if (box) box.checked = wsTutorialHints;
+  for (const tools of document.querySelectorAll('.ws-tools'))
+    tools.classList.toggle('hints-hidden', !wsTutorialHints);
+}
 function applyWorkshopControl(preference) {
   wsControlPreference = ['auto', 'buttons', 'keyboard'].includes(preference) ? preference : 'auto';
   try {localStorage.setItem(WS_CONTROL_KEY, wsControlPreference);} catch {}
@@ -1202,6 +1213,7 @@ $('ws-trigger-gravity').addEventListener('input', e => updateSelectedTrigger('gr
 $('ws-trigger-color').addEventListener('input', e => updateSelectedTrigger('color', e.target.value));
 $('ws-trigger-action').addEventListener('change', e => updateSelectedTrigger('action', e.target.value));
 $('ws-control-select').addEventListener('change', e => applyWorkshopControl(e.target.value));
+$('ws-tutorial-toggle').addEventListener('change', e => applyWorkshopTutorial(e.target.checked));
 for (const button of document.querySelectorAll('[data-ws-hold]')) {
   const direction = button.dataset.wsHold;
   button.addEventListener('pointerdown', event => {
@@ -1277,6 +1289,7 @@ $('music').addEventListener('click', async () => {
   } else {audio.pause();$('music').textContent = 'Музыка';}
 });
 canvas.addEventListener('pointerdown', pointer);
+applyWorkshopTutorial(wsTutorialHints);
 populateBook();preloadArtwork();
 requestAnimationFrame(frame);
 let previous = null;

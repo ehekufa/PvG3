@@ -17,7 +17,7 @@
   --outline: #304a60;
   --button-white: #fffdf8;
   --button-gray: #dce8ef;
-  --button-black: #243b52;
+  --button-black: #000000;
   --button-ink: #243b52;
   --button-light-ink: #fffdf8;
   --accent: #e68e70;
@@ -238,6 +238,8 @@ main { min-width: 0; }
 .ws-page-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 12px 0 16px; }
 .ws-page-toolbar > .small-button { color: var(--button-ink); background: var(--button-white); }
 .ws-page-toolbar h2 { margin: 0; font-size: 30px; }
+.ws-tutorial-toggle { display: inline-flex; align-items: center; gap: 7px; min-height: 46px; padding: 0 12px; border: 2px solid var(--outline); border-radius: 5px; background: var(--button-white); font-size: 16px; font-weight: bold; }
+.ws-tutorial-toggle input { width: 20px; height: 20px; accent-color: #000; }
 .ws-main-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .ws-main-actions .primary-button, .ws-main-actions .small-button { width: auto; min-height: 46px; }
 .ws-main-actions .primary-button { padding: 9px 18px; font-size: 18px; }
@@ -663,12 +665,15 @@ button, .panel, .map-card, .room-item, .side-card, .code-panel, .canvas-wrap,
 .ws-transform-actions, .ws-rotate-actions, .ws-flip-actions {
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px;
 }
+.ws-tools.hints-hidden .ws-hint { display: none; }
 .ws-transform-tools button {
   min-width: 0; min-height: 36px; padding: 4px; border: 2px solid var(--outline);
   border-radius: 4px; color: var(--button-ink); background: var(--button-white);
   font: inherit; font-size: 13px; font-weight: bold;
 }
 .ws-transform-tools button:disabled { opacity: .45; cursor: not-allowed; }
+/* Tool glyphs are true black, like the rotate icon, not bluish navy. */
+.ws-transform-tools button, .ws-map-pan-tools button { color: #000; }
 .ws-transform-move { display: grid; grid-template-columns: minmax(0, 1fr) 108px; align-items: end; gap: 6px; }
 .ws-nudge-grid { display: grid; grid-template-columns: repeat(3, 32px); grid-template-rows: repeat(3, 30px); gap: 3px; }
 .ws-nudge-grid button { display: grid; min-height: 30px; place-items: center; padding: 0; }

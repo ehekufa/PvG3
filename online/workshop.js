@@ -244,6 +244,9 @@ export function addObject(level, type, x, y, triggerKind = 'move') {
     size[0], size[1], DEFAULT_COLORS[type],
     Math.max(0, ...level.objects.map(o => Number(o.number) || 0)) + 1,
   );
+  // Nothing has been picked yet: a recolorable object keeps its own picture
+  // until the author chooses a color.
+  if (canManuallyRecolorType(type)) object.defaultColor = true;
   if (type === 'particle') object.emitter = {...DEFAULT_PARTICLE_EMITTER};
   if (type === 'trigger') {
     const kind = TRIGGER_KINDS.includes(triggerKind) ? triggerKind : 'move';

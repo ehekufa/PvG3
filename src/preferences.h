@@ -7,5 +7,9 @@ int preferences_music_enabled(void);
 void preferences_set_music_enabled(int enabled);
 int preferences_neutral_background_enabled(void);
 void preferences_set_neutral_background_enabled(int enabled);
+/* Workshop hints such as «ЗЕРКАЛО» are hidden until the player turns the
+ * tutorial mode on; the choice is remembered between launches. */
+int preferences_tutorial_hints_enabled(void);
+void preferences_set_tutorial_hints_enabled(int enabled);
 
 #endif /* PVG3_PREFERENCES_H_INCLUDED */

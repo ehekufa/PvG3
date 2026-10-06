@@ -163,7 +163,9 @@ static const FontTranslation translations[] = {
     {"Действие", "Action"},
     {"Сохранить", "Save"},
     {"Публиковать", "Publish"},
-    {"Предпросмотр", "Preview"}
+    {"Предпросмотр", "Preview"},
+    {"Обучение: ВКЛ.", "Tutorial: ON"},
+    {"Обучение: ВЫКЛ.", "Tutorial: OFF"}
 };
 
 #define FONT_LANGUAGE_PATH_CAP 4096

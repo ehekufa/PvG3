@@ -1735,14 +1735,16 @@ static void draw_seed_bar(void) {
 static void draw_button_tone(int x0, int y0, int x1, int y1,
                              const char *label, int size, int active, int tone) {
     int inset = active ? 5 : 3;
-    uint32_t face = tone == BUTTON_TONE_BLACK ? COL(36, 59, 82) :
+    int black = tone == BUTTON_TONE_BLACK;
+    /* The «black» tone is a true black: navy read as bluish on phones. */
+    uint32_t frame = black ? COL(0, 0, 0) : COL(36, 59, 82);
+    uint32_t face = black ? COL(0, 0, 0) :
                     tone == BUTTON_TONE_WHITE ? COL(255, 253, 248) :
                     tone == BUTTON_TONE_ACCENT ? COL(230, 142, 112) :
                                                  COL(220, 232, 239);
-    uint32_t text = tone == BUTTON_TONE_BLACK ? COL(255, 253, 248) :
-                                                COL(36, 59, 82);
-    if (active && tone != BUTTON_TONE_BLACK) face = COL(241, 197, 110);
-    rect(x0, y0, x1, y1, COL(36, 59, 82));
+    uint32_t text = black ? COL(255, 253, 248) : COL(36, 59, 82);
+    if (active && !black) face = COL(241, 197, 110);
+    rect(x0, y0, x1, y1, frame);
     rect(x0 + inset, y0 + inset, x1 - inset, y1 - inset, face);
     while (size > 1 && text_w(size, label) > x1 - x0 - 22) size--;
     draw_text_c((x0 + x1) / 2, (y0 + y1 - size * 7) / 2,
