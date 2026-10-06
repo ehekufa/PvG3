@@ -186,6 +186,14 @@ int on_account_valid_login(const char *value) {
     return 1;
 }
 
+int on_account_valid_token(const char *value) {
+    if (!value || strlen(value) != 64) return 0;
+    for (size_t i = 0; i < 64; i++)
+        if ((value[i] < '0' || value[i] > '9') &&
+            (value[i] < 'a' || value[i] > 'f')) return 0;
+    return 1;
+}
+
 int on_account_valid_password(const char *password) {
     size_t length;
     if (!password) return 0;

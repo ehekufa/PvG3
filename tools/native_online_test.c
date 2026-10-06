@@ -560,9 +560,18 @@ static void test_level_official_flag(void) {
         "\"updatedAt\":2,\"author\":\"Bad Nick!\"}}", list, 4);
     assert(count == 2 && !strcmp(list[0].author, "qwertyuiopaj1234"));
     assert(!list[1].author[0]);
+    snprintf(level.author_token, sizeof level.author_token, "%064x", 0xabc);
+    authored = on_protocol_published_level_json(&level, body, sizeof body);
+    assert(authored && strstr(body,
+           "\"author\":{\"login\":\"qwertyuiopaj1234\",\"tok\":\""));
+    assert(on_protocol_published_level(body, "45122", &decoded) &&
+           !strcmp(decoded.author, "qwertyuiopaj1234") &&
+           !decoded.author_token[0]); /* never retain a public read-back token */
+    snprintf(level.author_token, sizeof level.author_token, "%064x", 0xabcdef);
     snprintf(level.author, sizeof level.author, "%s", "Bad Nick!");
     assert(!on_protocol_published_level_json(&level, body, sizeof body));
     level.author[0] = 0;
+    level.author_token[0] = 0;
 }
 
 int main(int argc, char **argv) {

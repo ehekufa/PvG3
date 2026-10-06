@@ -79,17 +79,29 @@ function fakeDatabase({admins = ['qwertyuiopaj1234']} = {}) {
       return reply(200, parent[key]);
     }
     if (segments[0] === 'levels') {
-      if (body?.official === true && !isAdmin(body.author?.login, body.author?.tok))
+      if (!LOGIN_PATTERN.test(body?.author?.login || '') ||
+          check(body.author.login, body.author.tok))
         return reply(...[deny.status, deny.body]);
-      if (body?.author && check(body.author.login, body.author.tok))
+      if (body?.official === true && !isAdmin(body.author.login, body.author.tok))
         return reply(...[deny.status, deny.body]);
-      if (parent[key] && db.bans[body.author?.login]?.banned === true)
+      if (parent[key] && !isAdmin(body.author.login, body.author.tok) &&
+          parent[key].author?.login !== body.author.login)
+        return reply(...[deny.status, deny.body]);
+      if (db.bans[body.author.login]?.banned === true)
         return reply(...[deny.status, deny.body]);
       parent[key] = {...body};
       return reply(200, parent[key]);
     }
     if (segments[0] === 'levels-index') {
-      if (body?.official === true && db.levels[key]?.official !== true)
+      const record = db.levels[key], levelAuthor = record?.author;
+      if (levelAuthor == null || typeof levelAuthor !== 'object' ||
+          body?.author !== levelAuthor.login ||
+          check(levelAuthor.login, levelAuthor.tok))
+        return reply(...[deny.status, deny.body]);
+      const rootHasOfficial = Object.hasOwn(record, 'official');
+      const indexHasOfficial = Object.hasOwn(body || {}, 'official');
+      if (rootHasOfficial !== indexHasOfficial ||
+          (rootHasOfficial && body.official !== record.official))
         return reply(...[deny.status, deny.body]);
       parent[key] = {...body};
       return reply(200, parent[key]);
@@ -117,6 +129,12 @@ test('the shipped rules file covers every branch the clients use', () => {
   assert.equal(rules.tokens['.read'], false, 'session tokens stay private');
   assert.ok(rules.accounts.$login['.write'].includes('[a-z0-9_]{3,24}'),
     'nicks allow no spaces and no punctuation');
+  assert.ok(rules.levels.$id['.write'].includes("newData.child('author/login')"),
+    'a published level must have an account login');
+  assert.ok(rules.levels.$id['.write'].includes("newData.child('author/tok')"),
+    'a published level must prove a live account session');
+  assert.ok(rules['levels-index'].$id['.write'].includes("root.child('tokens')"),
+    'the catalog index also requires an authenticated level author');
   assert.ok(rules.comments.$level.$cid['.write'].includes('300'), 'comments are bounded');
   assert.ok(rules.tokens.$login['.write'].includes('bans'),
     'a banned nick cannot even take a session token');
@@ -274,14 +292,15 @@ test('a rotation started before the player signed out does not bring them back',
   });
 });
 
-test('the account-free path still publishes a level', async () => {
+test('Firebase rules reject direct guest writes to published levels', async () => {
   await withFake({admins: []}, async db => {
     signOut();
     const level = newDraft('anonymous');
     addObject(level, 'block', 3, 3);
     const record = publishedRecord('909', level);
-    await request('levels/909', 'PUT', record);
-    assert.deepEqual(db.levels['909'], record, 'an anonymous publish is accepted');
-    assert.equal(db.levels['909'].title, level.title);
+    await assert.rejects(request('levels/909', 'PUT', record),
+      /Permission denied|Firebase/);
+    assert.equal(db.levels['909'], undefined,
+      'a guest cannot bypass the interface with a direct REST write');
   });
 });

@@ -570,6 +570,7 @@ void game_custom_levels_refresh(void) { on_net_levels_refresh(); }
 void game_workshop_open(void) {
     if (phase != PH_WORKSHOP && phase != PH_WORKSHOP_DETAILS && phase != PH_WORKSHOP_EDIT)
         workshop_return = phase;
+    on_net_account_restore();
     phase = PH_WORKSHOP;
 }
 void game_workshop_open_details(void) {

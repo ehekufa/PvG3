@@ -50,6 +50,7 @@ typedef struct {
  * capital letters alone. */
 int on_account_normalize(char out[ON_LOGIN_SIZE], const char *value);
 int on_account_valid_login(const char *value);
+int on_account_valid_token(const char *value);
 int on_account_valid_password(const char *password);
 
 /* The salt is derived from the nick, so a client never has to read /accounts

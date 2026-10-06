@@ -104,6 +104,7 @@ typedef struct {
     int author_written, index_official_written, index_author_written;
     char account_login[ON_LOGIN_SIZE], account_body[512];
     char token_login[ON_LOGIN_SIZE], token_body[256];
+    char current_token[ON_TOKEN_SIZE];
     char ban_login[ON_LOGIN_SIZE], ban_body[ON_REASON_SIZE + 256];
     char comments[8192];
     char official_level[ON_LEVEL_ID_SIZE], official_body[32];
@@ -112,6 +113,26 @@ typedef struct {
 } AccountDb;
 static AccountDb accounts;
 static const char *const TEST_ADMIN_LOGIN = "qwertyuiopaj1234";
+
+static int read_author_token(const char *body, char login[ON_LOGIN_SIZE],
+                             char token[ON_TOKEN_SIZE]) {
+    const char *author = body ? strstr(body, "\"author\":{\"login\":\"") : NULL;
+    const char *login_start, *login_end, *token_start, *token_end;
+    if (!author) return 0;
+    login_start = strstr(author, "\"login\":\"") + strlen("\"login\":\"");
+    login_end = strchr(login_start, '\"');
+    token_start = strstr(login_end ? login_end : author, "\"tok\":\"");
+    if (!login_end || !token_start) return 0;
+    token_start += strlen("\"tok\":\"");
+    token_end = strchr(token_start, '\"');
+    size_t login_length = (size_t)(login_end - login_start);
+    size_t token_length = token_end ? (size_t)(token_end - token_start) : 0;
+    if (login_length == 0 || login_length >= ON_LOGIN_SIZE || token_length != 64)
+        return 0;
+    memcpy(login, login_start, login_length);login[login_length] = 0;
+    memcpy(token, token_start, token_length);token[token_length] = 0;
+    return on_account_valid_login(login) && on_account_valid_token(token);
+}
 
 static int answer(char *response, size_t cap, const char *text, int status) {
     size_t length = strlen(text);
@@ -235,9 +256,18 @@ int on_http_request(const char *path, const char *method, const char *body,
                 if (!body || !strstr(body, "\"token\":") ||
                     !accounts.account_written || strcmp(accounts.account_login, key))
                     return answer(response, cap, "null", 403);
+                char token[ON_TOKEN_SIZE];
+                const char *start = strstr(body, "\"token\":\"");
+                if (!start) return answer(response, cap, "null", 400);
+                start += strlen("\"token\":\"");
+                const char *end = strchr(start, '\"');
+                if (!end || (size_t)(end - start) != 64) return answer(response, cap, "null", 400);
+                memcpy(token, start, 64);token[64] = 0;
+                if (!on_account_valid_token(token)) return answer(response, cap, "null", 400);
                 accounts.token_written = 1;
                 snprintf(accounts.token_login, sizeof accounts.token_login, "%s", key);
                 snprintf(accounts.token_body, sizeof accounts.token_body, "%s", body);
+                snprintf(accounts.current_token, sizeof accounts.current_token, "%s", token);
                 return answer(response, cap, "null", 200);
             }
             if (!strcmp(branch, "admins") && !strcmp(method, "GET"))
@@ -326,6 +356,11 @@ int on_http_request(const char *path, const char *method, const char *body,
                 return answer(response, cap, "null", 412);
             if (!body || !on_protocol_published_level(body, level_id, &fake_level_record))
                 return answer(response, cap, "null", 400);
+            char author_login[ON_LOGIN_SIZE], author_token[ON_TOKEN_SIZE];
+            if (!read_author_token(body, author_login, author_token) ||
+                strcmp(author_login, accounts.account_login) ||
+                strcmp(author_token, accounts.current_token))
+                return answer(response, cap, "null", 403);
             if (strlen(body) >= sizeof uploaded_level_body) return -2;
             strcpy(uploaded_level_id, level_id);strcpy(uploaded_level_body, body);
             /* The native HTTP adapters deliberately discard Firebase's
@@ -340,6 +375,11 @@ int on_http_request(const char *path, const char *method, const char *body,
                 return answer(response, cap, "null", 412);
             if (!uploaded_level_body[0] || strcmp(level_id, uploaded_level_id) || !body)
                 return answer(response, cap, "null", 400);
+            char author_login[ON_LOGIN_SIZE], author_token[ON_TOKEN_SIZE];
+            if (!read_author_token(uploaded_level_body, author_login, author_token) ||
+                strcmp(author_login, accounts.account_login) ||
+                strcmp(author_token, accounts.current_token))
+                return answer(response, cap, "null", 403);
             char wrapper[1300];
             int n = snprintf(wrapper, sizeof wrapper, "{\"%s\":%s}", level_id, body);
             OnPublishedLevelSummary summary[1];
@@ -1283,6 +1323,7 @@ static int run_lvgl_test(void) {
     static uint8_t before[20000], after[20000];
     lvgl_trace("start");
     size_t bytes = game_save_size();assert(bytes < sizeof before);
+    on_net_account_sign_out(); /* begin on the guest path for the publish gate */
     game_init();assert(game_save_export(before, bytes));
     lvgl_trace("initial game state");
     assert_platformer_art();
@@ -1779,7 +1820,24 @@ static int run_lvgl_test(void) {
     ui_tap(535, 208);ui_tap(351, 322);
     ui_snapshot("workshop_color_selected");
     ui_tap(640, 598); /* close the color dialog before using the toolbar */
-    ui_tap(820, 50);tick_pump(2);
+    /* Guests are routed to sign-in, then publication resumes on success. */
+    assert(!view().account.signed_in);
+    ui_tap(820, 50);
+    assert(lvgl_ui_test_label_present("Пароль") &&
+           lvgl_ui_test_label_present("Войди или создай аккаунт — уровень опубликуется сразу."));
+    lvgl_ui_test_set_account_input("qwertyuiopaj1234", "my-password");
+    ui_tap(1030, 286); /* Создать аккаунт */
+    tick_pump(12);     /* PBKDF2 and session requests */
+    ui_snapshot("account_auto_publish_started"); /* consumes the sign-in result */
+    tick_pump(8);      /* deferred publish and session-token rotation */
+    ui_snapshot("account_auto_publish_done");
+    OnNetView account_view = view();
+    assert(account_view.account.signed_in && account_view.account.admin == 1 &&
+           !strcmp(account_view.account.login, "qwertyuiopaj1234"));
+    assert(accounts.account_written && strstr(accounts.account_body, "\"hash\":"));
+    assert(accounts.token_written && !strcmp(accounts.token_login,
+                                             "qwertyuiopaj1234"));
+    assert(!lvgl_ui_test_label_present("Войди или создай аккаунт — уровень опубликуется сразу."));
     OnNetView published = view();
     assert(!published.level_publish_busy && published.level_publish_id[0] &&
            strstr(published.level_publish_notice, "ОПУБЛИКОВАН") &&
@@ -1846,26 +1904,12 @@ static int run_lvgl_test(void) {
     assert(lvgl_ui_test_label_present("ОФИЦИАЛЬНЫЙ"));
     assert(lvgl_ui_test_label_does_not_wrap("ОФИЦИАЛЬНЫЙ") &&
            lvgl_ui_test_label_does_not_wrap(ON_LEVEL_OFFICIAL_ID));
-    /* ---- accounts, comments and moderation, driven through the LVGL UI ---- */
+    /* ---- account access, comments and moderation through the LVGL UI ---- */
     ui_tap(950, 80); /* «Аккаунт» in the catalog header */
-    assert(lvgl_ui_test_label_present("Пароль") &&
-           lvgl_ui_test_label_present("Вы не в аккаунте."));
-    lvgl_ui_test_set_account_input("qwertyuiopaj1234", "my-password");
-    ui_snapshot("account_filled");
     assert(lvgl_ui_test_label_present("qwertyuiopaj1234") &&
-           lvgl_ui_test_label_present("***********"));
-    ui_tap(1030, 286); /* Создать аккаунт */
-    tick_pump(12);     /* PBKDF2 plus the account, token and admin requests */
+           lvgl_ui_test_label_present("Модератор"));
     ui_snapshot("account_signed_in");
-    OnNetView account_view = view();
-    assert(account_view.account.signed_in &&
-           !strcmp(account_view.account.login, "qwertyuiopaj1234"));
-    assert(account_view.account.admin == 1); /* /admins answers true for it */
-    assert(accounts.account_written && strstr(accounts.account_body, "\"hash\":"));
-    assert(accounts.token_written && !strcmp(accounts.token_login,
-                                             "qwertyuiopaj1234"));
-    assert(lvgl_ui_test_label_present("Модератор"));
-    ui_tap(640, 634); /* Закрыть */
+    ui_tap(410, 634); /* Закрыть */
     assert(game_phase() == GAME_CUSTOM_LEVELS);
 
     /* A tap now picks the level and the action bar starts it, so the catalog
@@ -1933,6 +1977,14 @@ static int run_lvgl_test(void) {
            strstr(accounts.ban_body, "Уровень непроходимый"));
     ui_tap(990, 646); /* Закрыть */
     assert(game_phase() == GAME_CUSTOM_LEVELS);
+    char token_before_unmark[ON_TOKEN_SIZE];
+    snprintf(token_before_unmark, sizeof token_before_unmark, "%s",
+             view().account.token);
+    ui_tap(620, 678); /* снятие метки тоже обновляет автора и токен */
+    tick_pump(12);
+    assert(accounts.official_written && accounts.official_value == 0 &&
+           accounts.index_official_written && accounts.author_written &&
+           strcmp(token_before_unmark, view().account.token));
     on_net_account_sign_out();
     tick_pump(2);
     assert(!view().account.signed_in);
@@ -1950,7 +2002,10 @@ static int run_lvgl_test(void) {
            lvgl_ui_test_label_present("Фон уровня") &&
            !lvgl_ui_test_label_present("Весь экран игры отображается в оттенках серого."));
     ui_tap(792, 217); /* English */
-    assert(font_language() == FONT_LANG_EN);
+    assert(font_language() == FONT_LANG_EN &&
+           !strcmp(font_translate("Гость"), "Guest") &&
+           !strcmp(font_translate("Не удалось начать публикацию."),
+                   "Couldn't start publishing."));
     assert(!lvgl_ui_test_label_present("Controls · WASD") &&
            lvgl_ui_test_label_present("Back to levels") &&
            lvgl_ui_test_label_present("ACTION") &&
@@ -2183,8 +2238,14 @@ int main(void) {
     static uint8_t before[20000], after[20000];
     size_t size = game_save_size();assert(size <= sizeof before);
     game_init();assert(game_save_export(before, size));
+    on_net_account_sign_out(); /* deterministic guest state, even across reruns */
     static OnPublishedLevel draft, decoded;
     sample_level(&draft);
+    assert(!on_net_level_publish(&draft)); /* guests cannot write levels */
+    assert(strstr(view().level_publish_notice, "Сначала войди"));
+    on_net_account_sign_in(TEST_ADMIN_LOGIN, "my-password", 1);
+    tick_pump(12);
+    assert(view().account.signed_in && view().account.admin);
     assert(on_net_level_publish(&draft));tick_pump(1);
     OnNetView published = view();
     assert(!published.level_publish_busy && published.level_publish_id[0] &&

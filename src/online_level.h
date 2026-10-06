@@ -118,8 +118,10 @@ typedef struct {
     int width, height;
     int object_count;
     int official; /* moderator's «ОФИЦИАЛЬНЫЙ» badge, 0 for ordinary levels */
-    /* Login of the account that published the level, empty for older levels. */
+    /* Publishing account. The short-lived token is included only in an
+     * outbound write, then rotated; readers keep the public login only. */
     char author[ON_LOGIN_SIZE];
+    char author_token[ON_TOKEN_SIZE];
     OnLevelObject objects[ON_LEVEL_OBJECT_CAP];
 } OnPublishedLevel;
 

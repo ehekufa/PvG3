@@ -57,6 +57,7 @@ int on_net_level_publish(const OnPublishedLevel *level);
 void on_net_level_cancel(void);
 /* Accounts: the password is stretched on the worker thread and never stored,
  * so the UI stays responsive while PBKDF2 runs. */
+void on_net_account_restore(void); /* loads the saved nick/token without opening rooms */
 void on_net_account_sign_in(const char *login, const char *password, int create);
 void on_net_account_sign_out(void);
 /* Comments under the catalog level the player is looking at. */

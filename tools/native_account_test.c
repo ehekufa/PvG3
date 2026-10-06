@@ -56,6 +56,10 @@ int main(void) {
     check(!on_account_valid_login(long_name), "25 characters are too long");
     check(on_account_normalize(name, "  MiXeD_9 \n"), "normalize trims");
     check(!strcmp(name, "mixed_9"), "normalize lower-cases");
+    char token[ON_TOKEN_SIZE];memset(token, 'a', 64);token[64] = 0;
+    check(on_account_valid_token(token), "a 64-character lowercase hex session token is valid");
+    token[12] = 'Z';
+    check(!on_account_valid_token(token), "uppercase or non-hex session token is rejected");
 
     check(!on_account_valid_password("short"), "a five-character password is refused");
     check(!on_account_valid_password("a b c d e"), "spaces in a password are refused");

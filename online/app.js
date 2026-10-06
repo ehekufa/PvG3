@@ -31,6 +31,7 @@ let toastTimer;
 const WS_DRAFT_KEY = 'pvg3-workshop-draft-v1';
 const WS_CONTROL_KEY = 'pvg3-workshop-control-v1';
 const WS_TUTORIAL_KEY = 'pvg3-workshop-tutorial-v1';
+const WS_ACCOUNT_LOGIN_KEY = 'pvg3-account-last-login-v1';
 const WS_DB_NAME = 'pvg3-workshop';
 const WS_DB_STORE = 'drafts';
 const WS_LOCAL_FALLBACK_MAX = 1024 * 1024;
@@ -41,6 +42,7 @@ const wsPages = {home: $('ws-home-page'), editor: $('ws-editor-page'),
 let wsDraftFromLocalStorage = false;
 let wsPage = 'home', wsDraft = loadWorkshopDraft(), wsTool = 'build', wsType = 'block';
 let wsDraftReady = Promise.resolve();
+let publishAfterAccount = false;
 let wsTriggerKind = 'move', wsBlockType = 'block', wsOrbType = 'orb-yellow';
 let wsGoalType = 'goal', wsPortalType = 'portal-normal', wsPaletteSelected = true;
 let wsSelectedId = 0, wsSelectedIds = new Set(), wsClipboard = [];
@@ -915,9 +917,29 @@ function setAccountMessage(message = '') {
 }
 function renderAccountStatus() {
   const active = currentSession();
-  $('ws-account-status').textContent = !active ? 'Гость' :
-    active.admin ? `${active.login} · модератор` : active.login;
-  $('ws-account-signout').disabled = !active;
+  const status = $('ws-account-status');
+  const button = $('ws-account-open');
+  status.textContent = active ?
+    active.admin ? `${active.login} · модератор` : active.login : 'Гость';
+  status.classList.toggle('signed-out', !active);
+  button.textContent = active ? 'Аккаунт' : 'Войти';
+  button.setAttribute('aria-label', active ? `Аккаунт ${active.login}` : 'Войти в аккаунт');
+  $('ws-account-signout').classList.toggle('hidden', !active);
+  if (active && !$('ws-account-login').value)
+    $('ws-account-login').value = active.login;
+}
+function openAccountDialog() {
+  setAccountMessage('');
+  const login = $('ws-account-login');
+  if (!login.value) {
+    const active = currentSession();
+    let remembered = '';
+    try {remembered = localStorage.getItem(WS_ACCOUNT_LOGIN_KEY) || '';} catch {}
+    login.value = active?.login || remembered;
+  }
+  $('ws-account-dialog').showModal();
+  const focus = login.value ? $('ws-account-password') : login;
+  focus.focus({preventScroll: true});
 }
 async function submitAccount(kind) {
   const login = $('ws-account-login').value, password = $('ws-account-password').value;
@@ -926,10 +948,15 @@ async function submitAccount(kind) {
   try {
     const session = kind === 'create' ?
       await createAccount(login, password) : await signIn(login, password);
+    try {localStorage.setItem(WS_ACCOUNT_LOGIN_KEY, session.login);} catch {}
     $('ws-account-password').value = '';
     $('ws-account-dialog').close();
     notice(`Вход выполнен · ${session.login}`);
     if (wsPage === 'catalog') await loadWorkshopCatalog();
+    if (publishAfterAccount) {
+      publishAfterAccount = false;
+      await publishWorkshopDraft();
+    }
   } catch (error) {
     setAccountMessage(error.message);
   } finally {button.disabled = false;}
@@ -987,24 +1014,44 @@ function workshopFrame(dt) {
 async function publishWorkshopDraft() {
   const check = validateDraft(wsDraft);
   if (!check.ok) {showWorkshopMessage(check.message);return;}
+  const active = currentSession();
+  if (!active) {
+    publishAfterAccount = true;
+    showWorkshopMessage('Для публикации войдите или создайте аккаунт. После входа уровень опубликуется сам.');
+    openAccountDialog();
+    return;
+  }
   const button = $('ws-publish');button.disabled = true;
   showWorkshopMessage('');
   try {
-    const active = currentSession();
     const result = await publishLevel(wsDraft,
-      active ? {login: active.login, tok: active.token} : null);
-    /* The record we just published carries our session token, so retire it. */
-    if (active) await rotateToken().catch(() => {});
+      {login: active.login, tok: active.token});
+    /* The public record briefly carries this token; retire it right away. */
+    let tokenRetired = false;
+    try {tokenRetired = !!(await rotateToken());} catch { /* surface below */ }
     wsDraft.publishedId = result.id;wsDraft.publishedAt = Date.now();
     saveWorkshopDraft();
-    showWorkshopMessage(`Уровень опубликован под ID ${result.id}. Он доступен в каталоге и нативной игре.`);
+    const message = `Уровень опубликован под ID ${result.id}. Он доступен в каталоге и нативной игре.` +
+      (tokenRetired ? '' : ' Не удалось сразу заменить токен сессии — проверь интернет и войди заново.');
+    showWorkshopMessage(message);
     notice(`Уровень опубликован · ID ${result.id}`, 6000);
   } catch (error) {
-    const message = error.message.startsWith('Уровень ') ? error.message :
+    let tokenWarning = '';
+    if (error.levelWriteAttempted) {
+      if (error.levelWritten) {
+        wsDraft.publishedId = error.levelId;wsDraft.publishedAt = Date.now();
+        saveWorkshopDraft();
+      }
+      let tokenRetired = false;
+      try {tokenRetired = !!(await rotateToken());} catch { /* warn below */ }
+      if (!tokenRetired)
+        tokenWarning = ' Не удалось заменить токен сессии — проверь интернет и войди заново.';
+    }
+    const baseMessage = error.message.startsWith('Уровень ') ? error.message :
       error.status === 401 || error.status === 403 ?
       'Firebase отклонил запись. Для публикации правила должны разрешать создание записей в /levels и /levels-index. Правила базы автоматически не менялись.' :
       error.message;
-    showWorkshopMessage(message);
+    showWorkshopMessage(baseMessage + tokenWarning);
   } finally {button.disabled = false;}
 }
 async function openWorkshop() {
@@ -1364,15 +1411,16 @@ $('ws-trigger-color').addEventListener('input', e => updateSelectedTrigger('colo
 $('ws-trigger-action').addEventListener('change', e => updateSelectedTrigger('action', e.target.value));
 $('ws-control-select').addEventListener('change', e => applyWorkshopControl(e.target.value));
 $('ws-tutorial-toggle').addEventListener('change', e => applyWorkshopTutorial(e.target.checked));
-$('ws-account-open').addEventListener('click', () => {
-  setAccountMessage('');$('ws-account-dialog').showModal();
+$('ws-account-open').addEventListener('click', openAccountDialog);
+$('ws-account-close').addEventListener('click', () => {
+  publishAfterAccount = false;
+  $('ws-account-dialog').close();
 });
-$('ws-account-close').addEventListener('click', () => $('ws-account-dialog').close());
-$('ws-account-signin').addEventListener('click', () => submitAccount('signin'));
+$('ws-account-dialog').addEventListener('cancel', () => {publishAfterAccount = false;});
+$('ws-account-form').addEventListener('submit', event => {
+  event.preventDefault();submitAccount('signin');
+});
 $('ws-account-create').addEventListener('click', () => submitAccount('create'));
-$('ws-account-password').addEventListener('keydown', event => {
-  if (event.key === 'Enter') submitAccount('signin');
-});
 $('ws-account-signout').addEventListener('click', async () => {
   signOut();notice('Выход выполнен.');
   if (wsPage === 'catalog') await loadWorkshopCatalog();

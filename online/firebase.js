@@ -175,13 +175,16 @@ function randomLevelId() {
   return String(value[0] % 999999 + 1);
 }
 
-/* `author` is the optional signed-in player: {login, tok}. It travels with the
+/* `author` is the required signed-in player: {login, tok}. It travels with the
  * record so the rules can attribute the level and reject banned nicks. */
 export async function publishLevel(draft, author) {
   const check = validateDraft(draft);
   if (!check.ok) throw new Error(check.message);
-  const credited = author && author.login && author.tok ?
+  const credited = author && /^[a-z0-9_]{3,24}$/.test(String(author.login || '')) &&
+      /^[a-f0-9]{64}$/.test(String(author.tok || '')) ?
     {login: String(author.login), tok: String(author.tok)} : null;
+  if (!credited)
+    throw new Error('Для публикации войдите в аккаунт или создайте его.');
   let lastCollision;
   for (let attempt = 0; attempt < 5; attempt++) {
     const id = randomLevelId();
@@ -191,6 +194,9 @@ export async function publishLevel(draft, author) {
       await request(`levels/${id}`, 'PUT', record, 'null_etag');
     } catch (e) {
       if (e.status === 412) {lastCollision = e;continue;}
+      /* A timed-out PUT may have reached Firebase; retire the token just in
+       * case it was committed before the connection failed. */
+      e.levelWriteAttempted = true;e.levelId = id;
       throw e;
     }
     const summary = {id, title: record.title, description: record.description,
@@ -201,8 +207,10 @@ export async function publishLevel(draft, author) {
     } catch (e) {
       const detail = e.status === 401 || e.status === 403 ?
         'Firebase запретил запись в /levels-index. Проверь правила Firebase.' : e.message;
-      throw new FirebaseError(e.status || 0,
+      const error = new FirebaseError(e.status || 0,
         `Уровень ${id} сохранён, но не появился в каталоге: ${detail} Повтори публикацию позже или проверь права базы.`);
+      error.levelWriteAttempted = true;error.levelWritten = true;error.levelId = id;
+      throw error;
     }
     return {id, record};
   }

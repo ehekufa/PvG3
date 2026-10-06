@@ -570,10 +570,18 @@ int on_protocol_published_level(const char *json, const char *expected_id,
     if (ok && record_official_token >= 0 &&
         !bool_field(&d, 0, "official", &value->official)) ok = 0;
     value->author[0] = 0;
+    value->author_token[0] = 0;
     int record_author_token = field(&d, 0, "author");
-    if (ok && record_author_token >= 0 &&
-        !text_string(&d, record_author_token, value->author,
-                     sizeof value->author)) ok = 0;
+    if (ok && record_author_token >= 0) {
+        /* New signed publications use {login,tok}; older public records may
+         * still carry a bare login string. Never retain a read-back token. */
+        if (d.t[record_author_token].type == 'o') {
+            int login_token = field(&d, record_author_token, "login");
+            if (!text_string(&d, login_token, value->author,
+                             sizeof value->author)) ok = 0;
+        } else if (!text_string(&d, record_author_token, value->author,
+                                sizeof value->author)) ok = 0;
+    }
     if (!on_account_valid_login(value->author)) value->author[0] = 0;
     int objects = field(&d, project, "objects");
     if (ok && (objects < 0 || d.t[objects].type != 'a' ||
@@ -1030,7 +1038,10 @@ static int published_level_valid(const OnPublishedLevel *level) {
     if (!level || !on_protocol_valid_level_id(level->id) ||
         !memchr(level->id, 0, sizeof level->id) ||
         !memchr(level->author, 0, sizeof level->author) ||
+        !memchr(level->author_token, 0, sizeof level->author_token) ||
         (level->author[0] && !on_account_valid_login(level->author)) ||
+        (level->author_token[0] &&
+         (!level->author[0] || !on_account_valid_token(level->author_token))) ||
         !level->title[0] || !memchr(level->title, 0, sizeof level->title) ||
         !memchr(level->description, 0, sizeof level->description) ||
         !utf8_units(level->title, sizeof level->title, 80) ||
@@ -1163,7 +1174,11 @@ size_t on_protocol_published_level_json(const OnPublishedLevel *level,
     if (level->official) put(&w, ",\"official\":true");
     if (level->author[0]) {
         put(&w, ",\"author\":");
-        put_json_string(&w, level->author);
+        if (level->author_token[0]) {
+            put(&w, "{\"login\":");put_json_string(&w, level->author);
+            put(&w, ",\"tok\":");put_json_string(&w, level->author_token);
+            put(&w, "}");
+        } else put_json_string(&w, level->author);
     }
     put(&w, "}");
     if (w.bad) {if (out) out[0] = 0;return 0;}

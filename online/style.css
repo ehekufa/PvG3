@@ -393,9 +393,11 @@ main { min-width: 0; }
 .ws-comment-form { display: flex; flex-wrap: wrap; gap: 7px; }
 .ws-comment-form input { flex: 1 1 200px; min-height: 40px; padding: 6px 9px; border: 2px solid var(--outline); border-radius: 4px; background: var(--white); font: inherit; }
 .ws-comment-form .small-button { min-height: 40px; }
-.ws-account-bar { display: flex; align-items: center; gap: 9px; margin-left: auto; }
-.ws-account-status { color: var(--muted); font-size: 14px; font-weight: bold; }
-.ws-account-form { display: grid; gap: 11px; padding: 16px 0; }
+.top-account-bar { display: flex; min-width: 0; align-items: center; gap: 8px; }
+.top-account-status { max-width: 190px; overflow: hidden; color: var(--white); font-size: 14px; font-weight: bold; text-overflow: ellipsis; white-space: nowrap; }
+.top-account-status.signed-out { color: var(--gray-light); }
+.top-account-bar .small-button { color: var(--button-light-ink); background: var(--button-black); }
+.ws-account-form { display: grid; gap: 11px; padding: 14px 0; }
 .ws-account-form p { margin: 0; }
 .ws-account-form label { display: grid; gap: 5px; }
 .ws-account-form input { min-height: 44px; padding: 7px 10px; border: 2px solid var(--outline); border-radius: 4px; background: var(--white); font: inherit; }
@@ -549,6 +551,8 @@ button, .panel, .map-card, .room-item, .side-card, .code-panel, .canvas-wrap,
 @media (max-width: 600px) {
   .top-actions .connection { flex: 1 0 100%; }
   .top-actions .small-button { flex: 1; }
+  .top-account-bar { flex: 1 1 190px; }
+  .top-account-status { max-width: 120px; }
   .hero { padding-bottom: 20px; }
   .hero h1 { font-size: 36px; }
   .hero p { font-size: 16px; }

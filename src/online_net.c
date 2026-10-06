@@ -360,15 +360,23 @@ int on_net_level_publish(const OnPublishedLevel *level) {
                  "НЕ УДАЛОСЬ ЗАПУСТИТЬ ПУБЛИКАЦИЮ");
         pthread_mutex_unlock(&mu);return 0;
     }
+    if (!net.view.account.signed_in ||
+        !on_account_valid_login(net.view.account.login) ||
+        !on_account_valid_token(net.view.account.token)) {
+        net.view.level_publish_busy = 0;
+        snprintf(net.view.level_publish_notice,
+                 sizeof net.view.level_publish_notice, "%s",
+                 "Сначала войди в аккаунт.");
+        pthread_mutex_unlock(&mu);return 0;
+    }
     net.level_to_publish = *level;
-    /* The signed-in account owns what it publishes: the record and the
-     * catalog card then carry its login, and the rules stop strangers from
-     * overwriting the level. Without a session the level stays anonymous and
-     * behaves exactly like before. */
-    if (net.view.account.signed_in && on_account_valid_login(net.view.account.login))
-        snprintf(net.level_to_publish.author, sizeof net.level_to_publish.author,
-                 "%s", net.view.account.login);
-    else net.level_to_publish.author[0] = 0;
+    /* A published level proves who owns it. Its short-lived session token is
+     * rotated as soon as the level and index card have both been written. */
+    snprintf(net.level_to_publish.author, sizeof net.level_to_publish.author,
+             "%s", net.view.account.login);
+    snprintf(net.level_to_publish.author_token,
+             sizeof net.level_to_publish.author_token, "%s",
+             net.view.account.token);
     net.level_publish_requested = 1;
     net.level_publish_generation++;
     net.view.level_publish_busy = 1;
@@ -405,6 +413,11 @@ void on_net_account_sign_in(const char *login, const char *password, int create)
     net.account_generation++;
     net.view.account_busy = 1;
     net.view.account_notice[0] = 0;
+    pthread_mutex_unlock(&mu);
+}
+void on_net_account_restore(void) {
+    pthread_mutex_lock(&mu);
+    load_saved_account_locked();
     pthread_mutex_unlock(&mu);
 }
 void on_net_account_sign_out(void) {
@@ -626,39 +639,11 @@ static void publish_level_record(unsigned publish_gen, OnPublishedLevel *record)
         return;
     }
     snprintf(saved_id, sizeof saved_id, "%s", record->id);
-    {
-        /* Credit the level to the signed-in player so the rules can attribute
-         * it, then retire the token this record just made public. */
-        OnAccount session;
-        pthread_mutex_lock(&mu);
-        session = net.view.account;
-        pthread_mutex_unlock(&mu);
-        if (session.signed_in && session.login[0] && session.token[0]) {
-            char author[256], author_path[56];
-            size_t author_need = on_account_author_json(session.login,
-                                                        session.token, NULL, 0);
-            if (author_need && author_need < sizeof author &&
-                on_account_author_json(session.login, session.token, author,
-                                       sizeof author) == author_need) {
-                snprintf(author_path, sizeof author_path, "levels/%s/author.json",
-                         saved_id);
-                int author_code = request(author_path, "PUT", author, NULL);
-                size_t text_need = on_account_text_json(session.login, NULL, 0);
-                if (author_code == 200 && text_need && text_need < sizeof author &&
-                    on_account_text_json(session.login, author, sizeof author) ==
-                        text_need) {
-                    snprintf(author_path, sizeof author_path,
-                             "levels-index/%s/author.json", saved_id);
-                    request(author_path, "PUT", author, NULL);
-                }
-            }
-            account_rotate_token();
-        }
-    }
     char summary[ON_LEVEL_TITLE_SIZE + ON_LEVEL_DESCRIPTION_SIZE + 128];
     if (!on_protocol_level_summary_json(record, summary, sizeof summary,
                                         clock_ms(NET_CLOCK_REALTIME))) {
         free(body);
+        account_rotate_token();
         finish_level_publish(publish_gen, saved_id,
             "УРОВЕНЬ ЗАПИСАН, НО НЕ УДАЛОСЬ ПОДГОТОВИТЬ КАТАЛОГ.");
         return;
@@ -667,6 +652,9 @@ static void publish_level_record(unsigned publish_gen, OnPublishedLevel *record)
                                  "levels-index/%s.json", saved_id);
     code = request(index_path, "PUT", summary, "null_etag");
     free(body);
+    /* The token is now public in the level record. Retire it even if the
+     * catalog write failed, so a failed index cannot leak a live session. */
+    account_rotate_token();
     if (code != 200) {
         finish_level_publish(publish_gen, saved_id, code == 401 || code == 403 ?
             "УРОВЕНЬ ЗАПИСАН, НО FIREBASE ЗАПРЕТИЛ /LEVELS-INDEX. ПРОВЕРЬ ПРАВИЛА." :
@@ -955,12 +943,14 @@ static void account_ban(unsigned gen, const char *login, const char *reason,
 
 /* The «ОФИЦИАЛЬНЫЙ» badge is stored in the database, not in the client: the
  * record and its index card are both written, so the browser workshop and the
- * APK agree on which levels are official. */
+ * APK agree on which levels are official. Refresh the public author token on
+ * every flag change, including unmarking an already-official level. */
 static void level_set_official(unsigned gen, const char *level, int official) {
     char body[256], path[80];
     OnAccount session;
     size_t need;
-    int code;
+    int code, token_may_be_public = 0, refresh = 0;
+    const char *notice = NULL;
 
     pthread_mutex_lock(&mu);
     session = net.view.account;
@@ -968,66 +958,75 @@ static void level_set_official(unsigned gen, const char *level, int official) {
     if (!session.signed_in) {account_notice(gen, "Сначала войди в аккаунт.");return;}
     if (!session.admin) {account_notice(gen, "Метку ставит только модератор.");return;}
     if (!on_protocol_valid_level_id(level)) {account_notice(gen, "Неверный ID уровня.");return;}
-    if (official) {
-        /* The rules only let a moderator's own login carry the badge. */
-        need = on_account_author_json(session.login, session.token, NULL, 0);
-        if (!need || need >= sizeof body ||
-            on_account_author_json(session.login, session.token, body,
-                                   sizeof body) != need) {
-            account_notice(gen, "Не удалось подготовить автора.");
-            return;
-        }
-        snprintf(path, sizeof path, "levels/%s/author.json", level);
-        code = request(path, "PUT", body, NULL);
-        if (code != 200) {
-            account_notice(gen, code == 401 || code == 403 ?
-                "База не приняла автора уровня. Проверь правила /levels." :
-                "Не удалось пометить уровень. Проверь интернет.");
-            return;
-        }
-        need = on_account_flag_json(1, NULL, 0);
-        if (!need || need >= sizeof body ||
-            on_account_flag_json(1, body, sizeof body) != need) return;
-        snprintf(path, sizeof path, "levels-index/%s/author.json", level);
-        need = on_account_text_json(session.login, NULL, 0);
-        if (!need || need >= sizeof body ||
-            on_account_text_json(session.login, body, sizeof body) != need) {
-            account_notice(gen, "Не удалось подготовить каталог.");
-            return;
-        }
-        code = request(path, "PUT", body, NULL);
-        if (code != 200) {account_notice(gen, "Не удалось обновить каталог.");return;}
+
+    need = on_account_author_json(session.login, session.token, NULL, 0);
+    if (!need || need >= sizeof body ||
+        on_account_author_json(session.login, session.token, body,
+                               sizeof body) != need) {
+        account_notice(gen, "Не удалось подготовить автора.");
+        return;
     }
+    snprintf(path, sizeof path, "levels/%s/author.json", level);
+    token_may_be_public = 1;
+    code = request(path, "PUT", body, NULL);
+    if (code != 200) {
+        notice = code == 401 || code == 403 ?
+            "База не приняла автора уровня. Проверь правила /levels." :
+            "Не удалось пометить уровень. Проверь интернет.";
+        goto done;
+    }
+
+    need = on_account_text_json(session.login, NULL, 0);
+    if (!need || need >= sizeof body ||
+        on_account_text_json(session.login, body, sizeof body) != need) {
+        notice = "Не удалось подготовить каталог.";
+        goto done;
+    }
+    snprintf(path, sizeof path, "levels-index/%s/author.json", level);
+    code = request(path, "PUT", body, NULL);
+    if (code != 200) {
+        notice = code == 401 || code == 403 ?
+            "База не приняла автора каталога. Проверь правила." :
+            "Не удалось обновить каталог.";
+        goto done;
+    }
+
     need = on_account_flag_json(official, NULL, 0);
     if (!need || need >= sizeof body ||
         on_account_flag_json(official, body, sizeof body) != need) {
-        account_notice(gen, "Не удалось подготовить метку.");
-        return;
+        notice = "Не удалось подготовить метку.";
+        goto done;
     }
     snprintf(path, sizeof path, "levels/%s/official.json", level);
     code = request(path, "PUT", body, NULL);
     if (code != 200) {
-        account_notice(gen, code == 401 || code == 403 ?
+        notice = code == 401 || code == 403 ?
             "База не приняла метку. Проверь правила /levels." :
-            "Не удалось пометить уровень. Проверь интернет.");
-        return;
+            "Не удалось пометить уровень. Проверь интернет.";
+        goto done;
     }
     snprintf(path, sizeof path, "levels-index/%s/official.json", level);
     code = request(path, "PUT", body, NULL);
     if (code != 200) {
-        account_notice(gen, code == 401 || code == 403 ?
+        notice = code == 401 || code == 403 ?
             "База не приняла метку каталога. Проверь правила." :
-            "Уровень помечен, но каталог не обновился.");
-        return;
+            "Уровень помечен, но каталог не обновился.";
+        goto done;
     }
-    account_notice(gen, official ? "Уровень стал официальным." : "Метка снята.");
-    pthread_mutex_lock(&mu);
-    net.level_list_requested = 1;
-    net.view.levels_busy = 1;
-    net.view.level_loaded = 0;
-    net.level_generation++;
-    pthread_mutex_unlock(&mu);
-    account_rotate_token();
+
+    notice = official ? "Уровень стал официальным." : "Метка снята.";
+    refresh = 1;
+done:
+    if (notice) account_notice(gen, notice);
+    if (refresh) {
+        pthread_mutex_lock(&mu);
+        net.level_list_requested = 1;
+        net.view.levels_busy = 1;
+        net.view.level_loaded = 0;
+        net.level_generation++;
+        pthread_mutex_unlock(&mu);
+    }
+    if (token_may_be_public) account_rotate_token();
 }
 
 void on_net_pump_once(void) {

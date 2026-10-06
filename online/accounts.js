@@ -210,14 +210,23 @@ export async function setLevelOfficial(levelId, official = true) {
   record.author = {login: active.login, tok: active.token};
   if (official) record.official = true;
   else delete record.official;
-  await request(`levels/${levelId}`, 'PUT', record);
+  try {
+    await request(`levels/${levelId}`, 'PUT', record);
+  } catch (error) {
+    /* A failed response may still follow a committed write. */
+    await rotateToken().catch(() => {});
+    throw error;
+  }
   const summary = {id: String(levelId), title: record.title,
     description: record.description || '', updatedAt: Date.now(),
     author: active.login};
   if (official) summary.official = true;
-  else summary.official = false;
-  await request(`levels-index/${levelId}`, 'PUT', summary);
-  await rotateToken().catch(() => {});
+  try {
+    await request(`levels-index/${levelId}`, 'PUT', summary);
+  } finally {
+    /* The level record briefly carries this moderator's live token. */
+    await rotateToken().catch(() => {});
+  }
   return record;
 }
 
