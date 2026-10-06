@@ -2748,8 +2748,10 @@ static void custom_apply_trigger_to_object(const OnLevelObject *trigger,
         break;
     case ON_TRIGGER_RECOLOR:
         if (target->type != ON_LEVEL_TRIGGER &&
-            custom_object_can_manually_recolor(target->type))
+            custom_object_can_manually_recolor(target->type)) {
             target->color = trigger->trigger_color;
+            target->color_default = trigger->trigger_color_default;
+        }
         break;
     case ON_TRIGGER_NUMBER:
         target->number = (int)fmaxf(0, fminf(9999, trigger->trigger_value));break;
@@ -2801,7 +2803,8 @@ static void custom_update_group_rotations(float dt) {
 static void custom_execute_trigger(OnLevelObject *trigger) {
     if (!trigger || trigger->type != ON_LEVEL_TRIGGER) return;
     if (trigger->trigger_kind == ON_TRIGGER_KIND_BACKGROUND) {
-        custom_background_color = trigger->trigger_color & 0xffffffu;
+        custom_background_color = trigger->trigger_color_default ?
+            CUSTOM_BACKGROUND_DEFAULT : trigger->trigger_color & 0xffffffu;
         return;
     }
     if (trigger->trigger_kind == ON_TRIGGER_KIND_GRAVITY) {
@@ -3045,7 +3048,8 @@ static void custom_draw_object(const OnLevelObject *o) {
     int rotated = fabsf(o->angle) >= .01f;
     uint32_t tint = COL((o->color >> 16) & 255u,
                         (o->color >> 8) & 255u, o->color & 255u);
-    int tint_opacity = custom_object_can_manually_recolor(o->type) ? 128 : 0;
+    /* Objects flagged as default keep the author's own colours: no tint. */
+    int tint_opacity = (custom_object_can_manually_recolor(o->type) && !o->color_default) ? 128 : 0;
 #define DRAW_LEVEL_ART(id) do { \
         if (tint_opacity > 0 && rotated) \
             sprite_draw_rotated_tinted_flipped((id), x, y, w, h, \

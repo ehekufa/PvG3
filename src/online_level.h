@@ -87,10 +87,16 @@ typedef struct {
     float x, y, w, h, angle;
     int flip_x, flip_y;
     uint32_t color;
+    /* Objects flagged as default keep the colours of their own artwork:
+     * no tint is mixed into the author's picture. */
+    int color_default;
     int number, visible;
     int trigger_kind, trigger_event, trigger_action, target_id;
     float trigger_value, trigger_value_y;
     uint32_t trigger_color;
+    /* A recolor/background trigger flagged as default restores the normal
+     * look of its targets or of the level backdrop. */
+    int trigger_color_default;
     int trigger_group_id, trigger_has_group;
     int trigger_duration, trigger_has_duration; /* timed group rotation, seconds */
     OnLevelParticle emitter; /* ignored for non-particle objects */

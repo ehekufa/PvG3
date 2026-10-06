@@ -43,6 +43,8 @@ static const FontTranslation translations[] = {
     {"Музыка: ВКЛ.", "Music: ON"},
     {"Музыка: ВЫКЛ.", "Music: OFF"},
     {"Фон уровня", "Level background"},
+    {"По умолчанию", "Default"},
+    {"Обычная картинка", "Original artwork"},
     {"Однотонный", "Plain"},
     {"Авторский", "Artwork"},
     {"Новый уровень", "New level"},

@@ -895,6 +895,63 @@ static void native_recolor_background_regression(void) {
     game_custom_level_exit();
 }
 
+/* «По умолчанию»: the object keeps the author's own colours, and a recolor
+ * trigger flagged the same way restores that look instead of tinting. */
+static void native_default_color_regression(void) {
+    preferences_set_neutral_background_enabled(1);
+    static OnPublishedLevel level;
+    static uint32_t frame[GAME_W * GAME_H];
+    memset(&level, 0, sizeof level);
+    snprintf(level.id, sizeof level.id, "%s", "4");
+    snprintf(level.title, sizeof level.title, "%s", "Default color test");
+    level.width = 16;level.height = 10;level.object_count = 5;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+        .x=0,.y=8,.w=16,.h=2,.color=0x65a845u,.visible=1,.number=3};
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
+        .x=1,.y=7,.w=.65f,.h=.85f,.color=0xffffffu,.visible=1,.number=1};
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.color=0xffffffu,.visible=1,.number=2};
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_BLOCK,
+        .x=6,.y=6,.w=1,.h=1,.color=0x55c8eau,.visible=1,.number=42};
+    level.objects[4] = (OnLevelObject){.id=5,.type=ON_LEVEL_BLOCK,
+        .x=8,.y=6,.w=1,.h=1,.color=0x55c8eau,.visible=1,.number=43,
+        .color_default=1};
+    assert(game_workshop_preview(&level));
+    game_tick(0, frame);
+    int tinted_pixels = 0;
+    for (int y = 285; y < 390; ++y)
+        for (int x = 0; x < 105; ++x)
+            tinted_pixels += frame[y * GAME_W + 875 + x] !=
+                             frame[y * GAME_W + 1035 + x];
+    assert(tinted_pixels > 100); /* the chosen color still tints the artwork */
+    OnLevelObject tinted, plain;
+    assert(game_debug_custom_object(4, &tinted) && !tinted.color_default);
+    assert(game_debug_custom_object(5, &plain) && plain.color_default == 1);
+    game_custom_level_exit();
+
+    level.object_count = 6;
+    level.objects[5] = (OnLevelObject){.id=6,.type=ON_LEVEL_TRIGGER,
+        .x=100,.y=100,.w=1,.h=1,.visible=1,.color_default=1,
+        .trigger_kind=ON_TRIGGER_KIND_RECOLOR,.trigger_event=ON_TRIGGER_START,
+        .trigger_action=ON_TRIGGER_RECOLOR,.target_id=0,
+        .trigger_group_id=42,.trigger_has_group=1,.trigger_color=0xd02da6u,
+        .trigger_color_default=1};
+    assert(game_workshop_preview(&level));
+    assert(game_debug_custom_object(4, &tinted) && tinted.color_default == 1 &&
+           tinted.color == 0xd02da6u);
+    assert(game_debug_custom_object(5, &plain) && plain.color_default == 1 &&
+           plain.color == 0x55c8eau);
+    game_tick(0, frame);
+    int restored_pixels = 0;
+    for (int y = 285; y < 390; ++y)
+        for (int x = 0; x < 105; ++x)
+            restored_pixels += frame[y * GAME_W + 875 + x] !=
+                               frame[y * GAME_W + 1035 + x];
+    assert(restored_pixels == 0); /* both blocks show the author's picture */
+    game_custom_level_exit();
+    preferences_set_neutral_background_enabled(0);
+}
+
 static void native_jetpack_portal_regression(void) {
     static OnPublishedLevel level;
     memset(&level, 0, sizeof level);
@@ -1046,6 +1103,8 @@ static int run_lvgl_test(void) {
     lvgl_trace("trigger runtime regression complete");
     native_recolor_background_regression();
     lvgl_trace("recolor/background regression complete");
+    native_default_color_regression();
+    lvgl_trace("default color regression complete");
     native_jetpack_portal_regression();
     lvgl_trace("portal regression complete");
     native_terminal_fall_ui_regression();
@@ -1103,6 +1162,8 @@ static int run_lvgl_test(void) {
     assert(preferences_neutral_background_enabled());
     ui_tap(792, 217); /* choose English and keep settings open */
     assert(font_language() == FONT_LANG_EN);
+    assert(!strcmp(font_translate("По умолчанию"), "Default") &&
+           !strcmp(font_translate("Обычная картинка"), "Original artwork"));
     assert(lvgl_ui_test_label_present("Interface language") &&
            lvgl_ui_test_label_present("Music") &&
            lvgl_ui_test_label_present("Level background") &&
@@ -1114,6 +1175,8 @@ static int run_lvgl_test(void) {
     ui_tap(1042, 687);
     ui_tap(487, 217); /* switch back to Russian */
     assert(font_language() == FONT_LANG_RU);
+    assert(!strcmp(font_translate("По умолчанию"), "По умолчанию") &&
+           !strcmp(font_translate("Обычная картинка"), "Обычная картинка"));
     ui_tap(640, 594);
 
     ui_tap(1080, 80);assert(game_phase() == GAME_CUSTOM_LEVELS);tick_pump(2);
@@ -1219,6 +1282,34 @@ static int run_lvgl_test(void) {
            editor_probe.objects[3].angle == 45.0f);
 #endif
     ui_snapshot("workshop_direct_transform");
+
+    /* The color dialog's «По умолчанию» turns the author's picture back on,
+     * and picking a swatch leaves the default mode again. */
+    ui_tap(1145, 361); /* color of the selected block */
+    ui_snapshot("workshop_color_dialog");
+    assert(lvgl_ui_test_label_present("Цвет объекта") &&
+           lvgl_ui_test_label_present("По умолчанию"));
+    ui_tap(850, 520); /* default: keep the object's own artwork */
+    ui_snapshot("workshop_color_default");
+    assert(lvgl_ui_test_label_present("Обычная картинка"));
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[3].color_default == 1);
+#endif
+    ui_tap(520, 208); /* bright palette */
+    ui_tap(350, 320); /* first swatch: back to a picked color */
+    ui_snapshot("workshop_color_picked");
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(!editor_probe.objects[3].color_default &&
+           editor_probe.objects[3].color == 0xf27652u);
+#endif
+    ui_tap(850, 520); /* and back to the default picture */
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[3].color_default == 1);
+#endif
+    ui_tap(640, 598); /* close the color dialog */
 
     ui_tap(531, 596); /* trigger category; movement is the default */
     ui_tap(294, 247); /* place a movement trigger */

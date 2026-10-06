@@ -76,6 +76,7 @@ enum {
     U_WORKSHOP_TRIGGER_Y_EDIT, U_WORKSHOP_TRIGGER_DURATION_EDIT,
     U_WORKSHOP_TRIGGER_ACTION,
     U_WORKSHOP_PARTICLE_PANEL,
+    U_WORKSHOP_COLOR_DEFAULT,
     U_LEVEL_BASE = 100, U_ROOM_BASE = 200, U_KEY_BASE = 300,
     U_BOOK_ENTRY_BASE = 700, U_CUSTOM_LEVEL_BASE = 900,
     U_WORKSHOP_CELL_BASE = 1200,
@@ -143,7 +144,8 @@ typedef struct {
     float x, y, w, h, angle;
     int flip_x, flip_y;
     int group_id, layer, layer2, z_order;
-    int color_set, color_index, trigger_kind;
+    /* color_default keeps the author's own picture: no tint is mixed in. */
+    int color_set, color_index, color_default, trigger_kind;
     int trigger_event, trigger_action, trigger_group_id;
     int trigger_x, trigger_y, trigger_duration, trigger_gravity;
     OnLevelParticle emitter;
@@ -190,7 +192,10 @@ static int workshop_lock_x, workshop_lock_y, workshop_touch = 1;
 static int workshop_spawn, workshop_silent, workshop_target_group;
 static int workshop_ground_color_set, workshop_ground_color_index = 1;
 static int workshop_ground_color_custom;
+static int workshop_ground_color_default;
 static int workshop_color_set, workshop_color_index;
+/* Shared by the color dialog: when set, objects keep their own artwork. */
+static int workshop_color_default;
 static int workshop_keyboard_active, workshop_input_kind;
 static int workshop_input_return_dialog, workshop_text_language, workshop_text_upper;
 static lv_obj_t *workshop_active_textarea;
@@ -836,7 +841,9 @@ static void workshop_reset_draft(void) {
     workshop_target_group = 2;
     workshop_ground_color_set = 0;workshop_ground_color_index = 1;
     workshop_ground_color_custom = 0;
+    workshop_ground_color_default = 0;
     workshop_color_set = workshop_color_index = 0;
+    workshop_color_default = 0;
     workshop_draft_exists = 0;
     workshop_name[0] = 0;workshop_description[0] = 0;
     snprintf(workshop_name, sizeof workshop_name, "%s", "Новый уровень");
@@ -1025,6 +1032,25 @@ static int workshop_first_recolorable_selected(void) {
 static int workshop_selection_can_manually_recolor(void) {
     return workshop_ground_selected || workshop_first_recolorable_selected() >= 0;
 }
+/* Colour used for the editor body of an object that keeps its own picture. */
+static uint32_t workshop_default_object_color(int type) {
+    switch (type) {
+    case ON_LEVEL_GROUND: return 0x65a845u;
+    case ON_LEVEL_HAZARD: return 0xe56c5bu;
+    case ON_LEVEL_SLOPE: return 0xe56c5bu;
+    case ON_LEVEL_TRIGGER: return 0xf27652u;
+    case ON_LEVEL_PARTICLE: return 0x68f0d8u;
+    default: return 0x55c8eau;
+    }
+}
+static void workshop_apply_color_default(int enabled) {
+    if (workshop_ground_selected) workshop_ground_color_default = enabled ? 1 : 0;
+    for (int i = 0; i < workshop_object_count; ++i) {
+        if (!workshop_selected_flags[i] ||
+            !workshop_type_can_manually_recolor(workshop_objects[i].type)) continue;
+        workshop_objects[i].color_default = enabled ? 1 : 0;
+    }
+}
 static void workshop_clear_selection(void) {
     memset(workshop_selected_flags, 0, sizeof workshop_selected_flags);
     workshop_player_selected = workshop_goal_selected = workshop_ground_selected = 0;
@@ -1083,6 +1109,7 @@ static void workshop_load_selected_properties(int object) {
         if (workshop_type_can_manually_recolor(workshop_objects[object].type)) {
             workshop_color_set = workshop_objects[object].color_set;
             workshop_color_index = workshop_objects[object].color_index;
+            workshop_color_default = workshop_objects[object].color_default;
         }
         if (workshop_objects[object].type == ON_LEVEL_TRIGGER)
             workshop_trigger_kind = workshop_objects[object].trigger_kind;
@@ -1146,6 +1173,8 @@ static void workshop_place_object(int type, int col, int row) {
     o->z_order = workshop_z_order;
     o->color_set = workshop_type_can_manually_recolor(type) ? workshop_color_set : 0;
     o->color_index = workshop_type_can_manually_recolor(type) ? workshop_color_index : 0;
+    o->color_default = workshop_type_can_manually_recolor(type) ?
+                       workshop_color_default : 0;
     if (type == ON_LEVEL_PARTICLE)
         o->emitter = on_level_particle_default();
     o->trigger_event = ON_TRIGGER_TOUCH;
@@ -1526,6 +1555,7 @@ static void workshop_build_preview(OnPublishedLevel *level) {
                              workshop_colors[workshop_ground_color_set % 4]
                                                              [workshop_ground_color_index % 8] :
                              0x65a845u,
+                         .color_default=workshop_ground_color_default ? 1 : 0,
                          .number=3,.visible=1};
     snprintf(o->name, sizeof o->name, "%s", "Платформа");
     o = &level->objects[level->object_count++];
@@ -1558,6 +1588,8 @@ static void workshop_build_preview(OnPublishedLevel *level) {
             .color=workshop_type_can_manually_recolor(src->type) ?
                 workshop_colors[src->color_set % 4][src->color_index % 8] :
                 0xffffffu,
+            .color_default=workshop_type_can_manually_recolor(src->type) &&
+                           src->color_default ? 1 : 0,
             .number=src->group_id, .visible=1,
             .trigger_kind=src->trigger_kind,
             .trigger_event=src->trigger_event,
@@ -1575,6 +1607,10 @@ static void workshop_build_preview(OnPublishedLevel *level) {
             .trigger_value_y=src->trigger_kind == ON_TRIGGER_KIND_MOVE ?
                              (float)src->trigger_y : 0.0f,
             .trigger_color=workshop_colors[src->color_set % 4][src->color_index % 8],
+            .trigger_color_default=src->type == ON_LEVEL_TRIGGER &&
+                src->color_default &&
+                (src->trigger_kind == ON_TRIGGER_KIND_RECOLOR ||
+                 src->trigger_kind == ON_TRIGGER_KIND_BACKGROUND) ? 1 : 0,
             .trigger_group_id=src->trigger_group_id,
             .trigger_has_group=src->type == ON_LEVEL_TRIGGER &&
                                src->trigger_kind != ON_TRIGGER_KIND_GRAVITY &&
@@ -1733,16 +1769,22 @@ static void workshop_draw_color_dialog(lv_obj_t *root) {
         lv_color_t color = lv_color_hex(workshop_colors[workshop_color_set][i]);
         lv_obj_t *swatch = workshop_button(root, x, y, 150, 88, "", 0,
                         U_WORKSHOP_COLOR_BASE + i, color);
-        if (workshop_color_index == i) {
+        if (!workshop_color_default && workshop_color_index == i) {
             lv_obj_set_style_border_color(swatch, WS_CREAM, 0);
             lv_obj_set_style_border_width(swatch, 6, 0);
         }
     }
     char selected[56];
-    snprintf(selected, sizeof selected, "Палитра %d",
-             workshop_color_set + 1);
-    label(root, 230, 500, 820, 40, selected, 1,
+    if (workshop_color_default)
+        snprintf(selected, sizeof selected, "%s", "Обычная картинка");
+    else
+        snprintf(selected, sizeof selected, "Палитра %d",
+                 workshop_color_set + 1);
+    label(root, 230, 500, 400, 40, selected, 1,
           WS_CREAM, LV_TEXT_ALIGN_CENTER);
+    workshop_button(root, 650, 494, 400, 56, "По умолчанию", 1,
+                    U_WORKSHOP_COLOR_DEFAULT,
+                    workshop_color_default ? WS_CYAN : BUTTON_GRAY);
     workshop_button(root, 500, 566, 280, 64, "ОК", 3,
                     U_WORKSHOP_DIALOG_OK, WS_ACCENT);
 }
@@ -2176,9 +2218,12 @@ static void workshop_draw_trigger_dialog(lv_obj_t *root) {
     } else if (o->trigger_kind == ON_TRIGGER_KIND_BACKGROUND) {
         label(root, 158, 229, 310, 42, "Цвет фона", 2,
               WS_YELLOW, LV_TEXT_ALIGN_LEFT);
-        snprintf(value, sizeof value, "#%06X",
-                 (unsigned)workshop_colors[o->color_set % 4][o->color_index % 8]);
-        workshop_button(root, 490, 216, 300, 64, value, 2,
+        if (o->color_default)
+            snprintf(value, sizeof value, "%s", "По умолчанию");
+        else
+            snprintf(value, sizeof value, "#%06X",
+                     (unsigned)workshop_colors[o->color_set % 4][o->color_index % 8]);
+        workshop_button(root, 490, 216, 300, 64, value, 1,
                         U_WORKSHOP_COLOR_PANEL, WS_DARK_VALUE);
     } else {
         label(root, 158, 229, 310, 42,
@@ -2190,9 +2235,12 @@ static void workshop_draw_trigger_dialog(lv_obj_t *root) {
         if (o->trigger_kind == ON_TRIGGER_KIND_RECOLOR) {
             label(root, 158, 326, 310, 42, "Цвет объектов", 2,
                   WS_YELLOW, LV_TEXT_ALIGN_LEFT);
-            snprintf(value, sizeof value, "#%06X",
-                     (unsigned)workshop_colors[o->color_set % 4][o->color_index % 8]);
-            workshop_button(root, 490, 311, 300, 64, value, 2,
+            if (o->color_default)
+                snprintf(value, sizeof value, "%s", "По умолчанию");
+            else
+                snprintf(value, sizeof value, "#%06X",
+                         (unsigned)workshop_colors[o->color_set % 4][o->color_index % 8]);
+            workshop_button(root, 490, 311, 300, 64, value, 1,
                             U_WORKSHOP_COLOR_PANEL, WS_DARK_VALUE);
         }
     }
@@ -2426,7 +2474,8 @@ static void workshop_draw_transform_dialog(lv_obj_t *root) {
 static void workshop_draw_world_object(lv_obj_t *root, int gx, int gy, int cell,
                                        int type, float x, float y, float w, float h,
                                        float angle, int flip_x, int flip_y,
-                                       int art_id, lv_color_t color, int selected) {
+                                       int art_id, lv_color_t color, int selected,
+                                       int default_color) {
     if (w <= 0 || h <= 0) return;
     float radians = angle * 0.01745329251994329577f;
     int art_flip_x = flip_x ^ (type == ON_LEVEL_ENEMY);
@@ -2447,14 +2496,20 @@ static void workshop_draw_world_object(lv_obj_t *root, int gx, int gy, int cell,
     int rotation = (int)lroundf(angle * 10.0f);
     int has_art = art_id >= 0 && art_id < PV_ART_COUNT && pictures[art_id].data;
     int can_recolor_art = workshop_type_can_manually_recolor(type);
+    /* A default object shows the author's picture exactly as drawn. */
+    int tinted = can_recolor_art && !default_color;
     if (type == ON_LEVEL_PARTICLE) {
+        lv_color_t marker_color = default_color ?
+            lv_color_hex(workshop_default_object_color(type)) : color;
         lv_obj_t *marker = label(root, left, top, shape_w, shape_h, "P", 2,
-                                 color, LV_TEXT_ALIGN_CENTER);
+                                 marker_color, LV_TEXT_ALIGN_CENTER);
         lv_obj_set_style_transform_rotation(marker, rotation, 0);
         lv_obj_set_style_transform_pivot_x(marker, LV_PCT(50), 0);
         lv_obj_set_style_transform_pivot_y(marker, LV_PCT(50), 0);
-    } else if (type != ON_LEVEL_SLOPE && (!has_art || can_recolor_art)) {
-        lv_obj_t *shape = box(root, left, top, shape_w, shape_h, 4, color, 0);
+    } else if (type != ON_LEVEL_SLOPE && (!has_art || tinted)) {
+        lv_color_t body = default_color ?
+            lv_color_hex(workshop_default_object_color(type)) : color;
+        lv_obj_t *shape = box(root, left, top, shape_w, shape_h, 4, body, 0);
         lv_obj_set_style_transform_rotation(shape, rotation, 0);
         lv_obj_set_style_transform_pivot_x(shape, LV_PCT(50), 0);
         lv_obj_set_style_transform_pivot_y(shape, LV_PCT(50), 0);
@@ -2479,7 +2534,7 @@ static void workshop_draw_world_object(lv_obj_t *root, int gx, int gy, int cell,
                 lv_obj_t *image = art_flipped(root, art_id, tile_cx, tile_cy,
                                               image_w, art_flip_x, flip_y);
                 if (image) {
-                    if (can_recolor_art) {
+                    if (tinted) {
                         lv_obj_set_style_image_recolor(image, color, 0);
                         lv_obj_set_style_image_recolor_opa(image, LV_OPA_50, 0);
                     }
@@ -2500,7 +2555,7 @@ static void workshop_draw_world_object(lv_obj_t *root, int gx, int gy, int cell,
                                           (int)lroundf(cy), image_w,
                                           art_flip_x, flip_y);
             if (image) {
-                if (can_recolor_art) {
+                if (tinted) {
                     lv_obj_set_style_image_recolor(image, color, 0);
                     lv_obj_set_style_image_recolor_opa(image, LV_OPA_50, 0);
                 }
@@ -2632,17 +2687,17 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
         workshop_ground_color_custom ?
             lv_color_hex(workshop_colors[workshop_ground_color_set % 4]
                                         [workshop_ground_color_index % 8]) : C(476B4E),
-        workshop_is_selected(-4));
+        workshop_is_selected(-4), workshop_ground_color_default);
     workshop_draw_world_object(map_clip, 0, 0, cell, ON_LEVEL_PLAYER,
         workshop_player_x, workshop_player_y, workshop_player_w, workshop_player_h,
         workshop_player_angle, workshop_player_flip_x, workshop_player_flip_y,
         PV_ART_BREAD, WS_CREAM,
-        workshop_is_selected(-2));
+        workshop_is_selected(-2), 0);
     workshop_draw_world_object(map_clip, 0, 0, cell, ON_LEVEL_GOAL,
         workshop_goal_x, workshop_goal_y, workshop_goal_w, workshop_goal_h,
         workshop_goal_angle, workshop_goal_flip_x, workshop_goal_flip_y,
         PV_ART_LEVEL_FLAG, WS_CREAM,
-        workshop_is_selected(-3));
+        workshop_is_selected(-3), 0);
     for (int i = 0; i < workshop_object_count; ++i) {
         const WorkshopObject *o = &workshop_objects[i];
         lv_color_t color = lv_color_hex(
@@ -2650,7 +2705,7 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
         workshop_draw_world_object(map_clip, 0, 0, cell, o->type,
             o->x, o->y, o->w, o->h, o->angle, o->flip_x, o->flip_y,
             workshop_object_art(o->type, o->trigger_kind), color,
-            workshop_is_selected(i));
+            workshop_is_selected(i), o->color_default);
     }
     for (int row = 0; row < WS_GRID_ROWS; ++row)
         for (int col = 0; col < WS_GRID_COLS; ++col) {
@@ -3392,6 +3447,7 @@ static uint32_t state_signature(int phase, const OnNetView *v) {
         h = mix(h, &workshop_ground_color_set, sizeof workshop_ground_color_set);
         h = mix(h, &workshop_ground_color_index, sizeof workshop_ground_color_index);
         h = mix(h, &workshop_ground_color_custom, sizeof workshop_ground_color_custom);
+        h = mix(h, &workshop_ground_color_default, sizeof workshop_ground_color_default);
         h = mix(h, &workshop_player_x, sizeof workshop_player_x);
         h = mix(h, &workshop_player_y, sizeof workshop_player_y);
         h = mix(h, &workshop_player_w, sizeof workshop_player_w);
@@ -3427,6 +3483,7 @@ static uint32_t state_signature(int phase, const OnNetView *v) {
         h = mix(h, &workshop_next_group_id, sizeof workshop_next_group_id);
         h = mix(h, &workshop_color_set, sizeof workshop_color_set);
         h = mix(h, &workshop_color_index, sizeof workshop_color_index);
+        h = mix(h, &workshop_color_default, sizeof workshop_color_default);
         h = mix(h, &v->level_publish_busy, sizeof v->level_publish_busy);
         h = mix(h, v->level_publish_id, strlen(v->level_publish_id));
         h = mix(h, v->level_publish_notice, strlen(v->level_publish_notice));
@@ -3781,10 +3838,13 @@ static void pressed(lv_event_t *ev) {
         code < U_WORKSHOP_COLOR_BASE + 8) {
         if (workshop_selection_can_manually_recolor()) {
             workshop_color_index = code - U_WORKSHOP_COLOR_BASE;
+            /* Picking a swatch leaves the default mode behind. */
+            workshop_color_default = 0;
             if (workshop_ground_selected) {
                 workshop_ground_color_set = workshop_color_set;
                 workshop_ground_color_index = workshop_color_index;
                 workshop_ground_color_custom = 1;
+                workshop_ground_color_default = 0;
             }
             for (int i = 0; i < workshop_object_count; ++i) {
                 if (!workshop_selected_flags[i] ||
@@ -3792,6 +3852,7 @@ static void pressed(lv_event_t *ev) {
                     continue;
                 workshop_objects[i].color_set = workshop_color_set;
                 workshop_objects[i].color_index = workshop_color_index;
+                workshop_objects[i].color_default = 0;
             }
             dirty = 1;
         }
@@ -3959,13 +4020,20 @@ static void pressed(lv_event_t *ev) {
             if (selected >= 0) {
                 workshop_color_set = workshop_objects[selected].color_set;
                 workshop_color_index = workshop_objects[selected].color_index;
+                workshop_color_default = workshop_objects[selected].color_default;
             } else {
                 workshop_color_set = workshop_ground_color_set;
                 workshop_color_index = workshop_ground_color_index;
+                workshop_color_default = workshop_ground_color_default;
             }
             dirty = 1;
         }
         break;
+    case U_WORKSHOP_COLOR_DEFAULT:
+        /* Default simply turns the object's own picture back on. */
+        workshop_color_default = workshop_color_default ? 0 : 1;
+        workshop_apply_color_default(workshop_color_default);
+        dirty = 1;break;
     case U_WORKSHOP_DIALOG_OK:
         if (workshop_dialog == WS_DIALOG_MOVE &&
             workshop_selected >= 0 && workshop_selected < workshop_object_count) {

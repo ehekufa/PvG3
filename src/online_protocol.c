@@ -410,8 +410,11 @@ static int parse_level_object(const JD *d, int node, OnLevelObject *out) {
     int type = level_object_type(d, field(d, node, "type"));
     int flip_x_token = field(d, node, "flipX");
     int flip_y_token = field(d, node, "flipY");
+    int default_color_token = field(d, node, "defaultColor");
     if ((flip_x_token >= 0 && !bool_field(d, node, "flipX", &item.flip_x)) ||
-        (flip_y_token >= 0 && !bool_field(d, node, "flipY", &item.flip_y))) return 0;
+        (flip_y_token >= 0 && !bool_field(d, node, "flipY", &item.flip_y)) ||
+        (default_color_token >= 0 &&
+         !bool_field(d, node, "defaultColor", &item.color_default))) return 0;
     if (type < 0 || !int_field(d, node, "id", &item.id) || item.id < 1 || item.id > 1000000 ||
         !float_field(d, node, "x", &item.x) || !float_field(d, node, "y", &item.y) ||
         !float_field(d, node, "w", &item.w) || !float_field(d, node, "h", &item.h) ||
@@ -474,7 +477,10 @@ static int parse_level_object(const JD *d, int node, OnLevelObject *out) {
                                   item.trigger_group_id < 0 || item.trigger_group_id > 9999)) ||
             item.target_id < 0 || item.target_id > 1000000 ||
             (field(d, trigger, "color") >= 0 &&
-             !color_value(d, field(d, trigger, "color"), &item.trigger_color))) return 0;
+             !color_value(d, field(d, trigger, "color"), &item.trigger_color)) ||
+            (field(d, trigger, "defaultColor") >= 0 &&
+             !bool_field(d, trigger, "defaultColor",
+                         &item.trigger_color_default))) return 0;
         item.trigger_has_group = group_token >= 0;
         if (item.trigger_kind == ON_TRIGGER_KIND_MOVE) {
             if (item.trigger_action > ON_TRIGGER_ROTATE ||
@@ -953,6 +959,7 @@ static int published_trigger_valid(const OnLevelObject *o) {
          (o->trigger_group_id < 0 || o->trigger_group_id > 9999)) ||
         (o->trigger_has_duration != 0 && o->trigger_has_duration != 1) ||
         (o->trigger_has_duration && o->trigger_kind != ON_TRIGGER_KIND_ROTATE) ||
+        (o->trigger_color_default != 0 && o->trigger_color_default != 1) ||
         !isfinite(o->trigger_value) || !isfinite(o->trigger_value_y) ||
         o->trigger_color > 0xffffffu) return 0;
     if (o->trigger_kind == ON_TRIGGER_KIND_MOVE) {
@@ -1017,6 +1024,7 @@ static int published_level_valid(const OnPublishedLevel *level) {
             o->x + o->w > ON_LEVEL_WORLD_LIMIT ||
             o->y + o->h > ON_LEVEL_WORLD_LIMIT || o->w > 64 || o->h > 40 ||
             o->angle < 0 || o->angle >= 360 || o->color > 0xffffffu ||
+            (o->color_default != 0 && o->color_default != 1) ||
             (o->flip_x != 0 && o->flip_x != 1) ||
             (o->flip_y != 0 && o->flip_y != 1) ||
             o->number < 0 || o->number > 9999 || (o->visible != 0 && o->visible != 1)) {
@@ -1079,6 +1087,9 @@ size_t on_protocol_published_level_json(const OnPublishedLevel *level,
             (double)o->angle, o->flip_x ? "true" : "false",
             o->flip_y ? "true" : "false", (unsigned)o->color, o->number,
             o->visible ? "true" : "false");
+        /* Only levels that opt out of a tint carry the flag, so every older
+         * record keeps its exact payload. */
+        if (o->color_default) put(&w, ",\"defaultColor\":true");
         if (o->type == ON_LEVEL_TRIGGER) {
             put(&w, ",\"trigger\":{\"kind\":\"%s\",\"event\":\"%s\",\"action\":\"%s\",\"targetId\":%d",
                 trigger_kinds[o->trigger_kind], events[o->trigger_event],
@@ -1101,7 +1112,11 @@ size_t on_protocol_published_level_json(const OnPublishedLevel *level,
             } else if (o->trigger_kind == ON_TRIGGER_KIND_GRAVITY) {
                 put(&w, ",\"value\":%.4f", (double)o->trigger_value);
             }
-            put(&w, ",\"color\":\"#%06x\"}", (unsigned)o->trigger_color);
+            put(&w, ",\"color\":\"#%06x\"", (unsigned)o->trigger_color);
+            if ((o->trigger_kind == ON_TRIGGER_KIND_RECOLOR ||
+                 o->trigger_kind == ON_TRIGGER_KIND_BACKGROUND) &&
+                o->trigger_color_default) put(&w, ",\"defaultColor\":true");
+            put(&w, "}");
         } else if (o->type == ON_LEVEL_PARTICLE) {
             const OnLevelParticle *emitter = &o->emitter;
             put(&w, ",\"emitter\":{\"enabled\":%s,\"continuous\":%s,"

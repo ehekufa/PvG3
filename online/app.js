@@ -365,6 +365,11 @@ function renderSelectedObject() {
   colorInput.value = object.color;
   colorInput.disabled = !canRecolor;
   colorInput.closest('.ws-color-field').classList.toggle('is-disabled', !canRecolor);
+  const defaultColorInput = $('ws-object-color-default');
+  defaultColorInput.checked = canRecolor && object.defaultColor === true;
+  defaultColorInput.disabled = !canRecolor;
+  defaultColorInput.closest('.ws-color-default-field')
+    .classList.toggle('is-disabled', !canRecolor);
   const triggerFields = $('ws-trigger-fields');
   triggerFields.classList.toggle('hidden', object.type !== 'trigger');
   if (object.type === 'particle') object.emitter = normalizeParticleEmitter(object.emitter);
@@ -552,9 +557,11 @@ function wsPointerUp(event) {
 function updateSelectedProperty(property, value) {
   const object = wsObject(wsSelectedId);
   if (!object || wsSelectedIds.size !== 1 ||
-      (property === 'color' && !canManuallyRecolorType(object.type))) return;
+      (property === 'color' && !canManuallyRecolorType(object.type)) ||
+      (property === 'defaultColor' && !canManuallyRecolorType(object.type))) return;
   const n = Number(value);
-  if (property !== 'color' && !Number.isFinite(n)) return;
+  if (property !== 'color' && property !== 'defaultColor' &&
+      !Number.isFinite(n)) return;
   if (property === 'x' || property === 'y') {
     object[property] = Math.max(-WORLD_LIMIT,
       Math.min(WORLD_LIMIT - object[property === 'x' ? 'w' : 'h'], n));
@@ -569,7 +576,8 @@ function updateSelectedProperty(property, value) {
     object.angle = ((n % 360) + 360) % 360;
   } else if (property === 'number') {
     object.number = Math.max(0, Math.min(9999, Math.trunc(n)));
-  } else if (property === 'color') object.color = value;
+  } else if (property === 'color') {object.color = value;object.defaultColor = false;}
+  else if (property === 'defaultColor') object.defaultColor = value === true;
   wsRedrawEditor();saveWorkshopDraft();
 }
 function wsStep(id, fallback) {
@@ -1161,6 +1169,8 @@ $('ws-object-height').addEventListener('change', e => updateSelectedProperty('he
 $('ws-object-angle').addEventListener('change', e => updateSelectedProperty('angle', e.target.value));
 $('ws-object-number').addEventListener('change', e => updateSelectedProperty('number', e.target.value));
 $('ws-object-color').addEventListener('input', e => updateSelectedProperty('color', e.target.value));
+$('ws-object-color-default').addEventListener('change', e =>
+  updateSelectedProperty('defaultColor', e.target.checked));
 $('ws-particle-settings').addEventListener('click', openParticleDialog);
 for (const id of ['ws-particle-close', 'ws-particle-close-bottom'])
   $(id).addEventListener('click', () => $('ws-particle-dialog').close());

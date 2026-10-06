@@ -40,6 +40,15 @@ const NON_MANUALLY_RECOLORABLE_TYPES = new Set([
 export function canManuallyRecolorType(type) {
   return LEVEL_TYPES.includes(type) && !NON_MANUALLY_RECOLORABLE_TYPES.has(type);
 }
+// «По умолчанию»: the object keeps the colours of its own artwork, no tint.
+export function usesDefaultArtwork(object) {
+  return canManuallyRecolorType(object?.type) && object.defaultColor === true;
+}
+// Colour of an object that keeps its own picture, used where art is missing.
+export function defaultObjectColor(type) {
+  return canManuallyRecolorType(type) ?
+    DEFAULT_COLORS[type] : FIXED_SPRITE_FALLBACK_COLOR;
+}
 export const TYPE_LABELS = Object.freeze({
   block: 'Блок', ground: 'Платформа', hazard: 'Шипы', coin: 'Монета',
   enemy: 'Утка', player: 'Игрок', goal: 'Финиш', trigger: 'Триггер', slope: 'Склон',
@@ -54,6 +63,8 @@ const TYPE_SIZES = Object.freeze({
   checkpoint: [1, 1], 'portal-normal': [1, 1], 'portal-jetpack': [1, 1],
 });
 const FIXED_SPRITE_FALLBACK_COLOR = '#fffdf8';
+// Backdrop of the preview before any background trigger changes it.
+const PREVIEW_BACKGROUND_COLOR = '#8bcce6';
 const DEFAULT_COLORS = Object.freeze({
   block: '#55c8ea', ground: '#65a845', hazard: '#e56c5b',
   coin: FIXED_SPRITE_FALLBACK_COLOR, enemy: FIXED_SPRITE_FALLBACK_COLOR,
@@ -424,6 +435,7 @@ export function validateDraft(level) {
         object.angle < 0 || object.angle >= 360 ||
         (object.flipX !== undefined && typeof object.flipX !== 'boolean') ||
         (object.flipY !== undefined && typeof object.flipY !== 'boolean') ||
+        (object.defaultColor !== undefined && typeof object.defaultColor !== 'boolean') ||
         !rgb(object.color) ||
         !Number.isInteger(object.number) || object.number < 0 || object.number > 9999 ||
         typeof object.visible !== 'boolean')
@@ -472,7 +484,8 @@ export function validateDraft(level) {
           (kind === 'forever' && !foreverConfigured && !validTarget) ||
           (specialKind && !validGroup && !directTargetConfigured) ||
           (recolorKind && !validGroup) ||
-          (t.groupId !== undefined && !validGroup) || !validValues || !rgb(t.color))
+          (t.groupId !== undefined && !validGroup) || !validValues || !rgb(t.color) ||
+          (t.defaultColor !== undefined && typeof t.defaultColor !== 'boolean'))
         return fail('Настрой триггер: событие, группу, действие и параметры.');
     }
   }
@@ -490,6 +503,7 @@ function recordObject(object) {
     number: object.number || 0, visible: object.visible !== false,
     layer: object.layer || 0, layer2: object.layer2 || 0, zOrder: object.zOrder || 0,
   };
+  if (usesDefaultArtwork(object)) result.defaultColor = true;
   if (object.type === 'particle')
     result.emitter = normalizeParticleEmitter(object.emitter);
   if (object.type === 'trigger') {
@@ -497,6 +511,8 @@ function recordObject(object) {
     const kind = TRIGGER_KINDS.includes(t.kind) ? t.kind : 'move';
     const trigger = {kind, event: t.event || 'touch', action: t.action || 'move',
       color: t.color || '#ffc54e'};
+    if ((kind === 'recolor' || kind === 'background') && object.defaultColor === true)
+      trigger.defaultColor = true;
     if (!['gravity', 'background', 'recolor'].includes(kind))
       trigger.targetId = Number.isInteger(t.targetId) ? t.targetId : 0;
     if (!['gravity', 'background'].includes(kind) && Number.isInteger(t.groupId))
@@ -548,6 +564,7 @@ export function draftFromPublished(record) {
       delete trigger.degrees;delete trigger.value;
     }
     return {...object,
+      ...(object.defaultColor === true ? {defaultColor: true} : {}),
       color: canManuallyRecolorType(object.type) ?
         object.color : FIXED_SPRITE_FALLBACK_COLOR,
       trigger,
@@ -608,7 +625,7 @@ export function createPreviewState(level) {
   for (const object of objects)
     if (object.type === 'particle') object.emitter = normalizeParticleEmitter(object.emitter);
   const state = {objects, x: player.x * TILE_W, y: player.y * TILE_H,
-    vx: 0, vy: 0, gravity: 1450, backgroundColor: '#8bcce6',
+    vx: 0, vy: 0, gravity: 1450, backgroundColor: PREVIEW_BACKGROUND_COLOR,
     grounded: false, time: 0, coins: 0, won: false,
     collected: [], triggerFired: [], triggerActive: [], triggerTimers: Object.create(null),
     invisible: [], noCollision: [], groupRotations: [], jumpHeld: false,
@@ -792,14 +809,18 @@ function executeTrigger(state, trigger) {
     return;
   }
   if (kind === 'background') {
-    if (rgb(t.color)) state.backgroundColor = t.color;
+    if (t.defaultColor === true) state.backgroundColor = PREVIEW_BACKGROUND_COLOR;
+    else if (rgb(t.color)) state.backgroundColor = t.color;
     return;
   }
   if (kind === 'recolor') {
-    if (rgb(t.color) && Number.isInteger(t.groupId))
+    if (Number.isInteger(t.groupId))
       for (const target of state.objects)
         if (target.type !== 'trigger' && canManuallyRecolorType(target.type) &&
-            target.number === t.groupId) target.color = t.color;
+            target.number === t.groupId) {
+          if (t.defaultColor === true) target.defaultColor = true;
+          else if (rgb(t.color)) {target.color = t.color;target.defaultColor = false;}
+        }
     return;
   }
   if (kind === 'rotate' && t.duration !== undefined) {
@@ -855,8 +876,10 @@ function executeTrigger(state, trigger) {
       target.angle = ((target.angle + degrees) % 360 + 360) % 360;break;
     }
     case 'recolor':
-      if (target.type !== 'trigger' && canManuallyRecolorType(target.type))
-        target.color = t.color;
+      if (target.type !== 'trigger' && canManuallyRecolorType(target.type)) {
+        if (t.defaultColor === true) target.defaultColor = true;
+        else {target.color = t.color;target.defaultColor = false;}
+      }
       break;
     case 'number': target.number = clamp(Math.trunc(t.value), 0, 9999);break;
     }
@@ -1081,7 +1104,7 @@ function drawWorkshopObject(ctx, art, object, x, y, w, h, checkpointActive = fal
   const flipX = object.type === 'player' && typeof playerFacingLeft === 'boolean' ?
     playerFacingLeft : objectFlipX(object);
   const flipY = object.flipY === true;
-  const tint = canManuallyRecolorType(object.type) ?
+  const tint = canManuallyRecolorType(object.type) && object.defaultColor !== true ?
     workshopObjectColor(object) : null;
   if (object.type === 'player' && drawWorkshopImage(
       ctx, playerArt, x, y, w, h, angle, flipX, flipY)) return true;
@@ -1135,9 +1158,12 @@ export function drawEditorCanvas(canvas, level, selectedId = 0, _tool = 'build',
     if (o.visible === false) continue;
     const x = (o.x - cameraX) * TILE_W + 3, y = (o.y - cameraY) * TILE_H + 3;
     const w = o.w * TILE_W - 6, h = o.h * TILE_H - 6;
-    ctx.fillStyle = workshopObjectColor(o);
+    ctx.fillStyle = usesDefaultArtwork(o) ? defaultObjectColor(o.type) :
+      workshopObjectColor(o);
     if (o.type === 'particle') {
-      drawParticleEmitterMarker(ctx, x, y, w, h, o.color || DEFAULT_COLORS.particle, o.angle);
+      drawParticleEmitterMarker(ctx, x, y, w, h,
+        usesDefaultArtwork(o) ? defaultObjectColor(o.type) :
+          o.color || DEFAULT_COLORS.particle, o.angle);
     } else {
       const triggerArt = o.type === 'trigger' &&
         (art?.[triggerArtKey(o.trigger?.kind)]?.naturalWidth || art.trigger?.naturalWidth);
@@ -1327,7 +1353,8 @@ export function drawPreviewCanvas(canvas, state, _control = 'keyboard', art = {}
   const cameraX = player ? state.x + playerW / 2 - canvas.width * .4 : 0;
   const cameraY = player ? state.y + playerH / 2 - (canvas.height + 64) * .52 : 0;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = rgb(state.backgroundColor) ? state.backgroundColor : '#8bcce6';
+  ctx.fillStyle = rgb(state.backgroundColor) ? state.backgroundColor :
+    PREVIEW_BACKGROUND_COLOR;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = '#eff3d8';
   const cloudX = -((cameraX * .18) % (canvas.width + 300));
@@ -1346,7 +1373,8 @@ export function drawPreviewCanvas(canvas, state, _control = 'keyboard', art = {}
         o.type === 'player' || o.type === 'trigger' || o.type === 'particle') continue;
     const x = o.x * TILE_W - cameraX, y = o.y * TILE_H - cameraY;
     const w = o.w * TILE_W, h = o.h * TILE_H;
-    ctx.fillStyle = workshopObjectColor(o);
+    ctx.fillStyle = usesDefaultArtwork(o) ? defaultObjectColor(o.type) :
+      workshopObjectColor(o);
     const triggerArt = o.type === 'trigger' &&
       (art?.[triggerArtKey(o.trigger?.kind)]?.naturalWidth || art.trigger?.naturalWidth);
     if (triggerArt) {ctx.globalAlpha = .18;ctx.fillRect(x, y, w, h);ctx.globalAlpha = 1;}

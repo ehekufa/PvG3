@@ -305,6 +305,7 @@ main { min-width: 0; }
 .ws-properties .ws-color-field { display: flex; align-items: center; justify-content: space-between; }
 .ws-properties .ws-color-field.is-disabled { opacity: .5; }
 .ws-properties .ws-color-field input { width: 58px; height: 38px; padding: 2px; }
+.ws-properties .ws-color-default-field input { width: 24px; height: 24px; padding: 0; }
 .ws-trigger-color-field label { display: flex; align-items: center; gap: 8px; }
 .ws-color-wheel { width: 28px; height: 28px; object-fit: contain; }
 .ws-delete-selected { margin-top: 2px; color: var(--button-ink); background: var(--button-white); }

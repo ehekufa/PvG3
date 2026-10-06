@@ -426,6 +426,74 @@ static void web_fixture(const char *path) {
            m.plants[11].type == ON_PEA_PLANT && m.lilies[11] &&
            m.duck_count == 1 && m.ducks[0].type == ON_CONE);
 }
+/* «По умолчанию»: an object keeps the colours of its own artwork, and a
+ * recolor/background trigger flagged the same way restores that look. */
+static void published_default_color(void) {
+    static OnPublishedLevel level, decoded;
+    static char body[8192];
+    memset(&level, 0, sizeof level);
+    snprintf(level.id, sizeof level.id, "%s", "45120");
+    snprintf(level.title, sizeof level.title, "%s", "Обычный цвет");
+    snprintf(level.description, sizeof level.description, "%s", "Default colors.");
+    level.width = 16;level.height = 10;level.object_count = 5;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_PLAYER,
+        .x=1,.y=7,.w=.65f,.h=.85f,.color=0xffffffu,.visible=1};
+    snprintf(level.objects[0].name, sizeof level.objects[0].name, "%s", "Player");
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.color=0xffffffu,.visible=1};
+    snprintf(level.objects[1].name, sizeof level.objects[1].name, "%s", "Finish");
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_BLOCK,
+        .x=6,.y=7,.w=1,.h=1,.color=0x123456u,.visible=1,.color_default=1};
+    snprintf(level.objects[2].name, sizeof level.objects[2].name, "%s", "Block");
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_TRIGGER,
+        .x=8,.y=7,.w=1,.h=1,.color=0xf27652u,.visible=1,.color_default=1,
+        .trigger_kind=ON_TRIGGER_KIND_RECOLOR,.trigger_event=ON_TRIGGER_START,
+        .trigger_action=ON_TRIGGER_RECOLOR,.trigger_group_id=1,.trigger_has_group=1,
+        .trigger_color=0xffc54eu,.trigger_color_default=1};
+    snprintf(level.objects[3].name, sizeof level.objects[3].name, "%s", "Trigger");
+    level.objects[4] = (OnLevelObject){.id=5,.type=ON_LEVEL_TRIGGER,
+        .x=9,.y=7,.w=1,.h=1,.color=0xf27652u,.visible=1,
+        .trigger_kind=ON_TRIGGER_KIND_BACKGROUND,.trigger_event=ON_TRIGGER_START,
+        .trigger_action=ON_TRIGGER_SET_BACKGROUND,
+        .trigger_color=0x3456abu,.trigger_color_default=1};
+    snprintf(level.objects[4].name, sizeof level.objects[4].name, "%s", "Trigger");
+    size_t size = on_protocol_published_level_json(&level, body, sizeof body);
+    assert(size && strstr(body, "\"defaultColor\":true") &&
+           on_protocol_published_level(body, "45120", &decoded));
+    assert(decoded.objects[2].color_default == 1 &&
+           decoded.objects[2].color == 0x123456u);
+    assert(decoded.objects[3].color_default == 1 &&
+           decoded.objects[3].trigger_color_default == 1);
+    assert(decoded.objects[4].trigger_color_default == 1);
+    assert(!decoded.objects[0].color_default && !decoded.objects[1].color_default);
+    /* Levels that never opt out keep their exact, smaller payload. */
+    level.objects[2].color_default = 0;
+    level.objects[3].color_default = level.objects[3].trigger_color_default = 0;
+    level.objects[4].trigger_color_default = 0;
+    size = on_protocol_published_level_json(&level, body, sizeof body);
+    assert(size && !strstr(body, "defaultColor") &&
+           on_protocol_published_level(body, "45120", &decoded));
+    assert(!decoded.objects[2].color_default &&
+           !decoded.objects[3].trigger_color_default &&
+           !decoded.objects[4].trigger_color_default);
+    /* A non-boolean switch is rejected instead of being silently ignored. */
+    const char *broken =
+        "{\"format\":\"PVG3-PUBLISHED-LEVEL\",\"version\":1,\"id\":\"45121\","
+        "\"title\":\"Broken\",\"description\":\"\","
+        "\"project\":{\"format\":\"PVG3-MAKER\",\"version\":1,\"width\":16,\"height\":10,"
+        "\"objects\":["
+        "{\"id\":1,\"type\":\"block\",\"name\":\"Block\",\"x\":1,\"y\":7,\"w\":1,\"h\":1,"
+        "\"angle\":0,\"flipX\":false,\"flipY\":false,\"color\":\"#55c8ea\","
+        "\"defaultColor\":5,\"number\":1,\"visible\":true},"
+        "{\"id\":2,\"type\":\"player\",\"name\":\"Player\",\"x\":1,\"y\":7,\"w\":.65,\"h\":.85,"
+        "\"angle\":0,\"flipX\":false,\"flipY\":false,\"color\":\"#ffffff\","
+        "\"number\":2,\"visible\":true},"
+        "{\"id\":3,\"type\":\"goal\",\"name\":\"Finish\",\"x\":14,\"y\":6,\"w\":1,\"h\":2,"
+        "\"angle\":0,\"flipX\":false,\"flipY\":false,\"color\":\"#ffffff\","
+        "\"number\":3,\"visible\":true}]}}";
+    assert(!on_protocol_published_level(broken, "45121", &decoded));
+}
+
 int main(int argc, char **argv) {
     assert(on_level_id_is_official(ON_LEVEL_OFFICIAL_ID));
     assert(on_level_id_is_official("338069"));
@@ -435,6 +503,7 @@ int main(int argc, char **argv) {
     rooms_and_commands();
     published_level_writer();
     published_level_object_limit();
+    published_default_color();
     if (argc == 2) web_fixture(argv[1]);
     puts("Native online match, JSON protocol and optional browser fixture passed");
     return 0;

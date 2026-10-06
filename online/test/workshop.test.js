@@ -7,7 +7,8 @@ import {LEVEL_TYPES, TYPE_LABELS, TRIGGER_KINDS, WORLD_LIMIT, MAX_LEVEL_OBJECTS,
         publishedRecord, isPublishedRecord, draftFromPublished, resolveControlMode,
         setTriggerKind, createTouchButtonState, createPreviewState, stepPreview,
         DEFAULT_PARTICLE_EMITTER, OFFICIAL_LEVEL_ID, isOfficialLevel,
-        canManuallyRecolorType, normalizeParticleEmitter, sampleParticleEmitter,
+        canManuallyRecolorType, usesDefaultArtwork, defaultObjectColor,
+        normalizeParticleEmitter, sampleParticleEmitter,
         drawParticleEmitterPreview, drawEditorCanvas, drawPreviewCanvas} from '../workshop.js';
 
 test('renderers preserve full color and fixed sprites keep their authored colors', () => {
@@ -27,7 +28,8 @@ test('renderers preserve full color and fixed sprites keep their authored colors
   assert.doesNotMatch(game, /game_frame_apply_grayscale|grayscale/i);
   assert.doesNotMatch(windows, /game_frame_apply_grayscale|grayscale/i);
   assert.doesNotMatch(game, /0x5ab7e8|0xf2a76f/i);
-  assert.match(game, /custom_object_can_manually_recolor\(o->type\) \? 128 : 0/);
+  assert.match(game,
+    /custom_object_can_manually_recolor\(o->type\) && !o->color_default\) \? 128 : 0/);
   const enemyDraw = game.match(/case ON_LEVEL_ENEMY: \{([\s\S]*?)break;\s*\}/)?.[1];
   assert.ok(enemyDraw, 'custom-level enemy uses the supplied duck sprite');
   assert.match(enemyDraw, /sprite_draw_rotated_flipped/);
@@ -35,7 +37,7 @@ test('renderers preserve full color and fixed sprites keep their authored colors
   assert.doesNotMatch(enemyDraw, /sprite_draw_(?:rotated_)?tinted/,
     'fixed duck artwork is drawn without a programmatic tint');
   assert.match(workshop,
-    /const tint = canManuallyRecolorType\(object\.type\) \?[\s\S]*?: null/);
+    /const tint = canManuallyRecolorType\(object\.type\) && object\.defaultColor !== true \?[\s\S]*?: null/);
 });
 
 test('saving stays active without autosave or control-hint captions', () => {
@@ -143,9 +145,11 @@ test('manual recoloring is blocked only for fixed-art workshop objects', () => {
   const native = readFileSync(new URL('../../src/lvgl_ui.c', import.meta.url), 'utf8');
   assert.match(native, /workshop_type_can_manually_recolor/);
   assert(native.includes('int can_recolor_art = workshop_type_can_manually_recolor(type);'));
-  assert(native.includes('(!has_art || can_recolor_art)'),
+  assert(native.includes('(!has_art || tinted)'),
     'fixed sprite art does not get a colored backing shape');
-  assert(native.includes('if (can_recolor_art) {'),
+  assert(native.includes('int tinted = can_recolor_art && !default_color;'),
+    'objects flagged as default drop their tint');
+  assert(native.includes('if (tinted) {'),
     'native fixed-art sprites are not recolored');
   assert.match(native, /LV_STATE_DISABLED/);
   assert.match(native, /return workshop_ground_selected \|\| workshop_first_recolorable_selected\(\) >= 0;/);
@@ -443,6 +447,76 @@ test('recolor and background triggers round-trip, target groups, and update the 
   assert.equal(switched.objects.find(object => object.id === background.id).trigger.groupId, 3,
     'switching to recolor selects the recolorable built-in platform group');
   assert.equal(validateDraft(switched).ok, true);
+});
+
+test('the default color option keeps the object\'s own picture and round-trips', () => {
+  const level = newDraft('default-color');
+  const plain = addObject(level, 'block', 6, 6);
+  plain.number = 42;plain.color = '#123456';plain.defaultColor = true;
+  const tinted = addObject(level, 'block', 8, 6);
+  tinted.number = 43;tinted.color = '#e547b2';
+  const player = level.objects.find(object => object.type === 'player');
+  player.defaultColor = true;
+  const recolor = addObject(level, 'trigger', 100, 100, 'recolor');
+  Object.assign(recolor.trigger, {event:'start', groupId:43});
+  recolor.defaultColor = true;
+  const backdrop = addObject(level, 'trigger', 102, 100, 'background');
+  Object.assign(backdrop.trigger, {event:'start', color:'#468bd0'});
+  backdrop.defaultColor = true;
+
+  assert.equal(usesDefaultArtwork(plain), true);
+  assert.equal(usesDefaultArtwork(tinted), false);
+  assert.equal(usesDefaultArtwork(player), false,
+    'fixed sprites always keep their own artwork and need no switch');
+  assert.equal(defaultObjectColor('block'), '#55c8ea');
+  assert.equal(defaultObjectColor('player'), '#fffdf8');
+  assert.equal(validateDraft(level).ok, true);
+  const wrongType = structuredClone(level);
+  wrongType.objects.find(object => object.id === plain.id).defaultColor = 'yes';
+  assert.equal(validateDraft(wrongType).ok, false, 'the switch stays a boolean');
+
+  const record = publishedRecord('733', level);
+  const plainWire = record.project.objects.find(object => object.id === plain.id);
+  assert.equal(plainWire.defaultColor, true, 'default objects say so in the record');
+  assert.equal(plainWire.color, '#123456', 'the picked color is kept for later use');
+  assert.equal('defaultColor' in
+    record.project.objects.find(object => object.id === tinted.id), false,
+    'colored objects keep the exact payload of older records');
+  assert.equal('defaultColor' in
+    record.project.objects.find(object => object.type === 'player'), false);
+  assert.deepEqual(record.project.objects.find(object => object.id === recolor.id).trigger,
+    {kind:'recolor', event:'start', action:'recolor', groupId:43,
+      color:'#ffc54e', defaultColor:true});
+  assert.deepEqual(record.project.objects.find(object => object.id === backdrop.id).trigger,
+    {kind:'background', event:'start', action:'set-background',
+      color:'#468bd0', defaultColor:true});
+  assert.equal(isPublishedRecord(record, '733'), true);
+  const restored = draftFromPublished(record);
+  assert.equal(validateDraft(restored).ok, true);
+  assert.equal(restored.objects.find(o => o.id === plain.id).defaultColor, true);
+  assert.equal(restored.objects.find(o => o.id === recolor.id).defaultColor, true);
+
+  const editor = recordingCanvas();
+  drawEditorCanvas(editor.canvas, level, tinted.id);
+  const editorStyles = new Set([...editor.fills, ...editor.rectFills]
+    .map(fill => fill.style));
+  assert(editorStyles.has('#e547b2'), 'a picked color still tints its object');
+  assert(editorStyles.has('#55c8ea'), 'a default block falls back to its own color');
+  assert.equal(editorStyles.has('#123456'), false,
+    'a default object never paints the picked color over the author art');
+
+  const state = createPreviewState(restored);
+  assert.equal(state.objects.find(object => object.id === tinted.id).defaultColor, true,
+    'a default recolor trigger restores the normal artwork of its group');
+  assert.equal(state.backgroundColor, '#8bcce6',
+    'a default background trigger restores the normal backdrop');
+  const preview = recordingCanvas();
+  drawPreviewCanvas(preview.canvas, state);
+  const previewStyles = new Set([...preview.fills, ...preview.rectFills]
+    .map(fill => fill.style));
+  assert.equal(previewStyles.has('#e547b2'), false,
+    'the restored group is drawn with the author colors again');
+  assert(previewStyles.has('#55c8ea'), 'the restored block keeps its own color');
 });
 
 test('gravity triggers round-trip a signed level setting and change preview acceleration', () => {
