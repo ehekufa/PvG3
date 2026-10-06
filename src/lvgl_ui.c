@@ -80,6 +80,15 @@ enum {
     U_WORKSHOP_COLOR_DEFAULT,
     U_LEVEL_BASE = 100, U_ROOM_BASE = 200, U_KEY_BASE = 300,
     U_BOOK_ENTRY_BASE = 700, U_CUSTOM_LEVEL_BASE = 900,
+    U_COMMENT_HIDE_BASE = 940, U_COMMENT_BAN_BASE = 960,
+    /* Accounts, comments and moderation in the level catalog. They live on
+     * their own base so the shared workshop codes keep their values. */
+    U_CATALOG_BASE = 1600, U_CUSTOM_SELECT, U_CUSTOM_PLAY,
+    U_CUSTOM_DESELECT, U_CUSTOM_OFFICIAL,
+    U_ACCOUNT_OPEN, U_ACCOUNT_CLOSE, U_ACCOUNT_SIGN_IN, U_ACCOUNT_CREATE,
+    U_ACCOUNT_SIGN_OUT, U_ACCOUNT_LOGIN_FIELD, U_ACCOUNT_PASSWORD_FIELD,
+    U_ACCOUNT_BAN_NICK, U_ACCOUNT_BAN, U_ACCOUNT_UNBAN,
+    U_COMMENTS_OPEN, U_COMMENT_CLOSE, U_COMMENT_WRITE, U_COMMENT_SEND,
     U_WORKSHOP_CELL_BASE = 1200,
     U_WORKSHOP_PALETTE_BASE = 1400, U_WORKSHOP_COLOR_BASE = 1420,
     U_WORKSHOP_LAYER_BASE = 1450, U_WORKSHOP_LOCK_X_BASE = 1460,
@@ -128,7 +137,12 @@ static char visible_level_ids[8][ON_LEVEL_ID_SIZE];
 enum { WS_TOOL_BUILD, WS_TOOL_EDIT, WS_TOOL_MULTI, WS_TOOL_DELETE };
 enum { WS_DIALOG_NONE, WS_DIALOG_MOVE, WS_DIALOG_GROUP, WS_DIALOG_COLOR,
        WS_DIALOG_TRIGGER, WS_DIALOG_TRANSFORM, WS_DIALOG_PARTICLE };
+/* The account and comment fields borrow the workshop keyboard, so they sit
+ * before the numeric kinds: everything from WS_INPUT_TRIGGER_GROUP on is
+ * parsed as a number. */
 enum { WS_INPUT_NONE, WS_INPUT_TITLE, WS_INPUT_DESCRIPTION,
+       WS_INPUT_ACCOUNT_LOGIN, WS_INPUT_ACCOUNT_PASSWORD,
+       WS_INPUT_ACCOUNT_BAN_NICK, WS_INPUT_COMMENT,
        WS_INPUT_TRIGGER_GROUP, WS_INPUT_TRIGGER_X, WS_INPUT_TRIGGER_Y,
        WS_INPUT_TRIGGER_DURATION, WS_INPUT_OBJECT_WIDTH,
        WS_INPUT_OBJECT_HEIGHT, WS_INPUT_OBJECT_ANGLE };
@@ -198,6 +212,14 @@ static int workshop_color_set, workshop_color_index;
 /* Shared by the color dialog: when set, objects keep their own artwork. */
 static int workshop_color_default;
 static int workshop_keyboard_active, workshop_input_kind;
+/* Accounts, comments and moderation in the level catalog. The catalog dialog
+ * is 0 = none, 1 = account, 2 = comments. */
+static int catalog_dialog;
+static char catalog_selected[ON_LEVEL_ID_SIZE];
+static char account_login_input[ON_LOGIN_SIZE];
+static char account_password_input[ON_PASSWORD_SIZE];
+static char account_ban_input[ON_LOGIN_SIZE];
+static char comment_input[ON_COMMENT_TEXT_SIZE];
 static int workshop_input_return_dialog, workshop_text_language, workshop_text_upper;
 static lv_obj_t *workshop_active_textarea;
 static char workshop_name[ON_LEVEL_TITLE_SIZE] = "Новый уровень";
@@ -721,8 +743,124 @@ static void rooms_screen(lv_obj_t *root, const OnNetView *v) {
     if (len != 6) button_fill(join, BUTTON_GRAY);
 }
 
+/* ------------------------------------- accounts, comments and moderation */
+
+/* The catalog borrows the workshop's on-screen keyboard for its own fields. */
+static void workshop_draw_keyboard_dialog(lv_obj_t *root);
+
+static void catalog_shade(lv_obj_t *root) {
+    lv_obj_t *shade = box(root, 0, 0, GAME_W, GAME_H, 0, C(20354B), 0);
+    lv_obj_set_style_bg_opa(shade, LV_OPA_80, 0);
+    lv_obj_set_style_border_width(shade, 0, 0);
+    lv_obj_add_flag(shade, LV_OBJ_FLAG_CLICKABLE);
+}
+/* A value the player types with the shared on-screen keyboard: the catalog has
+ * no permanent text widget, so the row is a button that opens one. */
+static void catalog_field_button(lv_obj_t *root, int x, int y, int w, int h,
+                                 const char *value, const char *placeholder,
+                                 int secret, int action) {
+    char shown[ON_COMMENT_TEXT_SIZE];
+    if (value && value[0]) {
+        if (secret) {
+            size_t length = strlen(value);
+            if (length > 20) length = 20;
+            memset(shown, '*', length);
+            shown[length] = 0;
+        } else snprintf(shown, sizeof shown, "%s", value);
+    } else snprintf(shown, sizeof shown, "%s", placeholder);
+    button(root, x, y, w, h, shown, 1, action);
+}
+
+static void catalog_draw_account_dialog(lv_obj_t *root, const OnNetView *v) {
+    char state[ON_LOGIN_SIZE + 40], moderator[64];
+    catalog_shade(root);
+    box(root, 92, 34, 1096, 652, 17, WS_BROWN, 0);
+    box(root, 103, 45, 1074, 76, 12, WS_BROWN_DARK, 0);
+    label(root, 120, 58, 1040, 49, "Аккаунт", 3, WS_CREAM, LV_TEXT_ALIGN_CENTER);
+    if (v->account.signed_in) {
+        snprintf(state, sizeof state, "%s %s", font_translate("Ник"),
+                 v->account.login);
+    } else snprintf(state, sizeof state, "%s", "Вы не в аккаунте.");
+    label(root, 120, 134, 640, 40, state, 2, WS_CREAM, LV_TEXT_ALIGN_LEFT);
+    if (v->account.signed_in) {
+        snprintf(moderator, sizeof moderator, "%s",
+                 v->account.admin ? "Модератор" : "");
+        label(root, 950, 134, 300, 40, moderator, 2, WS_CREAM, LV_TEXT_ALIGN_RIGHT);
+    }
+    label(root, 120, 196, 200, 40, "Ник", 1, WS_CREAM, LV_TEXT_ALIGN_LEFT);
+    catalog_field_button(root, 340, 186, 540, 56, account_login_input,
+                         "a-z, 0-9 и _", 0, U_ACCOUNT_LOGIN_FIELD);
+    label(root, 120, 268, 200, 40, "Пароль", 1, WS_CREAM, LV_TEXT_ALIGN_LEFT);
+    catalog_field_button(root, 340, 258, 540, 56, account_password_input,
+                         "от 6 знаков", 1, U_ACCOUNT_PASSWORD_FIELD);
+    button(root, 900, 186, 260, 56, "Войти", 2, U_ACCOUNT_SIGN_IN);
+    button(root, 900, 258, 260, 56, "Создать аккаунт", 1, U_ACCOUNT_CREATE);
+    if (v->account.signed_in)
+        button(root, 900, 330, 260, 56, "Выйти", 1, U_ACCOUNT_SIGN_OUT);
+    if (v->account.admin) {
+        label(root, 120, 340, 220, 40, "Ник игрока", 1, WS_CREAM,
+              LV_TEXT_ALIGN_LEFT);
+        catalog_field_button(root, 340, 330, 320, 56, account_ban_input,
+                             "ник", 0, U_ACCOUNT_BAN_NICK);
+        button(root, 680, 330, 200, 56, "Забанить", 1, U_ACCOUNT_BAN);
+        button(root, 900, 330, 260, 56, "Разбанить", 1, U_ACCOUNT_UNBAN);
+    }
+    if (v->account_notice[0])
+        label(root, 120, 404, 1040, 70, v->account_notice, 1, WS_ACCENT,
+              LV_TEXT_ALIGN_LEFT);
+    label(root, 120, 486, 1040, 92,
+          "Пароль не хранится и не уходит в базу: игра считает хэш PBKDF2 и "
+          "обменивает его на токен сессии.",
+          1, WS_CREAM, LV_TEXT_ALIGN_LEFT);
+    button(root, 470, 604, 340, 60, "Закрыть", 2, U_ACCOUNT_CLOSE);
+}
+
+static void catalog_draw_comments_dialog(lv_obj_t *root, const OnNetView *v) {
+    char title[ON_LEVEL_ID_SIZE + 40];
+    catalog_shade(root);
+    box(root, 92, 34, 1096, 652, 17, WS_BROWN, 0);
+    box(root, 103, 45, 1074, 76, 12, WS_BROWN_DARK, 0);
+    snprintf(title, sizeof title, "%s %s", font_translate("Сообщения · ID"),
+             catalog_selected);
+    label(root, 120, 58, 1040, 49, title, 3, WS_CREAM, LV_TEXT_ALIGN_CENTER);
+    if (v->comments_busy && !v->comment_count)
+        label(root, 120, 150, 1040, 44, "Загружаю сообщения…", 1, WS_CREAM,
+              LV_TEXT_ALIGN_LEFT);
+    else if (!v->comment_count)
+        label(root, 120, 150, 1040, 44, "Сообщений пока нет.", 1, WS_CREAM,
+              LV_TEXT_ALIGN_LEFT);
+    for (int i = 0; i < v->comment_count && i < 4; i++) {
+        const OnComment *c = &v->comments[i];
+        int y = 140 + i * 100;
+        box(root, 112, y, 1056, 92, 10, WS_BROWN_DARK, 0);
+        label(root, 128, y + 8, 300, 34, c->login, 1, WS_CREAM,
+              LV_TEXT_ALIGN_LEFT);
+        lv_obj_t *text = label(root, 128, y + 42, 600, 44,
+                               c->hidden ? "Сообщение скрыто." : c->text, 1,
+                               c->hidden ? MUTED : WS_CREAM,
+                               LV_TEXT_ALIGN_LEFT);
+        lv_label_set_long_mode(text, LV_LABEL_LONG_MODE_DOTS);
+        if (!c->hidden &&
+            (v->account.admin || (v->account.signed_in &&
+                                  !strcmp(v->account.login, c->login))))
+            button(root, 750, y + 20, 170, 52, "Скрыть", 1,
+                   U_COMMENT_HIDE_BASE + i);
+        if (v->account.admin)
+            button(root, 940, y + 20, 190, 52, "Забанить", 1,
+                   U_COMMENT_BAN_BASE + i);
+    }
+    catalog_field_button(root, 120, 548, 700, 64, comment_input,
+                         "Написать сообщение…", 0, U_COMMENT_WRITE);
+    button(root, 840, 548, 300, 64, "Отправить", 2, U_COMMENT_SEND);
+    if (v->account_notice[0])
+        label(root, 120, 624, 700, 44, v->account_notice, 1, WS_ACCENT,
+              LV_TEXT_ALIGN_LEFT);
+    button(root, 840, 624, 300, 44, "Закрыть", 1, U_COMMENT_CLOSE);
+}
+
 static void custom_levels_screen(lv_obj_t *root, const OnNetView *v) {
     header(root, "Каталог уровней", "Назад", U_CUSTOM_BACK);
+    button(root, 855, 48, 190, 62, "Аккаунт", 1, U_ACCOUNT_OPEN);
     box(root, 43, 165, 1195, 94, 20, PAPER, 1);
     label(root, 68, 179, 770, 34, "ПУБЛИЧНЫЙ КАТАЛОГ УРОВНЕЙ",
           1, MUTED, LV_TEXT_ALIGN_LEFT);
@@ -749,7 +887,9 @@ static void custom_levels_screen(lv_obj_t *root, const OnNetView *v) {
             lv_obj_t *card = button(root, x, y, 548, 78, "", 1,
                                     U_CUSTOM_LEVEL_BASE + i);
             lv_obj_set_style_border_width(card, 3, 0);
-            lv_obj_set_style_border_color(card, BUTTON_BLACK, 0);
+            lv_obj_set_style_border_color(card,
+                !strcmp(catalog_selected, v->levels[index].id) ? WS_ACCENT :
+                BUTTON_BLACK, 0);
             box(card, 13, 15, 90, 47, 10, BUTTON_GRAY, 0);
             lv_obj_t *id_label = label(card, 15, 17, 86, 43,
                   v->levels[index].id, 1, BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
@@ -781,13 +921,32 @@ static void custom_levels_screen(lv_obj_t *root, const OnNetView *v) {
               "Опубликованные уровни появятся здесь.",
               1, MUTED, LV_TEXT_ALIGN_LEFT);
     }
-    if (pages > 1) {
+    if (catalog_selected[0] && !catalog_dialog) {
+        box(root, 43, 650, 1195, 56, 16, PAPER, 1);
+        button(root, 69, 656, 170, 43, "Играть", 1, U_CUSTOM_PLAY);
+        button(root, 250, 656, 230, 43, "Сообщения", 1, U_COMMENTS_OPEN);
+        if (v->account.signed_in && v->account.admin) {
+            int official = 0;
+            for (int i = 0; i < v->level_count; i++)
+                if (!strcmp(v->levels[i].id, catalog_selected))
+                    official = on_level_is_official(v->levels[i].id,
+                                                    v->levels[i].official);
+            button(root, 494, 656, 250, 43,
+                   official ? "Снять метку" : "Официальный", 1,
+                   U_CUSTOM_OFFICIAL);
+        }
+        button(root, 1040, 656, 170, 43, "Отмена", 1, U_CUSTOM_DESELECT);
+    } else if (pages > 1) {
         button(root, 69, 658, 170, 43, "‹ Назад", 1, U_CUSTOM_PREV);
         char page_text[40];
         snprintf(page_text, sizeof page_text, "%d / %d", custom_level_page + 1, pages);
         label(root, 514, 659, 252, 40, page_text, 1, MUTED, LV_TEXT_ALIGN_CENTER);
         button(root, 1040, 658, 170, 43, "Дальше ›", 1, U_CUSTOM_NEXT);
     }
+    if (catalog_dialog == 1) catalog_draw_account_dialog(root, v);
+    else if (catalog_dialog == 2) catalog_draw_comments_dialog(root, v);
+    /* The shared on-screen keyboard serves the catalog fields too. */
+    if (workshop_keyboard_active) workshop_draw_keyboard_dialog(root);
 }
 
 static void workshop_background(lv_obj_t *root, const char *title) {
@@ -1965,6 +2124,10 @@ static const char *workshop_input_title(void) {
     switch (workshop_input_kind) {
     case WS_INPUT_TITLE: return "Название уровня";
     case WS_INPUT_DESCRIPTION: return "Описание уровня";
+    case WS_INPUT_ACCOUNT_LOGIN: return "Ник · a-z, 0-9 и _";
+    case WS_INPUT_ACCOUNT_PASSWORD: return "Пароль · 6-72 знака";
+    case WS_INPUT_ACCOUNT_BAN_NICK: return "Ник игрока";
+    case WS_INPUT_COMMENT: return "Сообщение · до 300 знаков";
     case WS_INPUT_TRIGGER_GROUP: return "Группа триггера · 0–9999";
     case WS_INPUT_TRIGGER_X: return "Смещение X · −9999…9999";
     case WS_INPUT_TRIGGER_Y: return "Смещение Y · −9999…9999";
@@ -1988,6 +2151,26 @@ static void workshop_finish_keyboard_input(void) {
     if (!workshop_active_textarea) {workshop_cancel_keyboard_input();return;}
     const char *text = lv_textarea_get_text(workshop_active_textarea);
     if (!text) text = "";
+    if (workshop_input_kind == WS_INPUT_ACCOUNT_LOGIN ||
+        workshop_input_kind == WS_INPUT_ACCOUNT_PASSWORD ||
+        workshop_input_kind == WS_INPUT_ACCOUNT_BAN_NICK ||
+        workshop_input_kind == WS_INPUT_COMMENT) {
+        char *target = workshop_input_kind == WS_INPUT_ACCOUNT_LOGIN ?
+            account_login_input : workshop_input_kind == WS_INPUT_ACCOUNT_PASSWORD ?
+            account_password_input : workshop_input_kind == WS_INPUT_ACCOUNT_BAN_NICK ?
+            account_ban_input : comment_input;
+        size_t cap = workshop_input_kind == WS_INPUT_ACCOUNT_PASSWORD ?
+            sizeof account_password_input :
+            workshop_input_kind == WS_INPUT_COMMENT ? sizeof comment_input :
+            sizeof account_login_input;
+        snprintf(target, cap, "%s", text);
+        workshop_keyboard_active = 0;
+        workshop_input_kind = WS_INPUT_NONE;
+        workshop_active_textarea = NULL;
+        workshop_dialog = workshop_input_return_dialog;
+        dirty = 1;
+        return;
+    }
     if (workshop_input_kind == WS_INPUT_TITLE) {
         snprintf(workshop_name, sizeof workshop_name, "%s", text);
     } else if (workshop_input_kind == WS_INPUT_DESCRIPTION) {
@@ -2100,14 +2283,21 @@ static void workshop_keyboard_event(lv_event_t *event) {
 }
 
 static void workshop_open_keyboard_input(int input_kind) {
-    if (workshop_input_is_trigger(input_kind) &&
-        (workshop_selected < 0 || workshop_selected >= workshop_object_count ||
-         workshop_objects[workshop_selected].type != ON_LEVEL_TRIGGER)) return;
-    if (workshop_input_is_geometry(input_kind) && !workshop_selection_count()) return;
+    int account_field = input_kind == WS_INPUT_ACCOUNT_LOGIN ||
+        input_kind == WS_INPUT_ACCOUNT_PASSWORD ||
+        input_kind == WS_INPUT_ACCOUNT_BAN_NICK || input_kind == WS_INPUT_COMMENT;
+    if (!account_field) {
+        if (workshop_input_is_trigger(input_kind) &&
+            (workshop_selected < 0 || workshop_selected >= workshop_object_count ||
+             workshop_objects[workshop_selected].type != ON_LEVEL_TRIGGER)) return;
+        if (workshop_input_is_geometry(input_kind) && !workshop_selection_count()) return;
+    }
     workshop_input_kind = input_kind;
     workshop_input_return_dialog = workshop_dialog;
     workshop_keyboard_active = 1;
-    workshop_text_language = 0;workshop_text_upper = 0;
+    /* Comments are written in the player's language, nicks are latin only. */
+    workshop_text_language = 0;
+    workshop_text_upper = 0;
     workshop_active_textarea = NULL;
     dirty = 1;
 }
@@ -2132,16 +2322,40 @@ static void workshop_draw_keyboard_dialog(lv_obj_t *root) {
     lv_obj_set_style_radius(textarea, 8, 0);
     lv_textarea_set_cursor_click_pos(textarea, true);
     int numeric = workshop_input_kind >= WS_INPUT_TRIGGER_GROUP;
-    lv_textarea_set_one_line(textarea, numeric || workshop_input_kind == WS_INPUT_TITLE);
+    int account_field = workshop_input_kind == WS_INPUT_ACCOUNT_LOGIN ||
+        workshop_input_kind == WS_INPUT_ACCOUNT_PASSWORD ||
+        workshop_input_kind == WS_INPUT_ACCOUNT_BAN_NICK ||
+        workshop_input_kind == WS_INPUT_COMMENT;
+    lv_textarea_set_one_line(textarea, numeric || account_field ||
+                             workshop_input_kind == WS_INPUT_TITLE);
     lv_textarea_set_max_length(textarea,
         workshop_input_kind == WS_INPUT_TITLE ? 80 :
-        workshop_input_kind == WS_INPUT_DESCRIPTION ? 160 : 10);
+        workshop_input_kind == WS_INPUT_DESCRIPTION ? 160 :
+        workshop_input_kind == WS_INPUT_COMMENT ? 300 :
+        account_field ? 24 : 10);
+    if (workshop_input_kind == WS_INPUT_ACCOUNT_PASSWORD)
+        lv_textarea_set_max_length(textarea, 72);
     if (numeric) lv_textarea_set_accepted_chars(textarea, "-0123456789.");
+    /* Nicks are latin letters, digits and underscore: no spaces, no ¢ or ₽. */
+    if (workshop_input_kind == WS_INPUT_ACCOUNT_LOGIN ||
+        workshop_input_kind == WS_INPUT_ACCOUNT_BAN_NICK)
+        lv_textarea_set_accepted_chars(textarea,
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_");
+    if (workshop_input_kind == WS_INPUT_ACCOUNT_PASSWORD)
+        lv_textarea_set_password_mode(textarea, true);
     char initial[ON_LEVEL_DESCRIPTION_SIZE] = {0};
     if (workshop_input_kind == WS_INPUT_TITLE)
         snprintf(initial, sizeof initial, "%s", workshop_name);
     else if (workshop_input_kind == WS_INPUT_DESCRIPTION)
         snprintf(initial, sizeof initial, "%s", workshop_description);
+    else if (workshop_input_kind == WS_INPUT_ACCOUNT_LOGIN)
+        snprintf(initial, sizeof initial, "%s", account_login_input);
+    else if (workshop_input_kind == WS_INPUT_ACCOUNT_PASSWORD)
+        snprintf(initial, sizeof initial, "%s", account_password_input);
+    else if (workshop_input_kind == WS_INPUT_ACCOUNT_BAN_NICK)
+        snprintf(initial, sizeof initial, "%s", account_ban_input);
+    else if (workshop_input_kind == WS_INPUT_COMMENT)
+        snprintf(initial, sizeof initial, "%s", comment_input);
     else if (workshop_input_is_trigger(workshop_input_kind) &&
              workshop_selected >= 0 && workshop_selected < workshop_object_count) {
         const WorkshopObject *o = &workshop_objects[workshop_selected];
@@ -3527,6 +3741,18 @@ static uint32_t state_signature(int phase, const OnNetView *v) {
         h = mix(h, v->levels, (size_t)v->level_count * sizeof v->levels[0]);
         h = mix(h, &v->levels_busy, sizeof v->levels_busy);
         h = mix(h, v->levels_notice, strlen(v->levels_notice));
+        h = mix(h, &v->account, sizeof v->account);
+        h = mix(h, &v->comment_count, sizeof v->comment_count);
+        h = mix(h, v->comments, (size_t)v->comment_count * sizeof v->comments[0]);
+        h = mix(h, &v->account_busy, sizeof v->account_busy);
+        h = mix(h, &v->comments_busy, sizeof v->comments_busy);
+        h = mix(h, v->account_notice, strlen(v->account_notice));
+        h = mix(h, &catalog_dialog, sizeof catalog_dialog);
+        h = mix(h, catalog_selected, strlen(catalog_selected));
+        h = mix(h, account_login_input, strlen(account_login_input));
+        h = mix(h, account_password_input, strlen(account_password_input));
+        h = mix(h, account_ban_input, strlen(account_ban_input));
+        h = mix(h, comment_input, strlen(comment_input));
     } else if (phase == GAME_CUSTOM_PLAY) {
         h = mix(h, v->loaded_level_id, strlen(v->loaded_level_id));
         h = mix(h, v->loaded_level_title, strlen(v->loaded_level_title));
@@ -3901,8 +4127,97 @@ static void pressed(lv_event_t *ev) {
     if (code == U_ROOM_BASE + 9) {page++;dirty = 1;return;}
     if (code >= U_CUSTOM_LEVEL_BASE && code < U_CUSTOM_LEVEL_BASE + 8) {
         int n = code - U_CUSTOM_LEVEL_BASE;
-        if (visible_level_ids[n][0]) game_custom_level_request(visible_level_ids[n]);
+        if (visible_level_ids[n][0]) {
+            /* The first tap picks a level, the action bar below plays it. */
+            snprintf(catalog_selected, sizeof catalog_selected, "%s",
+                     visible_level_ids[n]);
+            dirty = 1;
+        }
         return;
+    }
+    if (code == U_CUSTOM_PLAY) {
+        if (catalog_selected[0]) game_custom_level_request(catalog_selected);
+        dirty = 1;return;
+    }
+    if (code == U_CUSTOM_DESELECT) {catalog_selected[0] = 0;dirty = 1;return;}
+    if (code == U_CUSTOM_OFFICIAL) {
+        if (!catalog_selected[0]) return;
+        OnNetView view;
+        on_net_view(&view);
+        int official = 0;
+        for (int i = 0; i < view.level_count; i++)
+            if (!strcmp(view.levels[i].id, catalog_selected))
+                official = on_level_is_official(view.levels[i].id,
+                                                view.levels[i].official);
+        on_net_level_set_official(catalog_selected, !official);
+        dirty = 1;return;
+    }
+    if (code == U_ACCOUNT_OPEN) {catalog_dialog = 1;dirty = 1;return;}
+    if (code == U_ACCOUNT_CLOSE) {catalog_dialog = 0;dirty = 1;return;}
+    if (code == U_ACCOUNT_SIGN_IN || code == U_ACCOUNT_CREATE) {
+        on_net_account_sign_in(account_login_input, account_password_input,
+                               code == U_ACCOUNT_CREATE);
+        dirty = 1;return;
+    }
+    if (code == U_ACCOUNT_SIGN_OUT) {
+        on_net_account_sign_out();
+        comment_input[0] = 0;
+        dirty = 1;return;
+    }
+    if (code == U_ACCOUNT_LOGIN_FIELD) {
+        workshop_open_keyboard_input(WS_INPUT_ACCOUNT_LOGIN);
+        return;
+    }
+    if (code == U_ACCOUNT_PASSWORD_FIELD) {
+        workshop_open_keyboard_input(WS_INPUT_ACCOUNT_PASSWORD);
+        return;
+    }
+    if (code == U_ACCOUNT_BAN_NICK) {
+        workshop_open_keyboard_input(WS_INPUT_ACCOUNT_BAN_NICK);
+        return;
+    }
+    if (code == U_ACCOUNT_BAN || code == U_ACCOUNT_UNBAN) {
+        if (account_ban_input[0])
+            on_net_account_ban(account_ban_input,
+                               font_translate("Нарушение правил"),
+                               code == U_ACCOUNT_BAN);
+        dirty = 1;return;
+    }
+    if (code == U_COMMENTS_OPEN) {
+        if (!catalog_selected[0]) return;
+        catalog_dialog = 2;
+        comment_input[0] = 0;
+        on_net_comments_load(catalog_selected);
+        dirty = 1;return;
+    }
+    if (code == U_COMMENT_CLOSE) {catalog_dialog = 0;dirty = 1;return;}
+    if (code == U_COMMENT_WRITE) {
+        workshop_open_keyboard_input(WS_INPUT_COMMENT);
+        return;
+    }
+    if (code == U_COMMENT_SEND) {
+        if (catalog_selected[0] && comment_input[0]) {
+            on_net_comment_post(catalog_selected, comment_input);
+            comment_input[0] = 0;
+        }
+        dirty = 1;return;
+    }
+    if (code >= U_COMMENT_HIDE_BASE && code < U_COMMENT_HIDE_BASE + 4) {
+        OnNetView view;
+        int n = code - U_COMMENT_HIDE_BASE;
+        on_net_view(&view);
+        if (catalog_selected[0] && n < view.comment_count)
+            on_net_comment_hide(catalog_selected, view.comments[n].id);
+        dirty = 1;return;
+    }
+    if (code >= U_COMMENT_BAN_BASE && code < U_COMMENT_BAN_BASE + 4) {
+        OnNetView view;
+        int n = code - U_COMMENT_BAN_BASE;
+        on_net_view(&view);
+        if (n < view.comment_count && view.comments[n].login[0])
+            on_net_account_ban(view.comments[n].login,
+                               font_translate("Плохое сообщение"), 1);
+        dirty = 1;return;
     }
     if (code == U_CUSTOM_PREV) {if (custom_level_page > 0) custom_level_page--;dirty = 1;return;}
     if (code == U_CUSTOM_NEXT) {custom_level_page++;dirty = 1;return;}
@@ -4328,6 +4643,19 @@ int lvgl_ui_test_workshop_level(OnPublishedLevel *level) {
     if (!level) return 0;
     workshop_build_preview(level);
     return 1;
+}
+/* Fills the catalog's account fields without driving the on-screen keyboard
+ * key by key; the keyboard itself is covered by the workshop tests. */
+void lvgl_ui_test_set_account_input(const char *login, const char *password) {
+    snprintf(account_login_input, sizeof account_login_input, "%s",
+             login ? login : "");
+    snprintf(account_password_input, sizeof account_password_input, "%s",
+             password ? password : "");
+    dirty = 1;
+}
+void lvgl_ui_test_set_comment_input(const char *text) {
+    snprintf(comment_input, sizeof comment_input, "%s", text ? text : "");
+    dirty = 1;
 }
 #endif
 

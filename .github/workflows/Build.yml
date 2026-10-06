@@ -92,14 +92,17 @@ jobs:
             src/online_rules.c src/online_protocol.c tools/native_online_test.c \
             -o native_online_test -lm
           ./native_online_test /tmp/pvg3-browser-state.json
+          clang -std=c11 -O2 -Wall -Wextra -Werror -Isrc \
+            src/online_account.c tools/native_account_test.c -o native_account_test -lm
+          ./native_account_test
           clang -std=c11 -O2 -Wall -Wextra -Werror -DGAME_TEST -DON_NET_MANUAL -Isrc \
             src/game.c src/font.c src/preferences.c src/online_rules.c src/online_protocol.c \
-            src/online_net.c tools/fake_online_http.c tools/sim_test.c \
+            src/online_account.c src/online_net.c tools/fake_online_http.c tools/sim_test.c \
             -o sim_test -lm -pthread
           ./sim_test
           clang -std=c11 -O2 -Wall -Wextra -Werror -DON_NET_MANUAL -Isrc \
             src/game.c src/font.c src/preferences.c src/online_rules.c src/online_protocol.c \
-            src/online_net.c tools/native_online_integration_test.c \
+            src/online_account.c src/online_net.c tools/native_online_integration_test.c \
             -o native_online_integration_test -lm -pthread
           ./native_online_integration_test
           # Compile our LVGL adapter strictly; vendor C is built with its own
@@ -113,7 +116,8 @@ jobs:
           clang -std=c11 -O1 -D_POSIX_C_SOURCE=200809L -DON_NET_MANUAL \
             -DPVG3_LVGL_TEST -DGAME_TEST -Isrc -Isrc/vendor/lvgl \
             src/game.c src/font.c src/preferences.c src/online_rules.c src/online_protocol.c \
-            src/online_net.c src/lvgl_ui.c tools/native_online_integration_test.c \
+            src/online_account.c src/online_net.c src/lvgl_ui.c \
+            tools/native_online_integration_test.c \
             $LVGL_SOURCES -o lvgl_ui_test -lm -pthread
           if PVG3_TRACE_LVGL=1 PVG3_LVGL_TEST=1 ./lvgl_ui_test; then
             :
@@ -124,12 +128,13 @@ jobs:
             exit "$status"
           fi
           clang -std=c11 -O2 -Wall -Wextra -Werror -Isrc \
-            src/online_rules.c src/online_protocol.c src/online_net.c \
+            src/preferences.c src/online_rules.c src/online_protocol.c \
+            src/online_account.c src/online_net.c \
             tools/native_online_thread_test.c -o native_online_thread_test -lm -pthread
           ./native_online_thread_test
           clang -std=c11 -O2 -Wall -Wextra -Werror -DON_NET_MANUAL -Isrc \
             src/game.c src/font.c src/preferences.c src/online_rules.c src/online_protocol.c \
-            src/online_net.c tools/fake_online_http.c tools/host_test.c \
+            src/online_account.c src/online_net.c tools/fake_online_http.c tools/host_test.c \
             -o host_test -lm -pthread
           ./host_test
           cat /tmp/pvg3-verify.log >&3
@@ -168,7 +173,8 @@ jobs:
           SOURCES=(
             src/game.c src/font.c src/preferences.c src/lvgl_ui.c src/music_wav.c
             src/android_music.c src/android_main.c src/online_rules.c
-            src/online_protocol.c src/online_net.c src/android_online_http.c
+            src/online_protocol.c src/online_account.c src/online_net.c \
+            src/android_online_http.c
             "$GLUE_SRC" "${LVGL_SOURCES[@]}"
           )
           CFLAGS=(-O3 -fPIC -pthread -Isrc -Isrc/vendor/lvgl "-I$GLUE_INC")

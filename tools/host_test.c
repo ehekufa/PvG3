@@ -102,8 +102,46 @@ static void test_legacy_preferences_migration(void) {
     file = fopen(path, "rb");assert(file);
     char saved[96] = {0};
     assert(fgets(saved, sizeof saved, file));
-    assert(strcmp(saved, "PVG3-PREFERENCES 2\n") == 0);
+    assert(strcmp(saved, "PVG3-PREFERENCES 3\n") == 0);
     assert(fclose(file) == 0);
+    preferences_set_path(NULL);
+    assert(remove(path) == 0);
+}
+
+/* The remembered account is the nick plus what the database handed out — never
+ * the password, and never a hand-edited value. */
+static void test_account_preferences(void) {
+    const char *path = "pvg3-account-settings-test.preference";
+    char login[25], token[65], hash[65];
+    remove(path);
+    preferences_set_path(path);
+    assert(!preferences_account_login(login, sizeof login));
+    assert(!preferences_account_admin());
+    preferences_set_account("qwertyuiopaj1234",
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210", 1);
+    assert(preferences_account_login(login, sizeof login));
+    assert(strcmp(login, "qwertyuiopaj1234") == 0);
+    assert(preferences_account_admin() == 1);
+    preferences_set_path(path); /* reload from disk */
+    assert(preferences_account_login(login, sizeof login));
+    assert(strcmp(login, "qwertyuiopaj1234") == 0);
+    assert(preferences_account_token(token, sizeof token));
+    assert(strcmp(token,
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef") == 0);
+    assert(preferences_account_hash(hash, sizeof hash));
+    assert(preferences_account_admin() == 1);
+    preferences_set_account(NULL, NULL, NULL, 0);
+    preferences_set_path(path);
+    assert(!preferences_account_login(login, sizeof login));
+    /* A damaged record simply means «not signed in». */
+    FILE *file = fopen(path, "wb");assert(file);
+    assert(fputs("PVG3-PREFERENCES 3\naccount_login=bad nick\n"
+                 "account_token=zz\naccount_hash=\naccount_admin=1\n", file) >= 0);
+    assert(fclose(file) == 0);
+    preferences_set_path(path);
+    assert(!preferences_account_login(login, sizeof login));
+    assert(!preferences_account_admin());
     preferences_set_path(NULL);
     assert(remove(path) == 0);
 }
@@ -194,6 +232,7 @@ static void write_bmp(const char *path, int w, int h, const uint32_t *rgba) {
 int main(void) {
     test_language_preference();
     test_legacy_preferences_migration();
+    test_account_preferences();
     test_game_preferences();
     preferences_set_neutral_background_enabled(0);
     assert(!preferences_neutral_background_enabled());

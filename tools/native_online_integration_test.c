@@ -95,6 +95,23 @@ static const char *build_room(void) {
     assert(n > 0 && (size_t)n < sizeof room_body);
     return room_body;
 }
+/* A tiny stand-in for the account branches of the database. It mirrors the
+ * decisions firebase/database.rules.json makes, so the native client is tested
+ * against the same contract as the website. */
+typedef struct {
+    int account_written, token_written, ban_written, ban_value;
+    int comment_written, official_written, official_value;
+    int author_written, index_official_written;
+    char account_login[ON_LOGIN_SIZE], account_body[512];
+    char token_login[ON_LOGIN_SIZE], token_body[256];
+    char ban_login[ON_LOGIN_SIZE], ban_body[ON_REASON_SIZE + 256];
+    char comments[8192];
+    char official_level[ON_LEVEL_ID_SIZE], official_body[32];
+    int comment_count;
+} AccountDb;
+static AccountDb accounts;
+static const char *const TEST_ADMIN_LOGIN = "qwertyuiopaj1234";
+
 static int answer(char *response, size_t cap, const char *text, int status) {
     size_t length = strlen(text);
     if (!response || length >= cap) return -2;
@@ -112,16 +129,164 @@ static int level_child_id(const char *path, const char *root,
     memcpy(id, path + n, id_length);id[id_length] = 0;
     return on_protocol_valid_level_id(id);
 }
+/* Splits "<branch>/<key>.json" or "<branch>/<key>/<sub>.json". */
+static int branch_key(const char *path, char branch[32], char key[ON_LOGIN_SIZE],
+                      char sub[ON_COMMENT_ID_SIZE + 8]) {
+    size_t length = path ? strlen(path) : 0;
+    char copy[192];
+    char *slash;
+    if (length < 6 || length >= sizeof copy || strcmp(path + length - 5, ".json"))
+        return 0;
+    memcpy(copy, path, length - 5);
+    copy[length - 5] = 0;
+    slash = strchr(copy, '/');
+    if (!slash) return 0;
+    *slash = 0;
+    if (strlen(copy) >= 32) return 0;
+    strcpy(branch, copy);
+    char *second = strchr(slash + 1, '/');
+    if (second) {
+        *second = 0;
+        if (strlen(slash + 1) >= ON_LOGIN_SIZE) return 0;
+        strcpy(key, slash + 1);
+        if (strlen(second + 1) >= ON_COMMENT_ID_SIZE + 8) return 0;
+        strcpy(sub, second + 1);
+    } else {
+        if (strlen(slash + 1) >= ON_LOGIN_SIZE) return 0;
+        strcpy(key, slash + 1);
+        sub[0] = 0;
+    }
+    return 1;
+}
+
+/* Adds "official":true to one entry of a /levels-index payload, so the catalog
+ * sees the flag a moderator just wrote. */
+static int inject_official(const char *json, const char *id, char *out,
+                           size_t cap) {
+    char key[32];
+    const char *at, *brace, *end;
+    int depth = 0;
+    size_t head;
+    snprintf(key, sizeof key, "\"%s\":", id);
+    at = strstr(json, key);
+    if (!at) return 0;
+    brace = strchr(at + strlen(key) - 1, '{');
+    if (!brace) return 0;
+    end = NULL;
+    for (const char *p = brace; *p; ++p) {
+        if (*p == '{') depth++;
+        else if (*p == '}') {if (--depth == 0) {end = p;break;}}
+    }
+    if (!end) return 0;
+    head = (size_t)(end - json);
+    if (head + strlen(",\"official\":true") + strlen(end) + 1 >= cap) return 0;
+    memcpy(out, json, head);
+    out[head] = 0;
+    strcat(out, ",\"official\":true");
+    strcat(out, end);
+    return 1;
+}
+
 int on_http_request(const char *path, const char *method, const char *body,
                     const char *if_match, char *response, size_t cap) {
     if (!strcmp(path, "levels-index.json") && !strcmp(method, "GET")) {
-        if (!uploaded_index_body[0]) return answer(response, cap, TEST_LEVEL_INDEX, 200);
-        char combined[4096];size_t n = strlen(TEST_LEVEL_INDEX);
-        int used = snprintf(combined, sizeof combined, "%.*s,\"%s\":%s}",
-                            (int)n - 1, TEST_LEVEL_INDEX, uploaded_level_id,
-                            uploaded_index_body);
-        if (used < 0 || (size_t)used >= sizeof combined) return -2;
-        return answer(response, cap, combined, 200);
+        char index_body[4096];
+        if (!uploaded_index_body[0])
+            snprintf(index_body, sizeof index_body, "%s", TEST_LEVEL_INDEX);
+        else {
+            size_t n = strlen(TEST_LEVEL_INDEX);
+            int used = snprintf(index_body, sizeof index_body, "%.*s,\"%s\":%s}",
+                                (int)n - 1, TEST_LEVEL_INDEX, uploaded_level_id,
+                                uploaded_index_body);
+            if (used < 0 || (size_t)used >= sizeof index_body) return -2;
+        }
+        if (accounts.official_written && accounts.index_official_written &&
+            accounts.official_value) {
+            char flagged[4224];
+            if (inject_official(index_body, accounts.official_level, flagged,
+                                sizeof flagged))
+                return answer(response, cap, flagged, 200);
+        }
+        return answer(response, cap, index_body, 200);
+    }
+    {
+        char branch[32], key[ON_LOGIN_SIZE], sub[ON_COMMENT_ID_SIZE + 8];
+        if (branch_key(path, branch, key, sub)) {
+            if (!strcmp(branch, "accounts") && !strcmp(method, "PUT")) {
+                if (if_match && !strcmp(if_match, "null_etag") &&
+                    accounts.account_written && !strcmp(accounts.account_login, key))
+                    return answer(response, cap, "null", 412);
+                if (!body || !strstr(body, "\"hash\":")) return -1;
+                accounts.account_written = 1;
+                snprintf(accounts.account_login, sizeof accounts.account_login,
+                         "%s", key);
+                snprintf(accounts.account_body, sizeof accounts.account_body,
+                         "%s", body);
+                return answer(response, cap, "null", 200);
+            }
+            if (!strcmp(branch, "tokens") && !strcmp(method, "PUT")) {
+                if (!body || !strstr(body, "\"token\":") ||
+                    !accounts.account_written || strcmp(accounts.account_login, key))
+                    return answer(response, cap, "null", 403);
+                accounts.token_written = 1;
+                snprintf(accounts.token_login, sizeof accounts.token_login, "%s", key);
+                snprintf(accounts.token_body, sizeof accounts.token_body, "%s", body);
+                return answer(response, cap, "null", 200);
+            }
+            if (!strcmp(branch, "admins") && !strcmp(method, "GET"))
+                return answer(response, cap,
+                    !strcmp(key, TEST_ADMIN_LOGIN) ? "true" : "null", 200);
+            if (!strcmp(branch, "bans") && !strcmp(method, "PUT")) {
+                if (!body || !strstr(body, "\"banned\":")) return -1;
+                accounts.ban_written = 1;
+                accounts.ban_value = strstr(body, "\"banned\":true") ? 1 : 0;
+                snprintf(accounts.ban_login, sizeof accounts.ban_login, "%s", key);
+                snprintf(accounts.ban_body, sizeof accounts.ban_body, "%s", body);
+                return answer(response, cap, "null", 200);
+            }
+            if (!strcmp(branch, "comments")) {
+                if (!strcmp(method, "GET"))
+                    return answer(response, cap,
+                        accounts.comments[0] ? accounts.comments : "null", 200);
+                if (!strcmp(method, "PUT") && key[0] && sub[0]) {
+                    if (!body || !strstr(body, "\"login\":") ||
+                        !strstr(body, "\"text\":"))
+                        return answer(response, cap, "null", 400);
+                    size_t used = strlen(accounts.comments);
+                    int written = snprintf(accounts.comments + (used ? used - 1 : 0),
+                        sizeof accounts.comments - (used ? used - 1 : 0),
+                        "%s\"%s\":%s}", used ? "," : "{", sub, body);
+                    if (written <= 0) return -2;
+                    accounts.comment_written = 1;
+                    accounts.comment_count++;
+                    return answer(response, cap, "null", 200);
+                }
+            }
+        }
+    }
+    /* Child writes such as levels/<id>/official.json: the flag lives on the
+     * record, so the client never has to re-upload a 20k-object level. */
+    {
+        char branch[32], key[ON_LOGIN_SIZE], sub[ON_COMMENT_ID_SIZE + 8];
+        if (branch_key(path, branch, key, sub) && sub[0] &&
+            (!strcmp(branch, "levels") || !strcmp(branch, "levels-index")) &&
+            !strcmp(method, "PUT")) {
+            int official = !strcmp(sub, "official");
+            int author = !strcmp(sub, "author");
+            if (!official && !author) return -1;
+            if (!body) return answer(response, cap, "null", 400);
+            if (official) {
+                if (!strcmp(branch, "levels")) {
+                    accounts.official_written = 1;
+                    accounts.official_value = strstr(body, "true") ? 1 : 0;
+                    if (!on_protocol_valid_level_id(key)) return -1;
+                    strcpy(accounts.official_level, key);
+                } else accounts.index_official_written = 1;
+                snprintf(accounts.official_body, sizeof accounts.official_body,
+                         "%s", body);
+            } else accounts.author_written = 1;
+            return answer(response, cap, "null", 200);
+        }
     }
     char level_id[ON_LEVEL_ID_SIZE];
     if (level_child_id(path, "levels", level_id)) {
@@ -1657,7 +1822,83 @@ static int run_lvgl_test(void) {
     assert(lvgl_ui_test_label_present("ОФИЦИАЛЬНЫЙ"));
     assert(lvgl_ui_test_label_does_not_wrap("ОФИЦИАЛЬНЫЙ") &&
            lvgl_ui_test_label_does_not_wrap(ON_LEVEL_OFFICIAL_ID));
+    /* ---- accounts, comments and moderation, driven through the LVGL UI ---- */
+    ui_tap(950, 80); /* «Аккаунт» in the catalog header */
+    assert(lvgl_ui_test_label_present("Пароль") &&
+           lvgl_ui_test_label_present("Вы не в аккаунте."));
+    lvgl_ui_test_set_account_input("qwertyuiopaj1234", "my-password");
+    ui_snapshot("account_filled");
+    assert(lvgl_ui_test_label_present("qwertyuiopaj1234") &&
+           lvgl_ui_test_label_present("***********"));
+    ui_tap(1030, 286); /* Создать аккаунт */
+    tick_pump(12);     /* PBKDF2 plus the account, token and admin requests */
+    ui_snapshot("account_signed_in");
+    OnNetView account_view = view();
+    assert(account_view.account.signed_in &&
+           !strcmp(account_view.account.login, "qwertyuiopaj1234"));
+    assert(account_view.account.admin == 1); /* /admins answers true for it */
+    assert(accounts.account_written && strstr(accounts.account_body, "\"hash\":"));
+    assert(accounts.token_written && !strcmp(accounts.token_login,
+                                             "qwertyuiopaj1234"));
+    assert(lvgl_ui_test_label_present("Модератор"));
+    ui_tap(640, 634); /* Закрыть */
+    assert(game_phase() == GAME_CUSTOM_LEVELS);
+
+    /* A tap now picks the level and the action bar starts it, so the catalog
+     * can carry comments and moderation without a second screen. */
     ui_tap(185, 318);tick_pump(3);
+    assert(lvgl_ui_test_label_present("Играть") &&
+           lvgl_ui_test_label_present("Сообщения") &&
+           lvgl_ui_test_label_present("Официальный"));
+    ui_tap(365, 678); /* Сообщения */
+    tick_pump(4);
+    ui_snapshot("comments_empty");
+    assert(lvgl_ui_test_label_present("Сообщений пока нет."));
+    lvgl_ui_test_set_comment_input("Уровень супер!");
+    ui_snapshot("comment_typed");
+    ui_tap(990, 580); /* Отправить */
+    tick_pump(6);
+    ui_snapshot("comments_posted");
+    assert(accounts.comment_written && accounts.comment_count == 1 &&
+           strstr(accounts.comments, "Уровень супер!"));
+    OnNetView commented = view();
+    assert(commented.comment_count == 1 &&
+           !strcmp(commented.comments[0].login, "qwertyuiopaj1234") &&
+           !strcmp(commented.comments[0].text, "Уровень супер!"));
+    assert(!commented.comments[0].hidden);
+    /* A moderator bans the author straight from the comment row. */
+    ui_tap(1035, 186);
+    tick_pump(8);
+    assert(accounts.ban_written && accounts.ban_value == 1 &&
+           !strcmp(accounts.ban_login, "qwertyuiopaj1234"));
+    /* The comment itself is hidden without touching its text. */
+    ui_tap(835, 186); /* Скрыть */
+    tick_pump(6);
+    assert(strstr(accounts.comments, "\"hidden\":true") &&
+           strstr(accounts.comments, "Уровень супер!"));
+    ui_tap(990, 646); /* Закрыть */
+    assert(game_phase() == GAME_CUSTOM_LEVELS);
+    /* The «ОФИЦИАЛЬНЫЙ» badge is written to the level and to its catalog card. */
+    ui_tap(620, 678); /* Официальный */
+    tick_pump(10);
+    assert(accounts.official_written && accounts.official_value == 1 &&
+           accounts.index_official_written && accounts.author_written &&
+           !strcmp(accounts.official_level, "104"));
+    OnNetView official_view = view();
+    int official_now = 0;
+    for (int i = 0; i < official_view.level_count; i++)
+        if (!strcmp(official_view.levels[i].id, "104"))
+            official_now = on_level_is_official(official_view.levels[i].id,
+                                                official_view.levels[i].official);
+    assert(official_now);
+    on_net_account_sign_out();
+    tick_pump(2);
+    assert(!view().account.signed_in);
+
+    ui_tap(185, 318);tick_pump(3);
+    assert(lvgl_ui_test_label_present("Играть") &&
+           lvgl_ui_test_label_present("Сообщения"));
+    ui_tap(150, 678);tick_pump(3);
     assert(game_phase() == GAME_CUSTOM_PLAY);
     lvgl_ui_frame(.016f, ui_pixels);
     assert(!lvgl_ui_test_label_present("Кнопки · WASD"));

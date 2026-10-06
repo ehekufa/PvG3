@@ -101,6 +101,7 @@ jobs:
           mapfile -t LVGL_SOURCES < <(find src/vendor/lvgl/src -name '*.c' | LC_ALL=C sort)
           SOURCES=(
             src/game.c src/font.c src/preferences.c src/online_rules.c src/online_protocol.c
+            src/online_account.c
             "${LVGL_SOURCES[@]}"
           )
           CFLAGS=(-std=c11 -O2 -pthread -finput-charset=UTF-8 -fexec-charset=UTF-8

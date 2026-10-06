@@ -2,6 +2,7 @@
 #define PVG3_ONLINE_NET_H
 
 #include "online_protocol.h"
+#include "online_account.h"
 
 #include <stddef.h>
 
@@ -34,6 +35,14 @@ typedef struct {
      * when the main thread consumes a freshly loaded level. */
     char loaded_level_id[ON_LEVEL_ID_SIZE];
     char loaded_level_title[ON_LEVEL_TITLE_SIZE];
+    /* Accounts, comments and moderation. account.login[0] == 0 means «guest»:
+     * the catalog keeps working exactly as it did before accounts existed. */
+    OnAccount account;
+    OnComment comments[ON_COMMENTS_CAP];
+    int comment_count;
+    char comment_level[ON_LEVEL_ID_SIZE];
+    int account_busy, comments_busy;
+    char account_notice[145];
 } OnNetView;
 
 void on_net_open(void);
@@ -46,6 +55,19 @@ void on_net_level_fetch(const char *id);
 /* Explicit native-workshop action: creates a new public level and index entry. */
 int on_net_level_publish(const OnPublishedLevel *level);
 void on_net_level_cancel(void);
+/* Accounts: the password is stretched on the worker thread and never stored,
+ * so the UI stays responsive while PBKDF2 runs. */
+void on_net_account_sign_in(const char *login, const char *password, int create);
+void on_net_account_sign_out(void);
+/* Comments under the catalog level the player is looking at. */
+void on_net_comments_load(const char *level_id);
+void on_net_comment_post(const char *level_id, const char *text);
+void on_net_comment_hide(const char *level_id, const char *comment_id);
+/* Moderator tools; both are refused unless the signed-in nick is in /admins. */
+void on_net_account_ban(const char *login, const char *reason, int banned);
+void on_net_level_set_official(const char *level_id, int official);
+/* 32 random bytes as lowercase hex, for session tokens and comment ids. */
+void on_net_random_hex(char out[ON_TOKEN_SIZE]);
 /* Copies the pending record to caller-owned storage without exposing worker
  * memory; caller storage should be static/heap-backed for the 20k-object cap. */
 int on_net_take_loaded_level(OnPublishedLevel *out);
