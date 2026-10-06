@@ -25,7 +25,8 @@ static const wchar_t *firebase_host(void) {
     static wchar_t host[128];
     static int ready;
     if (!ready) {
-        const char *ascii = PVG3_DATABASE_HOST;
+        char ascii[192];
+        pvg3_database_host(ascii, sizeof ascii);
         size_t i = 0;
         for (; ascii[i] && i + 1 < sizeof host / sizeof host[0]; ++i)
             host[i] = (wchar_t)(unsigned char)ascii[i];

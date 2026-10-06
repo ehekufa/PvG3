@@ -22,7 +22,7 @@
 окружения):
 
 ```sh
-export PVG3_DATABASE_HOST='pvg3-ae824-default-rtdb.firebaseio.com'
+export PVG3_DATABASE_HOST='<адрес базы>'
 export PVG3_DATABASE_SECRET='…'   # Настройки проекта → Service accounts → Database secrets
 node tools/firebase-admin.mjs rules
 node tools/firebase-admin.mjs show-rules   # проверить, что залилось
@@ -99,18 +99,36 @@ node tools/firebase-admin.mjs list-admins
 
 ## Как спрятать адрес базы и секреты сборки
 
-Адрес базы по умолчанию лежит в исходниках, чтобы свежий клон собирался сразу.
-Чтобы в git не хранились ваши значения:
+Адрес, который лежит в git, **закодирован**: это hex от «каждый байт адреса XOR
+ключ» (`PVG3_DATABASE_HOST_ENC` + `PVG3_DATABASE_HOST_KEY` в
+`src/online_config.h` и `ENCODED_HOST` + `HOST_KEY` в
+`online/firebase-config.js`). Клиент раскодирует его при старте. Честно: ключ
+лежит рядом со значением, поэтому это **скрытие, а не настоящее шифрование** —
+тот, кто разберёт APK или откроет скрипт, адрес получит. Настоящая защита —
+адрес вообще не попадает в git, а приходит на сборку:
 
-1. Скопируйте `src/online_config_secret.h.example` в `src/online_config_secret.h`
-   и `online/firebase-secret.example.js` в `online/firebase-secret.js`, впишите
-   свой адрес и (если нужен) токен `?auth=`. Оба файла в `.gitignore`.
-2. В GitHub: Settings → Secrets and variables → Actions → New repository secret:
-   `PVG3_DATABASE_HOST` и `PVG3_DATABASE_AUTH`. Если секретов нет, сборка идёт
-   со значениями по умолчанию.
+1. Свой адрес (и, если нужен, токен `?auth=`) задайте либо локально
+
+   ```sh
+   PVG3_DATABASE_HOST='<ваш адрес>' PVG3_DATABASE_AUTH='' sh tools/write_online_config.sh
+   ```
+
+   — скрипт запишет `src/online_config_secret.h` и `online/firebase-secret.js`
+   (оба в `.gitignore`), либо в GitHub: Settings → Secrets and variables →
+   Actions → New repository secret: `PVG3_DATABASE_HOST` и
+   `PVG3_DATABASE_AUTH`. Оба пайплайна вызывают тот же скрипт перед сборкой;
+   если секретов нет, берётся закодированное значение по умолчанию.
+2. Скопировать примеры вручную тоже можно:
+   `src/online_config_secret.h.example` → `src/online_config_secret.h`,
+   `online/firebase-secret.example.js` → `online/firebase-secret.js`.
+3. Перекодировать адрес по-своему:
+   `sh tools/write_online_config.sh --encode <адрес> <ключ>` — выведет пару
+   «key/hex», которую нужно вставить в оба файла конфигурации.
 
 Сами секреты (`PVG3_DATABASE_SECRET`, `PVG3_KEYSTORE_BASE64`, …) в репозитории
-не хранятся и в артефакты не попадают.
+не хранятся, в артефакты не попадают и в чаты не уходят: их вводите только вы.
+`tools/firebase-admin.mjs` читает их из переменных окружения и не имеет
+значений по умолчанию.
 
 ## Честные ограничения
 

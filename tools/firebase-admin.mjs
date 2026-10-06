@@ -4,7 +4,7 @@
  * The database secret never lives in the repository: it is read from the
  * environment, so nothing private can be committed by accident.
  *
- *   export PVG3_DATABASE_HOST='pvg3-ae824-default-rtdb.firebaseio.com'
+ *   export PVG3_DATABASE_HOST='<адрес базы>'
  *   export PVG3_DATABASE_SECRET='…'   # Project settings → Service accounts →
  *                                     # Database secrets (Realtime Database)
  *
@@ -22,7 +22,7 @@
  */
 import {readFileSync} from 'node:fs';
 
-const host = process.env.PVG3_DATABASE_HOST || 'pvg3-ae824-default-rtdb.firebaseio.com';
+const host = process.env.PVG3_DATABASE_HOST || '';
 const secret = process.env.PVG3_DATABASE_SECRET || '';
 const rulesPath = new URL('../firebase/database.rules.json', import.meta.url);
 
@@ -45,11 +45,14 @@ const [command, ...rest] = process.argv.slice(2);
 
 if (!command || ['-h', '--help', 'help'].includes(command)) {
   console.log(readFileSync(new URL(import.meta.url), 'utf8')
-    .split('*/')[0].replace(/^\/\*!?\s*/, ''));
+    .split('*/')[0].replace(/^#!.*\n/, '').replace(/^\/\*!?\s*/, '')
+    .replace(/^ \* ?/gm, '').trim() + '\n');
   process.exit(0);
 }
-if (!secret && command !== 'help')
-  die('Set PVG3_DATABASE_SECRET (and optionally PVG3_DATABASE_HOST) first.');
+if (!host) die('Set PVG3_DATABASE_HOST to your database host first,\n'
+  + 'for example: export PVG3_DATABASE_HOST=\'<project>-default-rtdb.firebaseio.com\'');
+if (!secret) die('Set PVG3_DATABASE_SECRET first (Project settings → Service '
+  + 'accounts → Database secrets).');
 
 const nick = rest[0] || '';
 const reason = rest.slice(1).join(' ').slice(0, 140);

@@ -8,7 +8,19 @@
 #include <stdio.h>
 #include <string.h>
 
-#define BASE "https://" PVG3_DATABASE_HOST "/"
+/* The configured address is decoded once, then reused for every request. */
+static const char *base_url(void) {
+    static char base[256];
+    static int ready;
+    if (!ready) {
+        char host[192];
+        pvg3_database_host(host, sizeof host);
+        snprintf(base, sizeof base, "https://%s/", host);
+        ready = 1;
+    }
+    return base;
+}
+#define BASE base_url()
 static JavaVM *vm;
 void android_online_set_vm(JavaVM *jvm) { vm = jvm; }
 
