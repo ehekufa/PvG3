@@ -19,20 +19,59 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Check preinstalled Android toolchain
+        id: android-toolchain
         run: |
+          set -euo pipefail
           test -f "$ANDROID_HOME/platforms/android-34/android.jar"
           test -x "$ANDROID_HOME/build-tools/34.0.0/aapt"
           test -d "$ANDROID_NDK_ROOT"
-          echo "SDK=$ANDROID_HOME NDK=$ANDROID_NDK_ROOT"
+          NDK_CLANG="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang"
+          test -x "$NDK_CLANG"
+          COMPILER_VERSION="$("$NDK_CLANG" --version | head -n 1)"
+          COMPILER_HASH="$(printf '%s' "$COMPILER_VERSION" | sha256sum | cut -d' ' -f1)"
+          echo "compiler=$COMPILER_HASH" >> "$GITHUB_OUTPUT"
+          echo "SDK=$ANDROID_HOME NDK=$ANDROID_NDK_ROOT Clang=$COMPILER_VERSION"
 
-      - name: Verify artwork, licensed font, UI, saves and gameplay
+      - name: Install ccache
+        env:
+          CCACHE_DIR: ${{ runner.temp }}/pvg3-ccache
+          CCACHE_COMPILERCHECK: "%compiler% --version"
+          CCACHE_MAXSIZE: 2G
         run: |
+          if ! command -v ccache >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y ccache
+          fi
+          ccache --version
+          ccache --max-size=2G
+
+      - name: Restore native compilation cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/pvg3-ccache
+          key: pvg3-android-ccache-v1-${{ runner.os }}-${{ steps.android-toolchain.outputs.compiler }}-${{ hashFiles('.github/workflows/Build.yml', 'src/**/*.c', 'src/**/*.h') }}
+          restore-keys: |
+            pvg3-android-ccache-v1-${{ runner.os }}-
+
+      - name: Verify artwork, licensed font, UI, saves and gameplay (Clang)
+        run: |
+          exec 3>&1
+          exec > /tmp/pvg3-verify.log 2>&1
+          verify_failed() {
+            local status="$1" command="$2"
+            local details
+            details=$(tail -n 80 /tmp/pvg3-verify.log | python3 -c 'import sys; s=sys.stdin.read(); print(s.replace("%", "%25").replace(chr(13), "%0D").replace(chr(10), "%0A"), end="")')
+            printf '::error title=Verification command failed::%s%%0A%s\n' "$command" "$details" >&3
+            exit "$status"
+          }
+          trap 'verify_failed "$?" "$BASH_COMMAND"' ERR
+          clang --version
           python3 tools/pack_sprites.py
           python3 tools/pack_font.py
           python3 tools/check_art_roles.py
           python3 tools/compose_music.py --check
           git diff --exit-code -- src/sprites_data.h src/font_data.h
-          gcc -std=c11 -O2 -Wall -Wextra -Werror -Isrc \
+          clang -std=c11 -O2 -Wall -Wextra -Werror -Isrc \
             src/music_wav.c tools/music_test.c -o music_test -lm
           ./music_test
           node --test online/test/*.test.js
@@ -42,47 +81,60 @@ jobs:
           test -s src/vendor/lvgl/LICENCE.txt
           test -s src/vendor/lvgl/src/libs/tiny_ttf/LICENSE.txt
           node tools/emit_online_fixture.mjs > /tmp/pvg3-browser-state.json
-          gcc -std=c11 -O2 -Wall -Wextra -Werror -Isrc \
+          clang -std=c11 -O2 -Wall -Wextra -Werror -Isrc \
             src/online_rules.c src/online_protocol.c tools/native_online_test.c \
             -o native_online_test -lm
           ./native_online_test /tmp/pvg3-browser-state.json
-          gcc -std=c11 -O2 -Wall -Wextra -Werror -DGAME_TEST -DON_NET_MANUAL -Isrc \
-            src/game.c src/font.c src/online_rules.c src/online_protocol.c \
+          clang -std=c11 -O2 -Wall -Wextra -Werror -DGAME_TEST -DON_NET_MANUAL -Isrc \
+            src/game.c src/font.c src/preferences.c src/online_rules.c src/online_protocol.c \
             src/online_net.c tools/fake_online_http.c tools/sim_test.c \
             -o sim_test -lm -pthread
           ./sim_test
-          gcc -std=c11 -O2 -Wall -Wextra -Werror -DON_NET_MANUAL -Isrc \
-            src/game.c src/font.c src/online_rules.c src/online_protocol.c \
+          clang -std=c11 -O2 -Wall -Wextra -Werror -DON_NET_MANUAL -Isrc \
+            src/game.c src/font.c src/preferences.c src/online_rules.c src/online_protocol.c \
             src/online_net.c tools/native_online_integration_test.c \
             -o native_online_integration_test -lm -pthread
           ./native_online_integration_test
           # Compile our LVGL adapter strictly; vendor C is built with its own
           # configuration and exercised by native pointer + fake-REST tests.
-          gcc -std=c11 -O2 -Wall -Wextra -Werror -Isrc -Isrc/vendor/lvgl \
+          clang -std=c11 -O2 -Wall -Wextra -Werror -Isrc -Isrc/vendor/lvgl \
             -c src/lvgl_ui.c -o /tmp/pvg3-lvgl-ui.o
-          gcc -std=c11 -O2 -Wall -Wextra -Werror -Isrc -Isrc/vendor/lvgl \
+          clang -std=c11 -O2 -Wall -Wextra -Werror -Isrc -Isrc/vendor/lvgl \
             -DPVG3_LVGL_TEST -DGAME_TEST -c tools/native_online_integration_test.c \
             -o /tmp/pvg3-lvgl-ui-test.o
           LVGL_SOURCES="$(find src/vendor/lvgl/src -name '*.c' | LC_ALL=C sort)"
-          gcc -std=c11 -O1 -D_POSIX_C_SOURCE=200809L -DON_NET_MANUAL \
+          clang -std=c11 -O1 -D_POSIX_C_SOURCE=200809L -DON_NET_MANUAL \
             -DPVG3_LVGL_TEST -DGAME_TEST -Isrc -Isrc/vendor/lvgl \
-            src/game.c src/font.c src/online_rules.c src/online_protocol.c \
+            src/game.c src/font.c src/preferences.c src/online_rules.c src/online_protocol.c \
             src/online_net.c src/lvgl_ui.c tools/native_online_integration_test.c \
             $LVGL_SOURCES -o lvgl_ui_test -lm -pthread
-          PVG3_LVGL_TEST=1 ./lvgl_ui_test
-          gcc -std=c11 -O2 -Wall -Wextra -Werror -Isrc \
+          if PVG3_TRACE_LVGL=1 PVG3_LVGL_TEST=1 ./lvgl_ui_test; then
+            :
+          else
+            status=$?
+            details=$(tail -n 80 /tmp/pvg3-verify.log | python3 -c 'import sys; s=sys.stdin.read(); print(s.replace("%", "%25").replace(chr(13), "%0D").replace(chr(10), "%0A"), end="")')
+            printf '::error title=LVGL integration test failed::exit %s%%0A%s\n' "$status" "$details" >&3
+            exit "$status"
+          fi
+          clang -std=c11 -O2 -Wall -Wextra -Werror -Isrc \
             src/online_rules.c src/online_protocol.c src/online_net.c \
             tools/native_online_thread_test.c -o native_online_thread_test -lm -pthread
           ./native_online_thread_test
-          gcc -std=c11 -O2 -Wall -Wextra -Werror -DON_NET_MANUAL -Isrc \
-            src/game.c src/font.c src/online_rules.c src/online_protocol.c \
+          clang -std=c11 -O2 -Wall -Wextra -Werror -DON_NET_MANUAL -Isrc \
+            src/game.c src/font.c src/preferences.c src/online_rules.c src/online_protocol.c \
             src/online_net.c tools/fake_online_http.c tools/host_test.c \
             -o host_test -lm -pthread
           ./host_test
+          cat /tmp/pvg3-verify.log >&3
 
       - name: Build native library (both ABIs)
+        env:
+          CCACHE_DIR: ${{ runner.temp }}/pvg3-ccache
+          CCACHE_BASEDIR: ${{ github.workspace }}
+          CCACHE_COMPILERCHECK: "%compiler% --version"
+          CCACHE_MAXSIZE: 2G
         run: |
-          set -e
+          set -euo pipefail
           # NDK предустановлен на раннере ($ANDROID_NDK_ROOT).
           NDK="${ANDROID_NDK_ROOT:-$(ls -d "$ANDROID_HOME"/ndk/* 2>/dev/null | head -1)}"
           echo "NDK=$NDK"
@@ -104,22 +156,45 @@ jobs:
 
           TC="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
           mkdir -p staging/lib/arm64-v8a staging/lib/armeabi-v7a
-          LVGL_SOURCES="$(find src/vendor/lvgl/src -name '*.c' | LC_ALL=C sort)"
-          SRC="src/game.c src/font.c src/lvgl_ui.c src/music_wav.c src/android_music.c src/android_main.c src/online_rules.c src/online_protocol.c src/online_net.c src/android_online_http.c $GLUE_SRC $LVGL_SOURCES"
-          CFLAGS="-O3 -s -fPIC -pthread -Isrc -Isrc/vendor/lvgl -I$GLUE_INC"
-          LIBS="-landroid -laaudio -llog -lEGL -lGLESv2 -lm"
+          mkdir -p "$RUNNER_TEMP/pvg3-objects"
+          mapfile -t LVGL_SOURCES < <(find src/vendor/lvgl/src -name '*.c' | LC_ALL=C sort)
+          SOURCES=(
+            src/game.c src/font.c src/preferences.c src/lvgl_ui.c src/music_wav.c
+            src/android_music.c src/android_main.c src/online_rules.c
+            src/online_protocol.c src/online_net.c src/android_online_http.c
+            "$GLUE_SRC" "${LVGL_SOURCES[@]}"
+          )
+          CFLAGS=(-O3 -fPIC -pthread -Isrc -Isrc/vendor/lvgl "-I$GLUE_INC")
+          LIBS=(-landroid -laaudio -llog -lEGL -lGLESv2 -lm)
 
           echo ":: Checking native Android HTTPS/JNI with strict warnings"
-          "$TC/aarch64-linux-android29-clang" -std=c11 -Wall -Wextra -Werror \
+          ccache "$TC/aarch64-linux-android29-clang" -std=c11 -Wall -Wextra -Werror \
             -Isrc -c src/android_online_http.c -o /tmp/pvg3-android-online-http.o
 
+          build_abi() {
+            local abi="$1" compiler="$2" output="$3"
+            local object_dir="$RUNNER_TEMP/pvg3-objects/$abi"
+            local index
+            local -a objects=()
+            mkdir -p "$object_dir"
+            for index in "${!SOURCES[@]}"; do
+              local object="$object_dir/$index.o"
+              ccache "$compiler" "${CFLAGS[@]}" -c "${SOURCES[$index]}" -o "$object"
+              objects+=("$object")
+            done
+            echo ":: Linking $abi"
+            "$compiler" -O3 -shared -s -pthread "${objects[@]}" "${LIBS[@]}" -o "$output"
+          }
+
           echo ":: Compiling arm64-v8a (64-bit)"
-          "$TC/aarch64-linux-android29-clang" $CFLAGS -shared $SRC $LIBS \
-            -o staging/lib/arm64-v8a/libpvg3.so
+          build_abi arm64-v8a "$TC/aarch64-linux-android29-clang" \
+            staging/lib/arm64-v8a/libpvg3.so
 
           echo ":: Compiling armeabi-v7a (32-bit)"
-          "$TC/armv7a-linux-androideabi29-clang" $CFLAGS -shared $SRC $LIBS \
-            -o staging/lib/armeabi-v7a/libpvg3.so
+          build_abi armeabi-v7a "$TC/armv7a-linux-androideabi29-clang" \
+            staging/lib/armeabi-v7a/libpvg3.so
+
+          ccache --show-stats
 
       - name: Prepare persistent Android signing key
         env:

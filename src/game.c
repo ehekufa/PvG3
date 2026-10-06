@@ -9,7 +9,9 @@
 #include "game.h"
 #include "game_view.h"
 #include "font.h"
+#include "preferences.h"
 #include "online_net.h"
+#include "online_particle.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -26,6 +28,7 @@ static int use_lvgl_ui;
 
 /* Constant-friendly color macro (usable in static initializers AND runtime). */
 #define COL(r,g,b) (0xFF000000u | ((b)<<16) | ((g)<<8) | (r))
+
 
 static inline void setpix(int x, int y, uint32_t c) {
     if ((unsigned)x < GAME_W && (unsigned)y < GAME_H)
@@ -124,8 +127,23 @@ _Static_assert((int)PV_ART_BREAD == (int)SPR_KHLEBUSHEK &&
                (int)PV_ART_LEVEL_TRIGGER == (int)SPR_LEVEL_TRIGGER &&
                (int)PV_ART_LEVEL_TRIGGER_ROTATE == (int)SPR_LEVEL_TRIGGER_ROTATE &&
                (int)PV_ART_LEVEL_TRIGGER_FOREVER == (int)SPR_LEVEL_TRIGGER_FOREVER &&
+               (int)PV_ART_LEVEL_TRIGGER_INVISIBILITY == (int)SPR_LEVEL_TRIGGER_INVISIBILITY &&
+               (int)PV_ART_LEVEL_TRIGGER_NO_COLLISION == (int)SPR_LEVEL_TRIGGER_NO_COLLISION &&
                (int)PV_ART_LEVEL_FLAG == (int)SPR_LEVEL_FLAG &&
                (int)PV_ART_LEVEL_SPIKE == (int)SPR_LEVEL_SPIKE &&
+               (int)PV_ART_LEVEL_SLOPE == (int)SPR_LEVEL_SLOPE &&
+               (int)PV_ART_LEVEL_TRIGGER_GRAVITY == (int)SPR_LEVEL_TRIGGER_GRAVITY &&
+               (int)PV_ART_LEVEL_ORB_ORANGE == (int)SPR_LEVEL_ORB_ORANGE &&
+               (int)PV_ART_LEVEL_ORB_YELLOW == (int)SPR_LEVEL_ORB_YELLOW &&
+               (int)PV_ART_LEVEL_CHECKPOINT_INACTIVE == (int)SPR_LEVEL_CHECKPOINT_INACTIVE &&
+               (int)PV_ART_LEVEL_CHECKPOINT_ACTIVE == (int)SPR_LEVEL_CHECKPOINT_ACTIVE &&
+               (int)PV_ART_LEVEL_PORTAL_NORMAL == (int)SPR_LEVEL_PORTAL_NORMAL &&
+               (int)PV_ART_LEVEL_PORTAL_JETPACK == (int)SPR_LEVEL_PORTAL_JETPACK &&
+               (int)PV_ART_JETPACK_ACTIVE == (int)SPR_JETPACK_ACTIVE &&
+               (int)PV_ART_JETPACK_INACTIVE == (int)SPR_JETPACK_INACTIVE &&
+               (int)PV_ART_LEVEL_TRIGGER_COLOR == (int)SPR_LEVEL_TRIGGER_COLOR &&
+               (int)PV_ART_WORKSHOP_ROTATE == (int)SPR_WORKSHOP_ROTATE &&
+               (int)PV_ART_COLOR_WHEEL == (int)SPR_COLOR_WHEEL &&
                (int)PV_ART_COUNT == (int)SPR_COUNT,
                "LVGL art IDs must match the PNG packer");
 static uint32_t *sprite_pixels[SPR_COUNT];
@@ -164,8 +182,22 @@ const uint32_t *game_art_rgba(int id, int *width, int *height) {
     return sprite_pixels[id];
 }
 
-static void sprite_crop(int id, int x, int y, int w, int h,
-                        int sx, int sy, int sw, int sh, int flip) {
+static uint32_t sprite_tinted_pixel(uint32_t source, uint32_t tint, int opacity) {
+    if (opacity <= 0) return source;
+    if (opacity > 255) opacity = 255;
+    int inverse = 255 - opacity;
+    int r = ((source & 255u) * inverse + (tint & 255u) * opacity + 127) / 255;
+    int g = (((source >> 8) & 255u) * inverse +
+             ((tint >> 8) & 255u) * opacity + 127) / 255;
+    int b = (((source >> 16) & 255u) * inverse +
+             ((tint >> 16) & 255u) * opacity + 127) / 255;
+    return (source & 0xff000000u) | ((uint32_t)b << 16) |
+           ((uint32_t)g << 8) | (uint32_t)r;
+}
+static void sprite_crop_flipped_tinted(int id, int x, int y, int w, int h,
+                                       int sx, int sy, int sw, int sh,
+                                       int flip_x, int flip_y,
+                                       uint32_t tint, int tint_opacity) {
     if (id < 0 || id >= SPR_COUNT || !sprite_pixels[id] || w <= 0 || h <= 0 ||
         sw <= 0 || sh <= 0) return;
     const SpritePacked *sp = &SPRITE_DATA[id];
@@ -173,28 +205,51 @@ static void sprite_crop(int id, int x, int y, int w, int h,
     int x1 = x + w > GAME_W ? GAME_W : x + w;
     int y1 = y + h > GAME_H ? GAME_H : y + h;
     for (int dy = y0; dy < y1; dy++) {
-        int src_y = sy + (dy - y) * sh / h;
+        int sample_y = (dy - y) * sh / h;
+        int src_y = sy + (flip_y ? sh - 1 - sample_y : sample_y);
         if ((unsigned)src_y >= (unsigned)sp->h) continue;
         const uint32_t *src = sprite_pixels[id] + src_y * sp->w;
         uint32_t *dst = FB + dy * GAME_W;
         for (int dx = x0; dx < x1; dx++) {
-            int src_x = sx + (dx - x) * sw / w;
-            if (flip) src_x = sx + sw - 1 - (dx - x) * sw / w;
+            int sample_x = (dx - x) * sw / w;
+            int src_x = sx + (flip_x ? sw - 1 - sample_x : sample_x);
             if ((unsigned)src_x >= (unsigned)sp->w) continue;
-            uint32_t color = src[src_x];
+            uint32_t color = sprite_tinted_pixel(src[src_x], tint, tint_opacity);
             int alpha = color >> 24;
             if (alpha == 255) dst[dx] = color;
             else if (alpha) dst[dx] = blend(dst[dx], color, alpha);
         }
     }
 }
-
+static void sprite_crop_flipped(int id, int x, int y, int w, int h,
+                                int sx, int sy, int sw, int sh,
+                                int flip_x, int flip_y) {
+    sprite_crop_flipped_tinted(id, x, y, w, h, sx, sy, sw, sh,
+                               flip_x, flip_y, 0, 0);
+}
+static void sprite_crop(int id, int x, int y, int w, int h,
+                        int sx, int sy, int sw, int sh, int flip) {
+    sprite_crop_flipped(id, x, y, w, h, sx, sy, sw, sh, flip, 0);
+}
 static void sprite_draw(int id, int x, int y, int w, int h, int flip) {
     sprite_crop(id, x, y, w, h, 0, 0, SPRITE_DATA[id].w,
                 SPRITE_DATA[id].h, flip);
 }
-static void sprite_draw_rotated(int id, int x, int y, int w, int h, float degrees) {
-    if (fabsf(degrees) < .01f) {sprite_draw(id, x, y, w, h, 0);return;}
+static void sprite_draw_tinted_flipped(int id, int x, int y, int w, int h,
+                                       int flip_x, int flip_y,
+                                       uint32_t tint, int tint_opacity) {
+    if (id < 0 || id >= SPR_COUNT) return;
+    sprite_crop_flipped_tinted(id, x, y, w, h, 0, 0,
+        SPRITE_DATA[id].w, SPRITE_DATA[id].h, flip_x, flip_y,
+        tint, tint_opacity);
+}
+static void sprite_draw_rotated_tinted_flipped(int id, int x, int y, int w, int h,
+                                               float degrees, int flip_x, int flip_y,
+                                               uint32_t tint, int tint_opacity) {
+    if (fabsf(degrees) < .01f) {
+        sprite_draw_tinted_flipped(id, x, y, w, h, flip_x, flip_y,
+                                  tint, tint_opacity);return;
+    }
     if (id < 0 || id >= SPR_COUNT || !sprite_pixels[id] || w <= 0 || h <= 0) return;
     const SpritePacked *sp = &SPRITE_DATA[id];
     float radians = degrees * 0.01745329251994329577f;
@@ -212,19 +267,32 @@ static void sprite_draw_rotated(int id, int x, int y, int w, int h, float degree
         float dx = px + .5f - cx, dy = py + .5f - cy;
         float local_x = c * dx + s * dy;
         float local_y = -s * dx + c * dy;
+        if (flip_x) local_x = -local_x;
+        if (flip_y) local_y = -local_y;
         if (local_x < -half_w || local_x >= half_w ||
             local_y < -half_h || local_y >= half_h) continue;
         int sx = (int)((local_x + half_w) * sp->w / w);
         int sy = (int)((local_y + half_h) * sp->h / h);
         if ((unsigned)sx >= (unsigned)sp->w || (unsigned)sy >= (unsigned)sp->h) continue;
-        uint32_t color = sprite_pixels[id][sy * sp->w + sx];
+        uint32_t color = sprite_tinted_pixel(
+            sprite_pixels[id][sy * sp->w + sx], tint, tint_opacity);
         int alpha = color >> 24;
         uint32_t *dst = FB + py * GAME_W + px;
         if (alpha == 255) *dst = color;
         else if (alpha) *dst = blend(*dst, color, alpha);
     }
 }
-
+static void sprite_draw_flipped(int id, int x, int y, int w, int h,
+                                int flip_x, int flip_y) {
+    if (id < 0 || id >= SPR_COUNT) return;
+    sprite_crop_flipped(id, x, y, w, h, 0, 0,
+        SPRITE_DATA[id].w, SPRITE_DATA[id].h, flip_x, flip_y);
+}
+static void sprite_draw_rotated_flipped(int id, int x, int y, int w, int h,
+                                        float degrees, int flip_x, int flip_y) {
+    sprite_draw_rotated_tinted_flipped(id, x, y, w, h, degrees,
+                                       flip_x, flip_y, 0, 0);
+}
 /* ------------------------------------------------------------------ */
 /* Real, anti-aliased PT Sans font (embedded OFL TrueType).             */
 /* ------------------------------------------------------------------ */
@@ -415,19 +483,37 @@ static int book_enemy_tab;              /* the five plants or illustrated foes *
 static OnMatch online_match;
 static OnNetView online_view;
 static OnPublishedLevel custom_level;
-static OnLevelObject custom_objects[ON_LEVEL_OBJECT_CAP];
+#define CUSTOM_BACKGROUND_DEFAULT 0x32465au
+#define CUSTOM_FALL_MARGIN_TILES 3.0f
 static int custom_object_count, custom_level_active, custom_level_won, custom_level_coins;
+static uint32_t custom_background_color = CUSTOM_BACKGROUND_DEFAULT;
+static float custom_fall_plane_y;
+static int custom_player_dead;
+static int custom_player_index = -1;
+#define CUSTOM_ID_MAP_CAP 65536
+static int custom_id_map[CUSTOM_ID_MAP_CAP];
 static float custom_player_x, custom_player_y, custom_player_w, custom_player_h;
 static float custom_player_vx, custom_player_vy;
-static int custom_player_grounded, custom_control_axis, custom_jump_request;
-static int custom_jump_held, custom_trigger_request, custom_trigger_held;
+static float custom_respawn_x, custom_respawn_y;
+static int custom_checkpoint_id;
+static float custom_gravity = 1450.0f;
+static float custom_elapsed_time;
+static int custom_player_grounded, custom_control_axis, custom_control_vertical;
+static int custom_player_facing_left;
+static int custom_jump_request, custom_jump_held, custom_trigger_request, custom_trigger_held;
+static int custom_jetpack_mode, custom_jetpack_active;
+static uint8_t custom_portal_inside[ON_LEVEL_OBJECT_CAP];
 static uint8_t custom_trigger_fired[ON_LEVEL_OBJECT_CAP];
 static uint8_t custom_trigger_active[ON_LEVEL_OBJECT_CAP];
 static float custom_trigger_timers[ON_LEVEL_OBJECT_CAP];
+static uint8_t custom_collision_disabled[ON_LEVEL_OBJECT_CAP];
+static uint8_t custom_invisible[ON_LEVEL_OBJECT_CAP];
+static int custom_player_collision_enabled;
 /* A timed rotation completes one full turn per second. */
 #define CUSTOM_GROUP_ROTATION_DEGREES_PER_SECOND 360.0f
-typedef struct {int group_id;float remaining;} CustomGroupRotation;
+typedef struct {int group_id;float remaining, frame_step;} CustomGroupRotation;
 static CustomGroupRotation custom_group_rotations[ON_LEVEL_OBJECT_CAP];
+static int custom_group_rotation_slots[10000];
 static int custom_group_rotation_count;
 static float custom_camera_x, custom_camera_y;
 static int online_has_match;
@@ -461,6 +547,7 @@ void game_set_lvgl_ui(int enabled) {
 
 static int custom_platformer_start(const OnPublishedLevel *level);
 static void custom_platformer_stop(void);
+static void custom_fire_triggers(int event);
 static void custom_platformer_update(float dt);
 static void custom_platformer_draw(void);
 
@@ -520,6 +607,15 @@ void game_custom_control(int horizontal, int jump, int trigger) {
     custom_jump_held = !!jump;
     custom_trigger_held = !!trigger;
 }
+void game_custom_vertical_control(int vertical) {
+    if (vertical < -1) vertical = -1;
+    if (vertical > 1) vertical = 1;
+    custom_control_vertical = vertical;
+}
+int game_custom_jetpack_mode(void) {
+    return custom_level_active && custom_jetpack_mode;
+}
+int game_custom_player_dead(void) { return custom_player_dead; }
 
 static float spawn_t;
 static int to_spawn;
@@ -763,7 +859,6 @@ void game_init(void) {
     on_net_shutdown(); /* safe even when no room was ever opened */
     custom_platformer_stop();
     memset(&custom_level, 0, sizeof custom_level);
-    memset(&custom_objects, 0, sizeof custom_objects);
     custom_object_count = custom_level_won = custom_level_coins = 0;
     memset(&online_match, 0, sizeof(online_match));
     memset(&online_view, 0, sizeof(online_view));
@@ -1431,7 +1526,10 @@ void game_input_press(int x, int y) {
 
 void game_input_release(int x, int y) {
     (void)x;(void)y;
-    if (phase == PH_CUSTOM_PLAY) game_custom_control(0, 0, 0);
+    if (phase == PH_CUSTOM_PLAY) {
+        game_custom_control(0, 0, 0);
+        game_custom_vertical_control(0);
+    }
 }
 
 int game_legacy_plant_drag(int screen_phase, int from_x, int from_y,
@@ -1487,6 +1585,16 @@ static void draw_background(void) {
         scene_level == WATER_LEVEL &&
         (phase == PH_PLAY || phase == PH_LEVEL_CLEAR ||
          phase == PH_LOSE || phase == PH_WIN || phase == PH_ONLINE_MATCH);
+    if (preferences_neutral_background_enabled()) {
+        /* A muted blue board keeps the original garden artwork distinct. */
+        rect(0, 0, GAME_W - 1, GAME_H - 1, COL(45, 65, 85));
+        rect(LAWN_X, LAWN_Y, GAME_W - 1,
+             LAWN_Y + ROWS * CELL_H - 1, COL(79, 111, 137));
+        if (water_scene)
+            rect(LAWN_X, LAWN_Y + CELL_H, GAME_W - 1,
+                 LAWN_Y + 3 * CELL_H - 1, COL(72, 141, 162));
+        return;
+    }
     int id = water_scene && sprite_pixels[SPR_WATER_MAP] ? SPR_WATER_MAP : SPR_MAP;
     rect(0, 0, GAME_W - 1, GAME_H - 1, COL(108, 171, 73));
     if (sprite_pixels[id]) {
@@ -1548,9 +1656,8 @@ void game_offline_ui_snapshot(GameOfflineUIState *out) {
             }
 }
 
-/* Flat neutral button faces with ink-black outlines. Primary actions are
- * white, ordinary controls gray, and leave/back actions black. */
-enum { BUTTON_TONE_GRAY, BUTTON_TONE_WHITE, BUTTON_TONE_BLACK };
+/* Calm blue/ivory controls with a warm accent for the main action. */
+enum { BUTTON_TONE_GRAY, BUTTON_TONE_WHITE, BUTTON_TONE_BLACK, BUTTON_TONE_ACCENT };
 static void draw_button_tone(int x0, int y0, int x1, int y1,
                              const char *label, int size, int active, int tone);
 static void draw_button(int x0, int y0, int x1, int y1, const char *label, int size);
@@ -1560,43 +1667,43 @@ static void draw_button_black(int x0, int y0, int x1, int y1,
                               const char *label, int size);
 
 static void draw_seed_bar(void) {
-    /* The sidebar and top strip are UI; keep the playable map untouched. */
-    rect(0, 0, GAME_W - 1, LAWN_Y - 1, COL(36, 36, 36));
-    rect(0, 118, GAME_W - 1, LAWN_Y - 1, COL(215, 215, 215));
-    rect(0, LAWN_Y + 1, LAWN_X - 8, GAME_H - 1, COL(224, 224, 224));
-    rect(LAWN_X - 7, LAWN_Y + 1, LAWN_X - 1, GAME_H - 1, COL(0, 0, 0));
-    rect(12, 12, LAWN_X - 19, 131, COL(0, 0, 0));
-    rect(17, 17, LAWN_X - 24, 126, COL(231, 231, 231));
+    /* A light blue-gray HUD keeps contrast without pairing navy with the lawn. */
+    rect(0, 0, GAME_W - 1, LAWN_Y - 1, COL(220, 232, 239));
+    rect(0, 118, GAME_W - 1, LAWN_Y - 1, COL(103, 180, 200));
+    rect(0, LAWN_Y + 1, LAWN_X - 8, GAME_H - 1, COL(239, 241, 234));
+    rect(LAWN_X - 7, LAWN_Y + 1, LAWN_X - 1, GAME_H - 1, COL(103, 180, 200));
+    rect(12, 12, LAWN_X - 19, 131, COL(93, 114, 135));
+    rect(17, 17, LAWN_X - 24, 126, COL(245, 242, 232));
     draw_coin_icon(60, 71, 26);
-    draw_text(101, 37, 2, COL(17, 17, 17), "МОНЕТЫ");
-    draw_int(101, 67, 5, COL(17, 17, 17), coin_balance);
+    draw_text(101, 37, 2, COL(36, 59, 82), "МОНЕТЫ");
+    draw_int(101, 67, 5, COL(36, 59, 82), coin_balance);
     for (int i = 0; i < PT_COUNT; i++) {
         int x0 = BATTLE_CARD_X, y0 = BATTLE_CARD_Y + i * BATTLE_CARD_STEP;
         int affordable = coin_balance >= PDEF[i].cost && cooldown[i] <= 0 &&
                          (i != PT_LILY || level == WATER_LEVEL);
         int inset = selected == i ? 5 : 3;
         rect(x0 - 3, y0 - 3, x0 + BATTLE_CARD_W + 3,
-             y0 + BATTLE_CARD_H + 3, COL(0, 0, 0));
+             y0 + BATTLE_CARD_H + 3, COL(36, 59, 82));
         rect(x0 - 3 + inset, y0 - 3 + inset,
              x0 + BATTLE_CARD_W + 3 - inset,
              y0 + BATTLE_CARD_H + 3 - inset,
-             selected == i ? COL(189, 189, 189) : COL(255, 255, 255));
+             selected == i ? COL(241, 197, 110) : COL(255, 253, 248));
         sprite_draw(PDEF[i].sprite, x0 + 78, y0 + 2, 55, 55, 0);
         draw_text_c(x0 + BATTLE_CARD_W / 2, y0 + 59, 2,
-                    COL(17, 17, 17), PDEF[i].short_name);
+                    COL(36, 59, 82), PDEF[i].short_name);
         draw_coin_icon(x0 + 81, y0 + 88, 8);
-        draw_int(x0 + 102, y0 + 77, 2, COL(17, 17, 17), PDEF[i].cost);
+        draw_int(x0 + 102, y0 + 77, 2, COL(36, 59, 82), PDEF[i].cost);
         if (!affordable) rect_blend(x0, y0, x0 + BATTLE_CARD_W,
-                                     y0 + BATTLE_CARD_H, COL(64, 64, 64), 95);
+                                     y0 + BATTLE_CARD_H, COL(80, 105, 126), 95);
         if (cooldown[i] > 0) {
             float frac = cooldown[i] / PDEF[i].recharge;
             rect_blend(x0, y0, x0 + BATTLE_CARD_W,
-                       y0 + (int)(BATTLE_CARD_H * frac), COL(20, 20, 20), 95);
+                       y0 + (int)(BATTLE_CARD_H * frac), COL(32, 53, 75), 95);
         }
     }
 
-    rect(LAWN_X, 0, GAME_W - 1, LAWN_Y - 1, COL(36, 36, 36));
-    rect(LAWN_X, LAWN_Y - 5, GAME_W - 1, LAWN_Y - 1, COL(0, 0, 0));
+    rect(LAWN_X, 0, GAME_W - 1, LAWN_Y - 1, COL(220, 232, 239));
+    rect(LAWN_X, LAWN_Y - 5, GAME_W - 1, LAWN_Y - 1, COL(103, 180, 200));
     /* Defeated enemies fill the wave meter; then the boss meter shows HP. */
     int defeated = total_zombies - game_wave_remaining();
     if (defeated < 0) defeated = 0;
@@ -1613,13 +1720,13 @@ static void draw_seed_bar(void) {
                 break;
             }
     }
-    draw_text(282, 20, 3, COL(255, 255, 255), boss_phase ? "РОБОТ" : "ВОЛНА");
-    draw_text(462, 24, 2, COL(230, 230, 230), progress);
-    rect(281, 65, 585, 89, COL(0, 0, 0));
-    if (bar > 0) rect(283, 67, 283 + bar, 87, COL(189, 189, 189));
-    draw_text(638, 20, 3, COL(255, 255, 255), "УРОВЕНЬ");
-    draw_int(829, 20, 3, COL(255, 255, 255), level);
-    draw_text(641, 69, 2, COL(215, 215, 215), LEVEL_NAMES[level - 1]);
+    draw_text(282, 20, 3, COL(36, 59, 82), boss_phase ? "РОБОТ" : "ВОЛНА");
+    draw_text(462, 24, 2, COL(83, 106, 128), progress);
+    rect(281, 65, 585, 89, COL(103, 180, 200));
+    if (bar > 0) rect(283, 67, 283 + bar, 87, COL(241, 197, 110));
+    draw_text(638, 20, 3, COL(36, 59, 82), "УРОВЕНЬ");
+    draw_int(829, 20, 3, COL(36, 59, 82), level);
+    draw_text(641, 69, 2, COL(83, 106, 128), LEVEL_NAMES[level - 1]);
     draw_button_white(925, 28, 1080, 88, "КНИГА", 3);
     draw_button_white(1100, 28, 1260, 88, "МЕНЮ", 3);
 }
@@ -1628,13 +1735,14 @@ static void draw_seed_bar(void) {
 static void draw_button_tone(int x0, int y0, int x1, int y1,
                              const char *label, int size, int active, int tone) {
     int inset = active ? 5 : 3;
-    uint32_t face = tone == BUTTON_TONE_BLACK ? COL(0, 0, 0) :
-                    tone == BUTTON_TONE_WHITE ? COL(255, 255, 255) :
-                                                COL(189, 189, 189);
-    uint32_t text = tone == BUTTON_TONE_BLACK ? COL(255, 255, 255) :
-                                                COL(17, 17, 17);
-    if (active && tone != BUTTON_TONE_BLACK) face = COL(189, 189, 189);
-    rect(x0, y0, x1, y1, COL(0, 0, 0));
+    uint32_t face = tone == BUTTON_TONE_BLACK ? COL(36, 59, 82) :
+                    tone == BUTTON_TONE_WHITE ? COL(255, 253, 248) :
+                    tone == BUTTON_TONE_ACCENT ? COL(230, 142, 112) :
+                                                 COL(220, 232, 239);
+    uint32_t text = tone == BUTTON_TONE_BLACK ? COL(255, 253, 248) :
+                                                COL(36, 59, 82);
+    if (active && tone != BUTTON_TONE_BLACK) face = COL(241, 197, 110);
+    rect(x0, y0, x1, y1, COL(36, 59, 82));
     rect(x0 + inset, y0 + inset, x1 - inset, y1 - inset, face);
     while (size > 1 && text_w(size, label) > x1 - x0 - 22) size--;
     draw_text_c((x0 + x1) / 2, (y0 + y1 - size * 7) / 2,
@@ -1659,7 +1767,7 @@ static void draw_button_black(int x0, int y0, int x1, int y1,
 static void draw_dima(int cx, int feet_y, int size) {
     /* Show the author's masked Dima as-is, without an invented body. */
     sprite_draw(SPR_MASK, cx - size / 2, feet_y - size, size, size, 0);
-    draw_text_c(cx, feet_y + 8, 3, COL(255, 255, 255), "ДИМА");
+    draw_text_c(cx, feet_y + 8, 3, COL(255, 253, 248), "ДИМА");
 }
 
 static void draw_khlebushek(int cx, int feet_y, int size, int crying) {
@@ -1672,83 +1780,73 @@ static void draw_khlebushek(int cx, int feet_y, int size, int crying) {
         ellipse(eye_x, eye_y + 11 + drop, 4, 10, COL(105, 205, 255));
         ellipse(eye_x - size / 20, eye_y + 19 + drop, 3, 8, COL(146, 221, 255));
     }
-    draw_text_c(cx, feet_y + 8, 3, COL(255, 255, 255), "ХЛЕБУШЕК");
+    draw_text_c(cx, feet_y + 8, 3, COL(255, 253, 248), "ХЛЕБУШЕК");
 }
 
 static void draw_kirill(int cx, int feet_y, int size) {
     /* The author's updated Kirill drawing, assets/art/kirill.png. */
     sprite_draw(SPR_KIRILL, cx - size / 2, feet_y - size, size, size, 0);
-    draw_text_c(cx, feet_y + 8, 3, COL(255, 255, 255), "КИРИЛЛ");
+    draw_text_c(cx, feet_y + 8, 3, COL(255, 253, 248), "КИРИЛЛ");
 }
 
 static void draw_menu_hero(int image, int cx, int feet_y, int size,
                            const char *name) {
-    ellipse(cx, feet_y - 2, size / 2 - 20, 13, COL(111, 111, 111));
+    ellipse(cx, feet_y - 2, size / 2 - 20, 13, COL(124, 145, 159));
     sprite_draw(image, cx - size / 2, feet_y - size, size, size, 0);
-    draw_text_c(cx, feet_y + 8, 3, COL(45, 45, 45), name);
+    draw_text_c(cx, feet_y + 8, 3, COL(36, 59, 82), name);
 }
 
 static void draw_menu(void) {
-    /* Match the gray title sketch: just the three author's heroes. The
+    /* Use a soft sky-and-sand palette with the three author's heroes. The
      * Queen's robot is revealed in the FINAL level, not on this screen. */
-    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(174, 174, 174));
-    rect(0, 508, GAME_W - 1, GAME_H - 1, COL(153, 153, 153));
-    rect(0, 508, GAME_W - 1, 511, COL(123, 123, 123));
+    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(198, 224, 236));
+    rect(0, 508, GAME_W - 1, GAME_H - 1, COL(224, 211, 181));
+    rect(0, 508, GAME_W - 1, 511, COL(179, 161, 126));
     draw_button_white(83, 25, 389, 171, "УРОВНИ ИГРОКОВ", 4);
     draw_button_white(475, 38, 785, 127, "УРОВНИ 1-10", 4);
-    rect(846, 34, 1244, 137, COL(0, 0, 0));
-    rect(849, 37, 1241, 134, COL(255, 255, 255));
-    draw_text_c(1045, 65, 5, COL(17, 17, 17), "САД ДЗЕН");
+    rect(846, 34, 1244, 137, COL(36, 59, 82));
+    rect(849, 37, 1241, 134, COL(255, 253, 248));
+    draw_text_c(1045, 65, 5, COL(36, 59, 82), "САД ДЗЕН");
 
-    draw_text_c(640, 177, 6, COL(17, 17, 17), "РАСТЕНИЯ ПРОТИВ ГУСЕЙ");
-    draw_text_c(640, 231, 3, COL(68, 68, 68), "ИСТОРИЯ ХЛЕБУШКА");
+    draw_text_c(640, 177, 6, COL(36, 59, 82), "РАСТЕНИЯ ПРОТИВ ГУСЕЙ");
+    draw_text_c(640, 231, 3, COL(83, 106, 128), "ИСТОРИЯ ХЛЕБУШКА");
     draw_menu_hero(SPR_KHLEBUSHEK, 256, 491, 212, "ХЛЕБУШЕК");
     draw_menu_hero(SPR_MASK, 640, 491, 235, "ДИМА");
     draw_menu_hero(SPR_KIRILL, 1012, 491, 225, "КИРИЛЛ");
 
     draw_button_white(98, 568, 392, 665, "КНИГА", 5);
-    draw_button_white(440, 548, 840, 674, "СТАРТ", 8);
-    char status[75];
-    snprintf(status, sizeof(status), "ПРОЙДЕНО: %d / 10   •   СТАРТ: УРОВЕНЬ %d",
-             game_completed_level(), resume_level);
-    draw_text_c(1058, 538, 2, COL(68, 68, 68), status);
+    draw_button_tone(440, 548, 840, 674, "СТАРТ", 8, 0, BUTTON_TONE_ACCENT);
     draw_button_white(893, 569, 1223, 661, "ОНЛАЙН", 6);
-    rect(926, 609, 946, 614, COL(17, 17, 17));
-    rect(933, 602, 939, 621, COL(17, 17, 17));
-    draw_text_c(640, 689, 2, COL(68, 68, 68),
-                "АВТОСОХРАНЕНИЕ. РАСТЕНИЯ СОЗДАЛ КИРИЛЛ.");
+    rect(926, 609, 946, 614, COL(36, 59, 82));
+    rect(933, 602, 939, 621, COL(36, 59, 82));
 }
 
-/* Level 0 replays the story; any wave can be replayed. Progress and the
- * resume level use thicker neutral-black outlines rather than color fills. */
+/* Level 0 replays the story; any wave can be replayed. */
 static void draw_level_select(void) {
-    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(226, 226, 226));
-    rect(0, 0, GAME_W - 1, 101, COL(190, 190, 190));
-    rect(0, 99, GAME_W - 1, 102, COL(0, 0, 0));
-    draw_text_c(630, 32, 6, COL(17, 17, 17), "ВЫБОР УРОВНЯ");
+    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(245, 242, 232));
+    rect(0, 0, GAME_W - 1, 101, COL(220, 232, 239));
+    rect(0, 99, GAME_W - 1, 102, COL(36, 59, 82));
+    draw_text_c(630, 32, 6, COL(36, 59, 82), "ВЫБОР УРОВНЯ");
     draw_button_black(1045, 18, 1265, 85, "НАЗАД", 4);
-    char status[64];
-    snprintf(status, sizeof(status), "ПРОЙДЕНО: %d / 10", game_completed_level());
-    draw_text_c(640, 121, 3, COL(68, 68, 68), status);
     for (int n = 1; n <= MAX_LEVEL; n++) {
         int col = (n - 1) % 5, row = (n - 1) / 5;
-        int x = 100 + col * 220, y = 210 + row * 190;
+        int x = 100 + col * 220, y = 155 + row * 190;
         int active = resume_level == n;
-        int completed = !!(completed_mask & (1u << (n - 1)));
-        int inset = active ? 5 : completed ? 4 : 3;
-        rect(x, y, x + 180, y + 130, COL(0, 0, 0));
+        int inset = active ? 5 : 3;
+        rect(x, y, x + 180, y + 130, COL(36, 59, 82));
         rect(x + inset, y + inset, x + 180 - inset, y + 130 - inset,
-             active ? COL(189, 189, 189) : COL(255, 255, 255));
-        int water_art = n == WATER_LEVEL && sprite_pixels[SPR_WATER_MAP];
+             active ? COL(241, 197, 110) : COL(255, 253, 248));
+        int water_art = !preferences_neutral_background_enabled() &&
+                        n == WATER_LEVEL && sprite_pixels[SPR_WATER_MAP];
         if (water_art) {
             sprite_crop(SPR_WATER_MAP, x + inset, y + inset,
                         180 - 2 * inset, 130 - 2 * inset,
                         0, 0, 500, 500, 0);
             rect_blend(x + inset, y + inset, x + 180 - inset,
-                       y + 130 - inset, COL(0, 0, 0), 145);
+                       y + 130 - inset, COL(36, 59, 82), 145);
         }
         char label[32];
-        uint32_t text_color = water_art ? COL(255, 255, 255) : COL(17, 17, 17);
+        uint32_t text_color = water_art ? COL(255, 253, 248) : COL(36, 59, 82);
         snprintf(label, sizeof(label), "УРОВЕНЬ %d", n);
         draw_text_c(x + 90, y + 12, 3, text_color, label);
         draw_text_c(x + 90, y + 56, 2, text_color, LEVEL_NAMES[n - 1]);
@@ -1756,12 +1854,8 @@ static void draw_level_select(void) {
         else snprintf(label, sizeof(label), "%d ВРАГОВ", 5 + n * 3);
         draw_text_c(x + 90, y + 97, 2, text_color, label);
     }
-    draw_text_c(640, 166, 2, COL(68, 68, 68),
-                "ВОЛНА ЗАКОНЧИТСЯ, КОГДА ВСЕ ЕЁ ВРАГИ ПОБЕЖДЕНЫ");
     draw_button_white(425, 567, 855, 641, "УРОВЕНЬ 0: КАТ-СЦЕНА", 4);
     draw_button_white(880, 567, 1240, 641, "КАТАЛОГ УРОВНЕЙ", 3);
-    draw_text_c(640, 668, 2, COL(68, 68, 68),
-                "ПОВТОР КАТ-СЦЕНЫ НЕ СБРАСЫВАЕТ СОХРАНЕНИЕ");
 }
 
 /* The fallback garden uses the same flat button style as every other screen. */
@@ -1792,10 +1886,10 @@ static void draw_garden(void) {
         sprite_crop(SPR_MAP, LAWN_X, 0, GAME_W - LAWN_X, LAWN_Y,
                     0, 0, 242, 135, 0);
     else rect(LAWN_X, 0, GAME_W - 1, LAWN_Y - 1, COL(96, 64, 40));
-    rect_blend(0, 0, GAME_W - 1, LAWN_Y - 1, COL(20, 20, 20), 148);
+    rect_blend(0, 0, GAME_W - 1, LAWN_Y - 1, COL(32, 53, 75), 148);
     rect(LAWN_X, LAWN_Y - 5, GAME_W - 1, LAWN_Y - 1, COL(70, 46, 28));
-    rect(0, 0, GAME_W - 1, 124, COL(210, 210, 210));
-    draw_text(28, 13, 4, COL(17, 17, 17), "САД ДЗЕН");
+    rect(0, 0, GAME_W - 1, 124, COL(232, 228, 212));
+    draw_text(28, 13, 4, COL(36, 59, 82), "САД ДЗЕН");
     draw_garden_button(8, 43, 116, 78, "РАСТЕНИЯ", 1, !garden_mode,
                        BUTTON_TONE_WHITE);
     draw_garden_button(124, 43, 232, 78, "ГУСИ", 1, garden_mode,
@@ -1810,20 +1904,20 @@ static void draw_garden(void) {
         int x0 = garden_card_x(i);
         int active = garden_selected == i;
         int inset = active ? 5 : 3;
-        rect(x0 - 3, 9, x0 + CARD_W + 3, 115, COL(0, 0, 0));
+        rect(x0 - 3, 9, x0 + CARD_W + 3, 115, COL(36, 59, 82));
         rect(x0 - 3 + inset, 9 + inset,
              x0 + CARD_W + 3 - inset, 115 - inset,
-             active ? COL(189, 189, 189) : COL(255, 255, 255));
+             active ? COL(241, 197, 110) : COL(255, 253, 248));
         if (garden_mode) {
             draw_duck_variant(x0 + (CARD_W - 60) / 2, 19, 60,
                               GARDEN_DUCKS[i], 0);
-            draw_text_c(x0 + CARD_W / 2, 84, 2, COL(24, 24, 24),
+            draw_text_c(x0 + CARD_W / 2, 84, 2, COL(36, 59, 82),
                         GARDEN_DUCK_NAMES[i]);
         } else {
             sprite_draw(PDEF[i].sprite, x0 + (CARD_W - 60) / 2, 19, 60, 60, 0);
             int size = text_w(2, PDEF[i].short_name) <= CARD_W - 8 ? 2 : 1;
             draw_text_c(x0 + CARD_W / 2, 84, size,
-                        COL(24, 24, 24), PDEF[i].short_name);
+                        COL(36, 59, 82), PDEF[i].short_name);
         }
     }
     draw_garden_button(915, 16, 1070, 58, "КНИГА", 2, 0,
@@ -1832,25 +1926,25 @@ static void draw_garden(void) {
                        BUTTON_TONE_BLACK);
     draw_garden_button(915, 73, 1265, 116, "УБРАТЬ", 2,
                        garden_selected == PT_COUNT, BUTTON_TONE_GRAY);
-    rect_blend(95, 679, 1185, 717, COL(20, 20, 20), 220);
-    draw_text_c(640, 691, 2, COL(255, 255, 255),
+    rect_blend(95, 679, 1185, 717, COL(32, 53, 75), 220);
+    draw_text_c(640, 691, 2, COL(255, 253, 248),
                 "СВОБОДНО СТАВЬ РАСТЕНИЯ И ГУСЕЙ. ВСЁ БЕСПЛАТНО.");
 }
 
 /* Interactive plant book: the list and details come from the SAME plant
  * definitions as the packets and Zen Garden, so it cannot list fake plants. */
 static void draw_book(void) {
-    /* An open grayscale spread: white index, light-gray details, black ink. */
-    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(210, 210, 210));
-    rect(0, 0, GAME_W - 1, 105, COL(190, 190, 190));
-    draw_text_c(565, 28, 5, COL(17, 17, 17), "УМНАЯ КНИГА КИРИЛЛА");
+    /* An open, warm-paper spread with clear blue-gray ink. */
+    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(232, 228, 212));
+    rect(0, 0, GAME_W - 1, 105, COL(220, 232, 239));
+    draw_text_c(565, 28, 5, COL(36, 59, 82), "УМНАЯ КНИГА КИРИЛЛА");
     draw_button_black(1045, 18, 1265, 85, "НАЗАД", 4);
-    rect(76, 121, 1209, 697, COL(0, 0, 0));
-    rect(84, 115, 1201, 686, COL(70, 70, 70));
-    rect(92, 122, 557, 677, COL(255, 255, 255));
-    rect(567, 122, 1192, 677, COL(225, 225, 225));
-    rect(550, 122, 568, 677, COL(160, 160, 160));
-    rect(554, 131, 564, 667, COL(185, 185, 185));
+    rect(76, 121, 1209, 697, COL(36, 59, 82));
+    rect(84, 115, 1201, 686, COL(102, 128, 148));
+    rect(92, 122, 557, 677, COL(255, 253, 248));
+    rect(567, 122, 1192, 677, COL(225, 236, 242));
+    rect(550, 122, 568, 677, COL(140, 159, 174));
+    rect(554, 131, 564, 667, COL(176, 198, 211));
     draw_button_tone(160, 123, 344, 158, "РАСТЕНИЯ", 2,
                      !book_enemy_tab, BUTTON_TONE_WHITE);
     draw_button_tone(355, 123, 540, 158, "ВРАГИ", 2,
@@ -1862,17 +1956,17 @@ static void draw_book(void) {
         int type = book_enemy_tab ? BOOK_ENEMIES[i] : i;
         int highlighted = (book_enemy_tab ? book_enemy_selected : book_selected) == i;
         int inset = highlighted ? 5 : 3;
-        rect(160, y0, 540, y0 + BOOK_ENTRY_H, COL(0, 0, 0));
+        rect(160, y0, 540, y0 + BOOK_ENTRY_H, COL(36, 59, 82));
         rect(160 + inset, y0 + inset, 540 - inset,
              y0 + BOOK_ENTRY_H - inset,
-             highlighted ? COL(189, 189, 189) : COL(255, 255, 255));
+             highlighted ? COL(241, 197, 110) : COL(255, 253, 248));
         if (book_enemy_tab) {
             if (type == EN_ROBOT) sprite_draw(SPR_ROBOT, 183, y0 + 11, 67, 67, 0);
             else draw_duck_variant(183, y0 + 15, 63, type, 1);
-            draw_text(265, y0 + 28, 2, COL(17, 17, 17), EN_NAMES[type]);
+            draw_text(265, y0 + 28, 2, COL(36, 59, 82), EN_NAMES[type]);
         } else {
             sprite_draw(PDEF[i].sprite, 183, y0 + 11, 67, 67, 0);
-            draw_text(265, y0 + 28, 2, COL(17, 17, 17), PDEF[i].short_name);
+            draw_text(265, y0 + 28, 2, COL(36, 59, 82), PDEF[i].short_name);
         }
     }
 
@@ -1882,13 +1976,13 @@ static void draw_book(void) {
         else draw_duck_variant(762, 163, 208, type, 1);
         int title_size = 4;
         while (title_size > 2 && text_w(title_size, EN_NAMES[type]) > 565) title_size--;
-        draw_text_c(865, 380, title_size, COL(17, 17, 17), EN_NAMES[type]);
+        draw_text_c(865, 380, title_size, COL(36, 59, 82), EN_NAMES[type]);
         GameBookEntry entry;
         game_book_entry(1, book_enemy_selected, &entry);
-        rect(580, 438, 1150, 663, COL(185, 185, 185));
-        rect(585, 443, 1145, 658, COL(245, 245, 245));
-        draw_text(598, 473, 2, COL(17, 17, 17), entry.description);
-        draw_text(598, 542, 2, COL(17, 17, 17), entry.detail);
+        rect(580, 438, 1150, 663, COL(176, 198, 211));
+        rect(585, 443, 1145, 658, COL(247, 243, 232));
+        draw_text(598, 473, 2, COL(36, 59, 82), entry.description);
+        draw_text(598, 542, 2, COL(36, 59, 82), entry.detail);
         return;
     }
 
@@ -1896,21 +1990,21 @@ static void draw_book(void) {
     sprite_draw(p->sprite, 756, 148, 222, 222, 0);
     int title_size = 4;
     while (title_size > 2 && text_w(title_size, p->name) > 565) title_size--;
-    draw_text_c(865, 380, title_size, COL(17, 17, 17), p->name);
+    draw_text_c(865, 380, title_size, COL(36, 59, 82), p->name);
     /* Only the drawing and its purpose belong on the book page. Combat
      * prices, recharge times and small stat captions obscured the story. */
-    rect(580, 438, 1150, 663, COL(185, 185, 185));
-    rect(585, 443, 1145, 658, COL(245, 245, 245));
-    draw_text(598, 473, 2, COL(17, 17, 17), p->description);
-    draw_text(598, 542, 2, COL(17, 17, 17), p->detail);
+    rect(580, 438, 1150, 663, COL(176, 198, 211));
+    rect(585, 443, 1145, 658, COL(247, 243, 232));
+    draw_text(598, 473, 2, COL(36, 59, 82), p->description);
+    draw_text(598, 542, 2, COL(36, 59, 82), p->detail);
 }
 
 static void draw_intro(void) {
     draw_background();
-    rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(20, 20, 20), 105);
+    rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(32, 53, 75), 105);
     if (!use_lvgl_ui) {
-        rect(0, 0, GAME_W - 1, 115, COL(190, 190, 190));
-        draw_text_c(535, 37, 6, COL(17, 17, 17), "УРОВЕНЬ 0: КАТ-СЦЕНА");
+        rect(0, 0, GAME_W - 1, 115, COL(220, 232, 239));
+        draw_text_c(535, 37, 6, COL(36, 59, 82), "УРОВЕНЬ 0: КАТ-СЦЕНА");
         draw_button_black(1020, 10, 1270, 89, "ПРОПУСТИТЬ", 3);
     }
     draw_khlebushek(245, 492, 246, intro_step == 0);
@@ -1922,19 +2016,18 @@ static void draw_intro(void) {
     if (intro_step >= 2) draw_kirill(977, 492, 248);
     if (use_lvgl_ui) return; /* LVGL owns the dialog and skip/next controls. */
 
-    rect(95, 533, 1185, 679, COL(0, 0, 0));
-    rect(102, 540, 1178, 672, COL(245, 245, 245));
-    rect(111, 548, 1169, 665, COL(210, 210, 210));
+    rect(95, 533, 1185, 679, COL(36, 59, 82));
+    rect(102, 540, 1178, 672, COL(247, 243, 232));
+    rect(111, 548, 1169, 665, COL(232, 228, 212));
     const char *speaker = intro_step == 0 ? "ХЛЕБУШЕК" :
                           intro_step == 1 ? "ДИМА" : "КИРИЛЛ";
     const char *line = intro_step == 0 ? "ХЛЕБУШЕК ПЛАЧЕТ..." :
                        intro_step == 1 ? "НЕ ПЛАЧЬ, МЫ НОВОГО СДЕЛАЕМ." :
                        "МОЖЕТ, КТО-ТО ПОМОГАТЬ МНЕ БУДЕТ?";
-    draw_text(145, 554, 3, COL(68, 68, 68), speaker);
+    draw_text(145, 554, 3, COL(83, 106, 128), speaker);
     int size = 5;
     while (size > 2 && text_w(size, line) > 990) size--;
-    draw_text_c(640, 602, size, COL(17, 17, 17), line);
-    draw_text_c(1085, 690, 2, COL(230, 230, 230), "КОСНИСЬ: ДАЛЬШЕ");
+    draw_text_c(640, 602, size, COL(36, 59, 82), line);
 }
 
 static void draw_play_scene(void) {
@@ -1969,41 +2062,36 @@ static void draw_play_scene(void) {
         while (s > 1 && text_w(s, banner_text) > GAME_W - 120) s--;
         int bw = text_w(s, banner_text) + 44;
         rect_blend(640 - bw / 2, 156, 640 + bw / 2, 172 + 7 * s,
-                   COL(20, 20, 20), 205);
-        draw_text_c(640, 165, s, COL(255, 255, 255), banner_text);
+                   COL(32, 53, 75), 205);
+        draw_text_c(640, 165, s, COL(255, 253, 248), banner_text);
     }
     for (int i = 0; i < ZMAX; i++)
         if (zomb[i].active && zomb[i].type == EN_ROBOT) {
             float bf = zomb[i].hp / zomb[i].maxhp;
             if (bf < 0) bf = 0;
             if (bf > 1) bf = 1;
-            rect(395, 684, 885, 717, COL(0, 0, 0));
-            rect(401, 690, 401 + (int)(478 * bf), 711, COL(189, 189, 189));
-            draw_text_c(640, 697, 2, COL(255, 255, 255), "КОРОЛЕВА В РОБОТЕ");
+            rect(395, 684, 885, 717, COL(36, 59, 82));
+            rect(401, 690, 401 + (int)(478 * bf), 711, COL(241, 197, 110));
+            draw_text_c(640, 697, 2, COL(255, 253, 248), "КОРОЛЕВА В РОБОТЕ");
             break;
         }
 }
 
 static void draw_result(void) {
-    rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(20, 20, 20), 199);
-    rect(258, 175, 1022, 645, COL(0, 0, 0));
-    rect(265, 182, 1015, 638, COL(245, 245, 245));
+    rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(32, 53, 75), 199);
+    rect(258, 175, 1022, 645, COL(36, 59, 82));
+    rect(265, 182, 1015, 638, COL(247, 243, 232));
     if (phase == PH_LEVEL_CLEAR) {
-        draw_text_c(640, 246, 7, COL(17, 17, 17), "УРОВЕНЬ ПРОЙДЕН!");
-        draw_text_c(640, 329, 3, COL(68, 68, 68), "ВСЯ ВОЛНА ПОБЕЖДЕНА!");
-        draw_text_c(570, 375, 4, COL(68, 68, 68), "СЛЕДУЮЩИЙ УРОВЕНЬ:");
-        draw_int(878, 375, 4, COL(17, 17, 17), level + 1);
+        draw_text_c(640, 246, 7, COL(36, 59, 82), "УРОВЕНЬ ПРОЙДЕН!");
         draw_button_white(390, 450, 890, 565, "ДАЛЬШЕ", 7);
         draw_button_black(480, 580, 800, 645, "В МЕНЮ", 3);
     } else if (phase == PH_LOSE) {
-        draw_text_c(640, 254, 7, COL(17, 17, 17),
+        draw_text_c(640, 254, 7, COL(36, 59, 82),
                     level == 10 && boss_phase ? "РОБОТ УНИЧТОЖИЛ ВСЕХ!" : "ЗАЩИТА ПРОРВАНА!");
-        draw_text_c(640, 361, 4, COL(68, 68, 68), "ПОПРОБУЙ ЕЩЁ РАЗ");
         draw_button_white(335, 460, 645, 565, "ПОВТОРИТЬ", 4);
         draw_button_black(660, 460, 975, 565, "В МЕНЮ", 4);
     } else if (phase == PH_WIN) {
-        draw_text_c(640, 237, 7, COL(17, 17, 17), "РОБОТ ОСТАНОВЛЕН!");
-        draw_text_c(640, 340, 4, COL(68, 68, 68), "ФИНАЛ ПРОЙДЕН. ГУСИ СПАСЕНЫ!");
+        draw_text_c(640, 237, 7, COL(36, 59, 82), "РОБОТ ОСТАНОВЛЕН!");
         draw_button_black(425, 460, 855, 580, "В МЕНЮ", 6);
     }
 }
@@ -2011,76 +2099,75 @@ static void draw_result(void) {
 /* Native rooms and fight — same framebuffer, touch input and author's art as
  * the offline game. A square opens search; only '+' creates a room. */
 static void draw_online_rooms(void) {
-    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(224, 224, 224));
-    rect(0, 0, GAME_W - 1, 124, COL(190, 190, 190));
+    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(239, 241, 234));
+    rect(0, 0, GAME_W - 1, 124, COL(220, 232, 239));
     sprite_draw(SPR_KHLEBUSHEK, 32, 10, 106, 104, 0);
-    draw_text(168, 22, 5, COL(17, 17, 17), "ОНЛАЙН");
-    draw_text(170, 78, 2, COL(68, 68, 68), "ИГРАЙ ЗА РАСТЕНИЯ ИЛИ УТОК");
+    draw_text(168, 22, 5, COL(36, 59, 82), "ОНЛАЙН");
+    draw_text(170, 78, 2, COL(83, 106, 128), "ИГРАЙ ЗА РАСТЕНИЯ ИЛИ УТОК");
     draw_button_black(1070, 17, 1255, 87, "МЕНЮ", 3);
-    rect(48, 134, 1231, 231, COL(17, 17, 17));
-    rect(55, 140, 1224, 224, COL(245, 245, 245));
+    rect(48, 134, 1231, 231, COL(36, 59, 82));
+    rect(55, 140, 1224, 224, COL(247, 243, 232));
     draw_button_tone(70, 144, 303, 222, "ГАЗОН", 3,
                      online_map == 1, BUTTON_TONE_WHITE);
     draw_button_tone(313, 144, 550, 222, "ВОДА", 3,
                      online_map == 5, BUTTON_TONE_WHITE);
     /* The search affordance is visibly a SQUARE, not the create button. */
     draw_button(720, 144, 884, 222, "", 2);
-    rect(754, 166, 796, 202, COL(0, 0, 0));
-    rect(757, 169, 793, 199, COL(189, 189, 189));
-    rect(762, 174, 788, 194, COL(85, 85, 85));
-    draw_text(806, 171, 2, COL(17, 17, 17), "ПОИСК");
+    rect(754, 166, 796, 202, COL(36, 59, 82));
+    rect(757, 169, 793, 199, COL(241, 197, 110));
+    rect(762, 174, 788, 194, COL(78, 105, 126));
+    draw_text(806, 171, 2, COL(36, 59, 82), "ПОИСК");
     draw_button_white(904, 144, 1065, 222, "+ СОЗДАТЬ", 2);
     draw_button_white(1070, 144, 1223, 222, "МАСТЕРСКАЯ", 1);
-    rect(45, 239, 1234, 711, COL(38, 38, 38));
-    rect(52, 245, 1227, 704, COL(235, 235, 235));
-    draw_text(70, 260, 4, COL(17, 17, 17), "КОМНАТЫ");
+    rect(45, 239, 1234, 711, COL(36, 59, 82));
+    rect(52, 245, 1227, 704, COL(241, 238, 228));
+    draw_text(70, 260, 4, COL(36, 59, 82), "КОМНАТЫ");
     draw_button(1019, 248, 1225, 308, "ОБНОВИТЬ", 2);
     int indexes[ON_ROOM_LIST_CAP], count = online_filtered(indexes);
     int page = online_page;
     if (page * 8 >= count) page = 0;
-    if (online_view.busy) draw_text(350, 273, 2, COL(68, 68, 68), "ПОДКЛЮЧАЕМСЯ...");
+    if (online_view.busy) draw_text(350, 273, 2, COL(83, 106, 128), "ПОДКЛЮЧАЕМСЯ...");
     else if (!online_view.connected && !online_view.notice[0])
-        draw_text(350, 273, 2, COL(68, 68, 68), "ЗАГРУЖАЕМ КОМНАТЫ...");
+        draw_text(350, 273, 2, COL(83, 106, 128), "ЗАГРУЖАЕМ КОМНАТЫ...");
     else if (online_view.notice[0]) {
         int size = text_w(2, online_view.notice) < 730 ? 2 : 1;
-        draw_text(362, 276, size, COL(68, 68, 68), online_view.notice);
+        draw_text(362, 276, size, COL(83, 106, 128), online_view.notice);
     } else {
         char label[50];snprintf(label, sizeof label, "НАЙДЕНО: %d", count);
-        draw_text(366, 275, 2, COL(68, 68, 68), label);
+        draw_text(366, 275, 2, COL(83, 106, 128), label);
     }
-    if (!count) draw_text_c(640, 459, 4, COL(68, 68, 68),
+    if (!count) draw_text_c(640, 459, 4, COL(83, 106, 128),
                            "ПОКА НЕТ СВОБОДНЫХ КОМНАТ");
     for (int i = 0; i < 8; i++) {
         int pos = page * 8 + i;
         if (pos >= count) break;
         const OnRoomSummary *room = &online_view.rooms[indexes[pos]];
         int col = i % 2, row = i / 2, x = 69 + col * 582, y = 321 + row * 80;
-        rect(x, y + 2, x + 557, y + 71, COL(0, 0, 0));
+        rect(x, y + 2, x + 557, y + 71, COL(36, 59, 82));
         rect(x + 3, y + 5, x + 554, y + 68,
-             (i & 1) ? COL(221, 221, 221) : COL(255, 255, 255));
-        draw_text(x + 28, y + 13, 4, COL(17, 17, 17), room->id);
-        draw_text(x + 236, y + 17, 2, COL(40, 40, 40),
+             (i & 1) ? COL(226, 237, 243) : COL(255, 253, 248));
+        draw_text(x + 28, y + 13, 4, COL(36, 59, 82), room->id);
+        draw_text(x + 236, y + 17, 2, COL(50, 71, 91),
                   room->map == 5 ? "ВОДА" : "ГАЗОН");
-        draw_text(x + 362, y + 17, 2, COL(17, 17, 17), "ВОЙТИ >");
+        draw_text(x + 362, y + 17, 2, COL(36, 59, 82), "ВОЙТИ >");
     }
     if (count > 8) {
         draw_button(62, 654, 374, 704, "НАЗАД", 2);
         draw_button(873, 654, 1220, 704, "ДАЛЬШЕ", 2);
         char page_text[48];
         snprintf(page_text, sizeof page_text, "%d / %d", page + 1, (count + 7) / 8);
-        draw_text_c(640, 670, 2, COL(68, 68, 68), page_text);
-    } else draw_text_c(640, 674, 2, COL(68, 68, 68),
-                       "КОСНИСЬ КОМНАТЫ ИЛИ СОЗДАЙ СВОЮ КНОПКОЙ +");
+        draw_text_c(640, 670, 2, COL(83, 106, 128), page_text);
+    }
     if (online_search) {
-        rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(20, 20, 20), 193);
-        rect(222, 92, 1058, 667, COL(32, 32, 32));
-        rect(229, 99, 1051, 660, COL(245, 245, 245));
-        draw_text_c(640, 116, 5, COL(17, 17, 17), "ПОИСК КОМНАТЫ");
+        rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(32, 53, 75), 193);
+        rect(222, 92, 1058, 667, COL(36, 59, 82));
+        rect(229, 99, 1051, 660, COL(247, 243, 232));
+        draw_text_c(640, 116, 5, COL(36, 59, 82), "ПОИСК КОМНАТЫ");
         draw_button_black(902, 109, 1009, 159, "X", 3);
-        rect(301, 171, 837, 237, COL(60, 60, 60));
-        rect(309, 179, 829, 229, COL(255, 255, 255));
-        if (online_code[0]) draw_text_c(569, 184, 4, COL(17, 17, 17), online_code);
-        else draw_text_c(569, 185, 3, COL(102, 102, 102), "КОД ИЗ 6 СИМВОЛОВ");
+        rect(301, 171, 837, 237, COL(70, 94, 114));
+        rect(309, 179, 829, 229, COL(255, 253, 248));
+        if (online_code[0]) draw_text_c(569, 184, 4, COL(36, 59, 82), online_code);
+        else draw_text_c(569, 185, 3, COL(104, 125, 143), "КОД ИЗ 6 СИМВОЛОВ");
         draw_button(847, 171, 993, 236, "СТЕРЕТЬ", 2);
         const char *keys = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
         for (int i = 0; i < 32; i++) {
@@ -2089,50 +2176,45 @@ static void draw_online_rooms(void) {
             draw_button_white(kx, ky, kx + 68, ky + 58, letter, 3);
         }
         char matches[80];snprintf(matches, sizeof matches, "ПОДХОДЯЩИХ КОМНАТ: %d", count);
-        draw_text_c(640, 542, 2, COL(68, 68, 68), matches);
+        draw_text_c(640, 542, 2, COL(83, 106, 128), matches);
         draw_button_white(395, 568, 880, 644, "ВОЙТИ ПО КОДУ", 4);
-        if (online_hint_time > 0) draw_text_c(640, 654, 2, COL(68, 68, 68), online_hint);
     }
 }
 
 static void draw_online_lobby(void) {
-    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(224, 224, 224));
-    rect(0, 0, GAME_W - 1, 115, COL(190, 190, 190));
+    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(239, 241, 234));
+    rect(0, 0, GAME_W - 1, 115, COL(220, 232, 239));
     char heading[72];snprintf(heading, sizeof heading, "КОМНАТА %s", online_view.room_id);
-    draw_text(60, 26, 5, COL(17, 17, 17), heading);
+    draw_text(60, 26, 5, COL(36, 59, 82), heading);
     draw_button_black(1093, 17, 1265, 91, "ВЫЙТИ", 3);
-    draw_text_c(640, 145, 3, COL(17, 17, 17),
+    draw_text_c(640, 145, 3, COL(36, 59, 82),
                 online_view.map == 5 ? "КАРТА: ВОДА" : "КАРТА: ГАЗОН");
-    rect(148, 229, 1132, 592, COL(32, 32, 32));
-    rect(156, 237, 1124, 585, COL(245, 245, 245));
+    rect(148, 229, 1132, 592, COL(36, 59, 82));
+    rect(156, 237, 1124, 585, COL(247, 243, 232));
     int mine = online_role(), other = online_view.slot == ON_SLOT_HOST ?
                                  online_view.guest_role : online_view.host_role;
     for (int side = ON_ROLE_PLANTS; side <= ON_ROLE_ZOMBIES; side++) {
         int x = side == ON_ROLE_PLANTS ? 160 : 663;
         int inset = mine == side ? 5 : 3;
-        rect(x, 243, x + 451, 574, COL(0, 0, 0));
+        rect(x, 243, x + 451, 574, COL(36, 59, 82));
         rect(x + inset, 243 + inset, x + 451 - inset, 574 - inset,
-             mine == side ? COL(189, 189, 189) :
-             other == side ? COL(221, 221, 221) : COL(255, 255, 255));
+             mine == side ? COL(241, 197, 110) :
+             other == side ? COL(226, 237, 243) : COL(255, 253, 248));
         sprite_draw(side == ON_ROLE_PLANTS ? SPR_PEA : SPR_DUCK,
                     x + 125, 268, 185, 188, side == ON_ROLE_ZOMBIES);
-        draw_text_c(x + 225, 478, 4, COL(17, 17, 17),
+        draw_text_c(x + 225, 478, 4, COL(36, 59, 82),
                     side == ON_ROLE_PLANTS ? "РАСТЕНИЯ" : "ЗОМБИ");
-        draw_text_c(x + 225, 525, 2, COL(17, 17, 17),
+        draw_text_c(x + 225, 525, 2, COL(36, 59, 82),
                     mine == side ? "ТВОЯ СТОРОНА" :
                     other == side ? "СТОРОНА СОПЕРНИКА" : "ВЫБРАТЬ СТОРОНУ");
     }
-    rect(148, 603, 1132, 690, COL(32, 32, 32));
+    rect(148, 603, 1132, 690, COL(36, 59, 82));
     if (!online_view.guest_id[0])
-        draw_text_c(640, 611, 3, COL(255, 255, 255), "ЖДЁМ ВТОРОГО ИГРОКА...");
-    else if (!mine || !other)
-        draw_text_c(640, 611, 3, COL(255, 255, 255), "ВЫБЕРИТЕ РАЗНЫЕ СТОРОНЫ");
+        draw_text_c(640, 611, 3, COL(255, 253, 248), "ЖДЁМ ВТОРОГО ИГРОКА...");
     else if (online_view.slot == ON_SLOT_GUEST && !online_view.has_state)
-        draw_text_c(640, 611, 3, COL(255, 255, 255), "ХОЗЯИН ЗАПУСКАЕТ БОЙ...");
+        draw_text_c(640, 611, 3, COL(255, 253, 248), "ХОЗЯИН ЗАПУСКАЕТ БОЙ...");
     if (online_view.notice[0])
-        draw_text_c(640, 665, 2, COL(230, 230, 230), online_view.notice);
-    else draw_text_c(640, 665, 2, COL(215, 215, 215),
-                     "ХОЗЯИН И ГОСТЬ МОГУТ ИГРАТЬ ЗА ЛЮБУЮ СТОРОНУ");
+        draw_text_c(640, 665, 2, COL(232, 240, 244), online_view.notice);
 }
 
 static void draw_online_match(void) {
@@ -2163,19 +2245,17 @@ static void draw_online_match(void) {
     /* With LVGL active only the author's map and moving entities are drawn
      * here. The LVGL tree provides touchable cards, status, book and result. */
     if (use_lvgl_ui) return;
-    rect(0, 0, GAME_W - 1, 119, COL(190, 190, 190));
+    rect(0, 0, GAME_W - 1, 119, COL(220, 232, 239));
     int role = online_role(), plants = role == ON_ROLE_PLANTS;
-    draw_text(21, 18, 3, COL(17, 17, 17), plants ? "РАСТЕНИЯ" : "ЗОМБИ");
+    draw_text(21, 18, 3, COL(36, 59, 82), plants ? "РАСТЕНИЯ" : "ЗОМБИ");
     draw_coin_icon(46, 82, 21);
-    draw_int(80, 69, 4, COL(17, 17, 17),
+    draw_int(80, 69, 4, COL(36, 59, 82),
              plants ? s->plant_cash : s->zombie_cash);
     char title[98];
     snprintf(title, sizeof title, "КОМНАТА %s    УТОК ОСТАЛОСЬ: %d",
              online_view.room_id, s->left + s->duck_count);
-    draw_text(269, 22, 3, COL(17, 17, 17), title);
-    draw_text(277, 76, 2, COL(68, 68, 68),
-              s->map == 5 ? "ВОДА: СНАЧАЛА КУВШИНКА" :
-                            "ВЫБЕРИ КАРТОЧКУ, ЗАТЕМ КЛЕТКУ ИЛИ РЯД");
+    draw_text(269, 22, 3, COL(36, 59, 82), title);
+
     draw_button_white(917, 20, 1088, 91, "КНИГА", 3);
     draw_button_black(1093, 17, 1265, 91, "ВЫЙТИ", 3);
     int n = plants ? PT_COUNT : 3;
@@ -2186,35 +2266,26 @@ static void draw_online_match(void) {
         int affordable = (plants ? s->plant_cash : s->zombie_cash) >= cost &&
                          delay <= 0 && (plants ? (i != ON_LILY || s->map == 5) : s->left > 0);
         int inset = online_selected == i ? 5 : 3;
-        rect(12, y, 235, y + 98, COL(0, 0, 0));
+        rect(12, y, 235, y + 98, COL(36, 59, 82));
         rect(12 + inset, y + inset, 235 - inset, y + 98 - inset,
-             online_selected == i ? COL(189, 189, 189) : COL(255, 255, 255));
+             online_selected == i ? COL(241, 197, 110) : COL(255, 253, 248));
         if (plants) sprite_draw(PDEF[i].sprite, 27, y + 8, 67, 65, 0);
         else draw_duck_variant(26, y + 9, 64, on_duck_type[i], 1);
-        draw_text(99, y + 16, 2, COL(17, 17, 17),
+        draw_text(99, y + 16, 2, COL(36, 59, 82),
                   plants ? PDEF[i].short_name : EN_NAMES[on_duck_type[i]]);
         draw_coin_icon(113, y + 67, 12);
-        draw_int(136, y + 57, 3, COL(17, 17, 17), cost);
-        if (!affordable) rect_blend(17, y + 4, 230, y + 93, COL(64, 64, 64), 105);
+        draw_int(136, y + 57, 3, COL(36, 59, 82), cost);
+        if (!affordable) rect_blend(17, y + 4, 230, y + 93, COL(80, 105, 126), 105);
     }
-    if (!plants) {
+    if (!plants)
         draw_button_white(15, 615, 232, 702, "ЗАКОНЧИТЬ", 2);
-        draw_text(17, 523, 2, COL(255, 255, 255), "ВЫБЕРИ УТКУ И РЯД");
-    }
-    rect_blend(250, 681, 1279, 719, COL(20, 20, 20), 218);
-    if (online_hint_time > 0) draw_text_c(760, 690, 2, COL(230, 230, 230), online_hint);
-    else if (online_view.notice[0]) draw_text_c(760, 690, 2, COL(230, 230, 230), online_view.notice);
-    else if (online_view.pending) draw_text_c(760, 690, 2, COL(230, 230, 230),
-                                              "ОЖИДАЕМ ПОДТВЕРЖДЕНИЯ ХОДА...");
-    else if (!online_view.guest_id[0]) draw_text_c(760, 690, 2, COL(230, 230, 230),
-                                                   "СОПЕРНИК ВЫШЕЛ. БОЙ ПРИОСТАНОВЛЕН.");
     if (s->winner) {
-        rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(20, 20, 20), 198);
-        rect(283, 197, 997, 585, COL(0, 0, 0));
-        rect(290, 204, 990, 578, COL(245, 245, 245));
-        draw_text_c(640, 246, 6, COL(17, 17, 17),
+        rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(32, 53, 75), 198);
+        rect(283, 197, 997, 585, COL(36, 59, 82));
+        rect(290, 204, 990, 578, COL(247, 243, 232));
+        draw_text_c(640, 246, 6, COL(36, 59, 82),
                     s->winner == role ? "ПОБЕДА!" : "ПОБЕДИЛ СОПЕРНИК");
-        draw_text_c(640, 336, 3, COL(68, 68, 68),
+        draw_text_c(640, 336, 3, COL(83, 106, 128),
                     s->winner == ON_WIN_PLANTS ? "РАСТЕНИЯ ПОБЕДИЛИ" : "УТКИ ПОБЕДИЛИ");
         draw_button_black(411, 459, 869, 560, "В КОМНАТЫ", 5);
     }
@@ -2229,63 +2300,427 @@ static float custom_world_clamp(float value, float size) {
     if (value > CUSTOM_WORLD_LIMIT - size) return CUSTOM_WORLD_LIMIT - size;
     return value;
 }
-static uint32_t custom_color(uint32_t rgb) {
-    return COL((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255);
+typedef struct {float x, y, depth;} CustomContact;
+static int custom_object_runtime_index(const OnLevelObject *object) {
+    if (!object || custom_object_count <= 0) return -1;
+    uintptr_t base = (uintptr_t)&custom_level.objects[0];
+    uintptr_t address = (uintptr_t)object;
+    if (address < base) return -1;
+    uintptr_t offset = address - base;
+    size_t bytes = (size_t)custom_object_count * sizeof custom_level.objects[0];
+    if (offset >= bytes || offset % sizeof custom_level.objects[0]) return -1;
+    return (int)(offset / sizeof custom_level.objects[0]);
 }
-static int custom_overlap(float ax, float ay, float aw, float ah,
-                          float bx, float by, float bw, float bh) {
-    return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+static unsigned custom_id_hash(int id) {
+    return ((uint32_t)id * 2654435761u) & (CUSTOM_ID_MAP_CAP - 1u);
 }
+static void custom_build_id_map(void) {
+    memset(custom_id_map, 0, sizeof custom_id_map);
+    for (int index = 0; index < custom_object_count; ++index) {
+        int id = custom_level.objects[index].id;
+        if (id <= 0 || id > 1000000) continue;
+        unsigned slot = custom_id_hash(id);
+        while (custom_id_map[slot] &&
+               custom_level.objects[custom_id_map[slot] - 1].id != id)
+            slot = (slot + 1u) & (CUSTOM_ID_MAP_CAP - 1u);
+        if (!custom_id_map[slot]) custom_id_map[slot] = index + 1;
+    }
+}
+static int custom_id_lookup(int id) {
+    if (id <= 0 || id > 1000000) return -1;
+    unsigned slot = custom_id_hash(id);
+    for (unsigned probes = 0; probes < CUSTOM_ID_MAP_CAP; ++probes) {
+        int stored = custom_id_map[slot];
+        if (!stored) return -1;
+        int index = stored - 1;
+        if (index >= 0 && index < custom_object_count &&
+            custom_level.objects[index].id == id) return index;
+        slot = (slot + 1u) & (CUSTOM_ID_MAP_CAP - 1u);
+    }
+    return -1;
+}
+static int custom_object_collision_disabled(const OnLevelObject *object) {
+    int index = custom_object_runtime_index(object);
+    return index >= 0 && custom_collision_disabled[index] != 0;
+}
+static int custom_object_is_invisible(const OnLevelObject *object) {
+    int index = custom_object_runtime_index(object);
+    return index >= 0 && custom_invisible[index] != 0;
+}
+static void custom_hide_object(OnLevelObject *object) {
+    int index = custom_object_runtime_index(object);
+    if (index >= 0) custom_invisible[index] = 1;
+}
+static void custom_disable_object_collision(OnLevelObject *object) {
+    int index = custom_object_runtime_index(object);
+    if (index < 0) return;
+    custom_collision_disabled[index] = 1;
+    if (object->type == ON_LEVEL_PLAYER) custom_player_collision_enabled = 0;
+}
+/* Collide with the artwork silhouette; slopes additionally supply an uphill response. */
+static int custom_player_triangle_contact(float px, float py, float pw, float ph,
+                                           const OnLevelObject *object,
+                                           const float u[3], const float v[3],
+                                           int climbable, float vx, float vy,
+                                           CustomContact *contact) {
+    float radians = object->angle * 0.01745329251994329577f;
+    float c = cosf(radians), s = sinf(radians);
+    float object_x = (object->x + object->w * .5f) * CUSTOM_TILE_W;
+    float object_y = (object->y + object->h * .5f) * CUSTOM_TILE_H;
+    float vertices[3][2];
+    for (int i = 0; i < 3; ++i) {
+        float local_u = object->flip_x ? 1.0f - u[i] : u[i];
+        float local_v = object->flip_y ? 1.0f - v[i] : v[i];
+        float local_x = (local_u - .5f) * object->w * CUSTOM_TILE_W;
+        float local_y = (local_v - .5f) * object->h * CUSTOM_TILE_H;
+        vertices[i][0] = object_x + local_x * c - local_y * s;
+        vertices[i][1] = object_y + local_x * s + local_y * c;
+    }
+    float axes_x[5] = {1.0f, 0.0f, 0, 0, 0};
+    float axes_y[5] = {0.0f, 1.0f, 0, 0, 0};
+    int axis_count = 2;
+    for (int i = 0; i < 3; ++i) {
+        int next = (i + 1) % 3;
+        float edge_x = vertices[next][0] - vertices[i][0];
+        float edge_y = vertices[next][1] - vertices[i][1];
+        float length = hypotf(edge_x, edge_y);
+        if (length > 1e-7f) {
+            axes_x[axis_count] = -edge_y / length;
+            axes_y[axis_count] = edge_x / length;
+            axis_count++;
+        }
+    }
+    float player_x = px + pw * .5f, player_y = py + ph * .5f;
+    float smallest_depth = INFINITY, normal_x = 0, normal_y = 0;
+    float climb_depth = INFINITY, climb_x = 0, climb_y = 0;
+    for (int i = 0; i < axis_count; ++i) {
+        float axis_x = axes_x[i], axis_y = axes_y[i];
+        float object_min = INFINITY, object_max = -INFINITY;
+        for (int j = 0; j < 3; ++j) {
+            float projection = vertices[j][0] * axis_x + vertices[j][1] * axis_y;
+            if (projection < object_min) object_min = projection;
+            if (projection > object_max) object_max = projection;
+        }
+        float player_center = player_x * axis_x + player_y * axis_y;
+        float player_radius = pw * .5f * fabsf(axis_x) +
+                              ph * .5f * fabsf(axis_y);
+        float player_min = player_center - player_radius;
+        float player_max = player_center + player_radius;
+        float move_positive = object_max - player_min;
+        float move_negative = player_max - object_min;
+        if (move_positive <= 0 || move_negative <= 0) return 0;
+        float depth = fminf(move_positive, move_negative);
+        float motion = vx * axis_x + vy * axis_y;
+        int positive = move_positive < move_negative - 1e-6f ||
+            (fabsf(move_positive - move_negative) <= 1e-6f && motion <= 0);
+        float candidate_x = axis_x * (positive ? 1.0f : -1.0f);
+        float candidate_y = axis_y * (positive ? 1.0f : -1.0f);
+        if (depth < smallest_depth) {
+            smallest_depth = depth;
+            normal_x = candidate_x;normal_y = candidate_y;
+        }
+        float candidate_motion = vx * candidate_x + vy * candidate_y;
+        if (fabsf(candidate_x) > .1f && candidate_y < -.2f &&
+            candidate_motion < -1e-6f && depth < climb_depth) {
+            climb_depth = depth;climb_x = candidate_x;climb_y = candidate_y;
+        }
+    }
+    if (climbable && climb_depth < INFINITY) {
+        if (contact) *contact = (CustomContact){climb_x, climb_y, climb_depth};
+    } else if (contact) {
+        *contact = (CustomContact){normal_x, normal_y, smallest_depth};
+    }
+    return 1;
+}
+static int custom_player_slope_contact(float px, float py, float pw, float ph,
+                                        const OnLevelObject *object,
+                                        float vx, float vy, CustomContact *contact) {
+    static const float u[3] = {0.0f, 1.0f, 1.0f};
+    static const float v[3] = {1.0f, 0.0f, 1.0f};
+    return custom_player_triangle_contact(px, py, pw, ph, object,
+                                          u, v, 1, vx, vy, contact);
+}
+static int custom_player_hazard_contact(float px, float py, float pw, float ph,
+                                         const OnLevelObject *object,
+                                         float vx, float vy, CustomContact *contact) {
+    static const float u[3] = {.5f, 1.0f, 0.0f};
+    static const float v[3] = {.03f, 1.0f, 1.0f};
+    return custom_player_triangle_contact(px, py, pw, ph, object,
+                                          u, v, 0, vx, vy, contact);
+}
+static void custom_art_alpha_bounds(int type, int flip_x, int flip_y,
+                                    float *left, float *top,
+                                    float *right, float *bottom) {
+    *left = *top = 0.0f;*right = *bottom = 1.0f;
+    switch (type) {
+    case ON_LEVEL_PLAYER:
+        *left = .21f;*top = .02f;*right = .80f;*bottom = .96f;break;
+    case ON_LEVEL_ENEMY:
+        *left = .20f;*top = .21f;*right = .99f;*bottom = .99f;break;
+    case ON_LEVEL_COIN:
+        *left = .05f;*top = .03f;*right = .96f;*bottom = .97f;break;
+    case ON_LEVEL_GOAL:
+        *left = .04f;*top = .03f;break;
+    case ON_LEVEL_CHECKPOINT:
+        *left = .14f;*right = .75f;break;
+    case ON_LEVEL_PORTAL_NORMAL:
+        *left = .16f;*right = .77f;break;
+    case ON_LEVEL_PORTAL_JETPACK:
+        *left = .17f;*right = .76f;break;
+    default: break;
+    }
+    if (flip_x) {
+        float old_left = *left;
+        *left = 1.0f - *right;*right = 1.0f - old_left;
+    }
+    if (flip_y) {
+        float old_top = *top;
+        *top = 1.0f - *bottom;*bottom = 1.0f - old_top;
+    }
+}
+static void custom_player_visible_hitbox(float *x, float *y,
+                                         float *w, float *h) {
+    const OnLevelObject *player = custom_player_index >= 0 &&
+                                  custom_player_index < custom_object_count ?
+                                  &custom_level.objects[custom_player_index] : NULL;
+    float left, top, right, bottom;
+    custom_art_alpha_bounds(ON_LEVEL_PLAYER,
+                            player ? custom_player_facing_left : 0,
+                            player ? player->flip_y : 0,
+                            &left, &top, &right, &bottom);
+    *x = custom_player_x + custom_player_w * left;
+    *y = custom_player_y + custom_player_h * top;
+    *w = custom_player_w * (right - left);
+    *h = custom_player_h * (bottom - top);
+}
+static int custom_player_in_orb_range(float px, float py, float pw, float ph,
+                                        const OnLevelObject *object) {
+    float center_x = (object->x + object->w * .5f) * CUSTOM_TILE_W;
+    float center_y = (object->y + object->h * .5f) * CUSTOM_TILE_H;
+    float radius = fminf(object->w * CUSTOM_TILE_W,
+                         object->h * CUSTOM_TILE_H) * .46f;
+    float closest_x = fmaxf(px, fminf(center_x, px + pw));
+    float closest_y = fmaxf(py, fminf(center_y, py + ph));
+    float dx = closest_x - center_x, dy = closest_y - center_y;
+    float range = radius + .1f;
+    return dx * dx + dy * dy <= range * range;
+}
+static int custom_activate_orb(void) {
+    if (!custom_player_collision_enabled || custom_player_index < 0) return 0;
+    float player_x, player_y, player_w, player_h;
+    custom_player_visible_hitbox(&player_x, &player_y, &player_w, &player_h);
+    for (int i = custom_object_count - 1; i >= 0; --i) {
+        OnLevelObject *object = &custom_level.objects[i];
+        if ((object->type != ON_LEVEL_ORB_YELLOW &&
+             object->type != ON_LEVEL_ORB_ORANGE) || !object->visible ||
+            custom_object_collision_disabled(object) ||
+            !custom_player_in_orb_range(player_x, player_y, player_w, player_h,
+                                        object)) continue;
+        custom_player_vy = object->type == ON_LEVEL_ORB_ORANGE ? -1050.0f : -650.0f;
+        custom_player_grounded = 0;
+        return 1;
+    }
+    return 0;
+}
+static int custom_player_object_contact(float px, float py, float pw, float ph,
+                                        const OnLevelObject *object,
+                                        float vx, float vy, CustomContact *contact) {
+    if (!object || object->type == ON_LEVEL_PARTICLE) return 0;
+    float center_x = (object->x + object->w * .5f) * CUSTOM_TILE_W;
+    float center_y = (object->y + object->h * .5f) * CUSTOM_TILE_H;
+    float conservative_radius =
+        (object->w * CUSTOM_TILE_W + object->h * CUSTOM_TILE_H) * .5f;
+    if (fabsf(px + pw * .5f - center_x) > conservative_radius + pw * .5f ||
+        fabsf(py + ph * .5f - center_y) > conservative_radius + ph * .5f)
+        return 0;
+    if (object->type == ON_LEVEL_SLOPE)
+        return custom_player_slope_contact(px, py, pw, ph, object, vx, vy, contact);
+    if (object->type == ON_LEVEL_HAZARD)
+        return custom_player_hazard_contact(px, py, pw, ph, object, vx, vy, contact);
+    float left, top, right, bottom;
+    int art_flip_x = object->flip_x ^ (object->type == ON_LEVEL_ENEMY);
+    custom_art_alpha_bounds(object->type, art_flip_x, object->flip_y,
+                            &left, &top, &right, &bottom);
+    float radians = object->angle * 0.01745329251994329577f;
+    float c = cosf(radians), s = sinf(radians);
+    float frame_w = object->w * CUSTOM_TILE_W;
+    float frame_h = object->h * CUSTOM_TILE_H;
+    float offset_x = ((left + right) * .5f - .5f) * frame_w;
+    float offset_y = ((top + bottom) * .5f - .5f) * frame_h;
+    float object_x = (object->x + object->w * .5f) * CUSTOM_TILE_W +
+                     offset_x * c - offset_y * s;
+    float object_y = (object->y + object->h * .5f) * CUSTOM_TILE_H +
+                     offset_x * s + offset_y * c;
+    float half_object_w = frame_w * (right - left) * .5f;
+    float half_object_h = frame_h * (bottom - top) * .5f;
+    float half_player_w = pw * .5f, half_player_h = ph * .5f;
+    float dx = px + half_player_w - object_x;
+    float dy = py + half_player_h - object_y;
+    const float axes_x[4] = {1.0f, 0.0f, c, -s};
+    const float axes_y[4] = {0.0f, 1.0f, s, c};
+    float smallest_overlap = INFINITY, normal_x = 0, normal_y = 0;
+    for (int i = 0; i < 4; ++i) {
+        float axis_x = axes_x[i], axis_y = axes_y[i];
+        float object_radius = half_object_w * fabsf(axis_x * c + axis_y * s) +
+            half_object_h * fabsf(-axis_x * s + axis_y * c);
+        float player_radius = half_player_w * fabsf(axis_x) +
+            half_player_h * fabsf(axis_y);
+        float distance = dx * axis_x + dy * axis_y;
+        float penetration = object_radius + player_radius - fabsf(distance);
+        if (penetration <= 0) return 0;
+        if (penetration < smallest_overlap) {
+            float motion = vx * axis_x + vy * axis_y;
+            float sign = distance > 1e-7f ? 1.0f :
+                         distance < -1e-7f ? -1.0f : motion > 0 ? -1.0f : 1.0f;
+            smallest_overlap = penetration;
+            normal_x = axis_x * sign;normal_y = axis_y * sign;
+        }
+    }
+    if (contact) *contact = (CustomContact){normal_x, normal_y, smallest_overlap};
+    return 1;
+}
+
 static int custom_solid(const OnLevelObject *o) {
-    return o->visible && (o->type == ON_LEVEL_BLOCK || o->type == ON_LEVEL_GROUND);
+    return o->visible && !custom_object_collision_disabled(o) &&
+           (o->type == ON_LEVEL_BLOCK || o->type == ON_LEVEL_GROUND ||
+            o->type == ON_LEVEL_SLOPE);
 }
 static OnLevelObject *custom_find_id(int id) {
-    for (int i = 0; i < custom_object_count; i++)
-        if (custom_objects[i].id == id) return &custom_objects[i];
-    return NULL;
+    int index = custom_id_lookup(id);
+    return index >= 0 ? &custom_level.objects[index] : NULL;
 }
-static void custom_player_reset(void) {
-    for (int i = 0; i < custom_object_count; i++)
-        if (custom_objects[i].type == ON_LEVEL_PLAYER) {
-            custom_player_x = custom_objects[i].x * CUSTOM_TILE_W;
-            custom_player_y = custom_objects[i].y * CUSTOM_TILE_H;
-            custom_player_vx = custom_player_vy = 0;
-            custom_player_grounded = 0;
-            return;
+static void custom_activate_checkpoint(const OnLevelObject *checkpoint) {
+    if (!checkpoint || checkpoint->type != ON_LEVEL_CHECKPOINT) return;
+    custom_checkpoint_id = checkpoint->id;
+    float player_w_tiles = custom_player_w / CUSTOM_TILE_W;
+    float player_h_tiles = custom_player_h / CUSTOM_TILE_H;
+    custom_respawn_x = custom_world_clamp(
+        checkpoint->x + checkpoint->w * .5f - player_w_tiles * .5f,
+        player_w_tiles) * CUSTOM_TILE_W;
+    custom_respawn_y = custom_world_clamp(
+        checkpoint->y + checkpoint->h - player_h_tiles,
+        player_h_tiles) * CUSTOM_TILE_H;
+}
+static void custom_update_portals(int allow_activation) {
+    float player_x, player_y, player_w, player_h;
+    custom_player_visible_hitbox(&player_x, &player_y, &player_w, &player_h);
+    int form_changed = 0;
+    for (int i = 0; i < custom_object_count; ++i) {
+        OnLevelObject *portal = &custom_level.objects[i];
+        if (portal->type != ON_LEVEL_PORTAL_NORMAL &&
+            portal->type != ON_LEVEL_PORTAL_JETPACK) {
+            custom_portal_inside[i] = 0;
+            continue;
         }
+        int touching = allow_activation && portal->visible &&
+            !custom_object_collision_disabled(portal) &&
+            custom_player_object_contact(player_x, player_y, player_w, player_h,
+                portal, custom_player_vx, custom_player_vy, NULL);
+        if (!touching) {
+            custom_portal_inside[i] = 0;
+            continue;
+        }
+        int entered = !custom_portal_inside[i];
+        custom_portal_inside[i] = 1;
+        if (!entered || form_changed) continue;
+        int jetpack = portal->type == ON_LEVEL_PORTAL_JETPACK;
+        if (custom_jetpack_mode == jetpack) continue;
+        custom_jetpack_mode = jetpack;
+        custom_jetpack_active = 0;
+        custom_player_vy = 0;
+        custom_player_grounded = 0;
+        custom_jump_request = 0;
+        form_changed = 1;
+    }
 }
+
+static void custom_player_reset(void) {
+    if (custom_player_index < 0 || custom_player_index >= custom_object_count) return;
+    custom_player_x = custom_respawn_x;
+    custom_player_y = custom_respawn_y;
+    custom_player_vx = custom_player_vy = 0;
+    custom_player_facing_left = !!custom_level.objects[custom_player_index].flip_x;
+    custom_player_grounded = 0;custom_jetpack_active = 0;
+    custom_control_axis = custom_control_vertical = 0;
+    memset(custom_portal_inside, 0, sizeof custom_portal_inside);
+    custom_jump_request = custom_jump_held = 0;
+}
+
+static float custom_level_fall_plane(void) {
+    float lowest_object_bottom = custom_level.height > 0 ?
+                                (float)custom_level.height : 10.0f;
+    for (int i = 0; i < custom_object_count; ++i) {
+        const OnLevelObject *object = &custom_level.objects[i];
+        if (!object->visible || object->type == ON_LEVEL_TRIGGER ||
+            object->type == ON_LEVEL_PARTICLE) continue;
+        float object_bottom = object->y + object->h;
+        if (object_bottom > lowest_object_bottom)
+            lowest_object_bottom = object_bottom;
+    }
+    float plane = lowest_object_bottom + CUSTOM_FALL_MARGIN_TILES;
+    if (plane > CUSTOM_WORLD_LIMIT) plane = CUSTOM_WORLD_LIMIT;
+    return plane * CUSTOM_TILE_H;
+}
+
 static int custom_platformer_start(const OnPublishedLevel *source) {
     if (!source || source->object_count < 1 ||
         source->object_count > ON_LEVEL_OBJECT_CAP) return 0;
-    custom_level = *source;
-    custom_object_count = source->object_count;
-    memcpy(custom_objects, source->objects,
-           (size_t)custom_object_count * sizeof custom_objects[0]);
+    if (source != &custom_level) custom_level = *source;
+    custom_object_count = custom_level.object_count;
+    custom_player_index = -1;
+    custom_build_id_map();
     int has_player = 0, has_goal = 0;
     for (int i = 0; i < custom_object_count; i++) {
-        OnLevelObject *o = &custom_objects[i];
-        has_player |= o->type == ON_LEVEL_PLAYER;
+        OnLevelObject *o = &custom_level.objects[i];
+        if (o->type == ON_LEVEL_PLAYER) {
+            has_player = 1;
+            custom_player_index = i;
+        }
         has_goal |= o->type == ON_LEVEL_GOAL;
     }
     if (!has_player || !has_goal) return 0;
     memset(custom_trigger_fired, 0, sizeof custom_trigger_fired);
     memset(custom_trigger_active, 0, sizeof custom_trigger_active);
     memset(custom_trigger_timers, 0, sizeof custom_trigger_timers);
+    memset(custom_collision_disabled, 0, sizeof custom_collision_disabled);
+    memset(custom_invisible, 0, sizeof custom_invisible);
+    memset(custom_portal_inside, 0, sizeof custom_portal_inside);
+    custom_jetpack_mode = custom_jetpack_active = 0;
+    custom_background_color = CUSTOM_BACKGROUND_DEFAULT;
+    custom_player_dead = 0;
+    custom_gravity = 1450.0f;custom_elapsed_time = 0;
+    custom_player_collision_enabled = 1;
     custom_group_rotation_count = 0;
+    memset(custom_group_rotation_slots, 0, sizeof custom_group_rotation_slots);
     custom_camera_x = custom_camera_y = 0;
     custom_player_w = CUSTOM_TILE_W * 0.65f;
     custom_player_h = CUSTOM_TILE_H * 0.85f;
+    custom_checkpoint_id = 0;
+    custom_respawn_x = custom_level.objects[custom_player_index].x * CUSTOM_TILE_W;
+    custom_respawn_y = custom_level.objects[custom_player_index].y * CUSTOM_TILE_H;
     custom_player_reset();
     custom_level_coins = 0;custom_level_won = 0;custom_level_active = 1;
-    custom_control_axis = custom_jump_request = custom_jump_held = 0;
+    custom_control_axis = custom_control_vertical = 0;
+    custom_jump_request = custom_jump_held = 0;
     custom_trigger_request = custom_trigger_held = 0;
+    custom_fire_triggers(ON_TRIGGER_START);
+    custom_fall_plane_y = custom_level_fall_plane();
     return 1;
 }
 static void custom_platformer_stop(void) {
     custom_level_active = 0;custom_level_won = 0;custom_object_count = 0;
+    custom_checkpoint_id = 0;custom_respawn_x = custom_respawn_y = 0;
+    custom_fall_plane_y = 0;
+    custom_player_dead = 0;
+    custom_gravity = 1450.0f;custom_elapsed_time = 0;
     custom_group_rotation_count = 0;
-    custom_control_axis = custom_jump_request = custom_jump_held = 0;
+    custom_control_axis = custom_control_vertical = 0;
+    custom_player_facing_left = 0;
+    custom_jump_request = custom_jump_held = 0;
     custom_trigger_request = custom_trigger_held = 0;
+    custom_jetpack_mode = custom_jetpack_active = 0;
+    custom_background_color = CUSTOM_BACKGROUND_DEFAULT;
+    memset(custom_portal_inside, 0, sizeof custom_portal_inside);
 }
 int game_workshop_preview(const OnPublishedLevel *level) {
     if (phase != PH_WORKSHOP_EDIT || !custom_platformer_start(level)) return 0;
@@ -2293,6 +2728,7 @@ int game_workshop_preview(const OnPublishedLevel *level) {
     phase = PH_CUSTOM_PLAY;
     return 1;
 }
+static int custom_object_can_manually_recolor(int type);
 static void custom_apply_trigger_to_object(const OnLevelObject *trigger,
                                            OnLevelObject *target) {
     if (!trigger || !target) return;
@@ -2300,6 +2736,8 @@ static void custom_apply_trigger_to_object(const OnLevelObject *trigger,
                  ON_TRIGGER_ROTATE : trigger->trigger_action;
     switch (action) {
     case ON_TRIGGER_TOGGLE: target->visible = !target->visible;break;
+    case ON_TRIGGER_INVISIBLE: custom_hide_object(target);break;
+    case ON_TRIGGER_NO_COLLISION: custom_disable_object_collision(target);break;
     case ON_TRIGGER_MOVE:
         target->x = custom_world_clamp(target->x + trigger->trigger_value, target->w);
         target->y = custom_world_clamp(target->y + trigger->trigger_value_y, target->h);
@@ -2308,7 +2746,11 @@ static void custom_apply_trigger_to_object(const OnLevelObject *trigger,
         target->angle = fmodf(target->angle + trigger->trigger_value, 360.0f);
         if (target->angle < 0) target->angle += 360.0f;
         break;
-    case ON_TRIGGER_RECOLOR: target->color = trigger->trigger_color;break;
+    case ON_TRIGGER_RECOLOR:
+        if (target->type != ON_LEVEL_TRIGGER &&
+            custom_object_can_manually_recolor(target->type))
+            target->color = trigger->trigger_color;
+        break;
     case ON_TRIGGER_NUMBER:
         target->number = (int)fmaxf(0, fminf(9999, trigger->trigger_value));break;
     default: break;
@@ -2316,44 +2758,62 @@ static void custom_apply_trigger_to_object(const OnLevelObject *trigger,
 }
 static void custom_start_group_rotation(int group_id, int duration) {
     if (group_id < 0 || group_id > 9999 || duration < 1 || duration > 9999) return;
-    for (int i = 0; i < custom_group_rotation_count; ++i) {
-        if (custom_group_rotations[i].group_id == group_id) {
-            custom_group_rotations[i].remaining = (float)duration;
-            return;
-        }
+    int slot = custom_group_rotation_slots[group_id] - 1;
+    if (slot >= 0 && slot < custom_group_rotation_count) {
+        custom_group_rotations[slot].remaining = (float)duration;
+        return;
     }
     if (custom_group_rotation_count >= ON_LEVEL_OBJECT_CAP) return;
-    custom_group_rotations[custom_group_rotation_count++] =
-        (CustomGroupRotation){group_id, (float)duration};
+    slot = custom_group_rotation_count++;
+    custom_group_rotations[slot] = (CustomGroupRotation){group_id, (float)duration, 0};
+    custom_group_rotation_slots[group_id] = slot + 1;
 }
 static void custom_update_group_rotations(float dt) {
-    for (int i = 0; i < custom_group_rotation_count;) {
+    if (!custom_group_rotation_count) return;
+    for (int i = 0; i < custom_group_rotation_count; ++i) {
         CustomGroupRotation *rotation = &custom_group_rotations[i];
-        float step = fminf(dt, rotation->remaining);
-        if (step > 0) {
-            for (int j = 0; j < custom_object_count; ++j) {
-                OnLevelObject *object = &custom_objects[j];
-                if (object->type == ON_LEVEL_TRIGGER ||
-                    object->number != rotation->group_id) continue;
-                object->angle = fmodf(object->angle +
-                                      CUSTOM_GROUP_ROTATION_DEGREES_PER_SECOND * step,
-                                      360.0f);
-            }
-            rotation->remaining -= step;
+        rotation->frame_step = fminf(dt, rotation->remaining);
+        rotation->remaining -= rotation->frame_step;
+    }
+    for (int i = 0; i < custom_object_count; ++i) {
+        OnLevelObject *object = &custom_level.objects[i];
+        if (object->type == ON_LEVEL_TRIGGER || object->number < 0 ||
+            object->number > 9999) continue;
+        int slot = custom_group_rotation_slots[object->number] - 1;
+        if (slot < 0 || slot >= custom_group_rotation_count) continue;
+        object->angle = fmodf(object->angle +
+            CUSTOM_GROUP_ROTATION_DEGREES_PER_SECOND *
+            custom_group_rotations[slot].frame_step, 360.0f);
+    }
+    for (int i = 0; i < custom_group_rotation_count;) {
+        if (custom_group_rotations[i].remaining > .00001f) {
+            ++i;
+            continue;
         }
-        if (rotation->remaining <= .00001f) {
-            custom_group_rotations[i] =
-                custom_group_rotations[--custom_group_rotation_count];
-        } else ++i;
+        custom_group_rotation_slots[custom_group_rotations[i].group_id] = 0;
+        int last = --custom_group_rotation_count;
+        if (i != last) {
+            custom_group_rotations[i] = custom_group_rotations[last];
+            custom_group_rotation_slots[custom_group_rotations[i].group_id] = i + 1;
+        }
     }
 }
 static void custom_execute_trigger(OnLevelObject *trigger) {
     if (!trigger || trigger->type != ON_LEVEL_TRIGGER) return;
+    if (trigger->trigger_kind == ON_TRIGGER_KIND_BACKGROUND) {
+        custom_background_color = trigger->trigger_color & 0xffffffu;
+        return;
+    }
+    if (trigger->trigger_kind == ON_TRIGGER_KIND_GRAVITY) {
+        float offset = fmaxf(-100.0f, fminf(100.0f, trigger->trigger_value));
+        custom_gravity = 1450.0f + offset * 10.0f;
+        return;
+    }
     if (trigger->trigger_kind == ON_TRIGGER_KIND_FOREVER) {
         if (trigger->trigger_has_group) {
             int activate = trigger->trigger_action == ON_TRIGGER_ACTIVATE;
             for (int i = 0; i < custom_object_count; ++i) {
-                OnLevelObject *object = &custom_objects[i];
+                OnLevelObject *object = &custom_level.objects[i];
                 if (object != trigger && object->type != ON_LEVEL_TRIGGER &&
                     object->number == trigger->trigger_group_id)
                     object->visible = activate;
@@ -2361,7 +2821,7 @@ static void custom_execute_trigger(OnLevelObject *trigger) {
         } else {
             /* Continue to read older records whose forever kind was a timer loop. */
             for (int i = 0; i < custom_object_count; ++i) {
-                OnLevelObject *first = &custom_objects[i];
+                OnLevelObject *first = &custom_level.objects[i];
                 if (first != trigger && first->visible &&
                     first->type == ON_LEVEL_TRIGGER &&
                     first->trigger_kind != ON_TRIGGER_KIND_FOREVER) {
@@ -2381,7 +2841,7 @@ static void custom_execute_trigger(OnLevelObject *trigger) {
     }
     if (trigger->trigger_has_group) {
         for (int i = 0; i < custom_object_count; ++i) {
-            OnLevelObject *target = &custom_objects[i];
+            OnLevelObject *target = &custom_level.objects[i];
             if (target != trigger && target->type != ON_LEVEL_TRIGGER &&
                 target->number == trigger->trigger_group_id)
                 custom_apply_trigger_to_object(trigger, target);
@@ -2391,23 +2851,20 @@ static void custom_execute_trigger(OnLevelObject *trigger) {
     }
 }
 static void custom_fire_triggers(int event) {
+    float player_x = 0, player_y = 0, player_w = 0, player_h = 0;
+    if (event == ON_TRIGGER_TOUCH)
+        custom_player_visible_hitbox(&player_x, &player_y, &player_w, &player_h);
     for (int i = 0; i < custom_object_count; i++) {
-        OnLevelObject *trigger = &custom_objects[i];
-        if (!trigger->visible || trigger->type != ON_LEVEL_TRIGGER ||
+        OnLevelObject *trigger = &custom_level.objects[i];
+        if (!trigger->visible || custom_object_collision_disabled(trigger) ||
+            trigger->type != ON_LEVEL_TRIGGER ||
             trigger->trigger_event != event) continue;
         int legacy_loop = trigger->trigger_kind == ON_TRIGGER_KIND_FOREVER &&
                           !trigger->trigger_has_group;
         if (legacy_loop ? custom_trigger_active[i] : custom_trigger_fired[i]) continue;
-        float tx = trigger->x * CUSTOM_TILE_W, ty = trigger->y * CUSTOM_TILE_H;
-        float tw = trigger->w * CUSTOM_TILE_W, th = trigger->h * CUSTOM_TILE_H;
         if (event == ON_TRIGGER_TOUCH &&
-            !custom_overlap(custom_player_x, custom_player_y, custom_player_w,
-                            custom_player_h, tx, ty, tw, th)) continue;
-        if (event == ON_TRIGGER_MANUAL) {
-            float dx = custom_player_x + custom_player_w * .5f - (tx + tw * .5f);
-            float dy = custom_player_y + custom_player_h * .5f - (ty + th * .5f);
-            if (dx * dx + dy * dy > 150.0f * 150.0f) continue;
-        }
+            !custom_player_object_contact(player_x, player_y, player_w, player_h,
+                trigger, custom_player_vx, custom_player_vy, NULL)) continue;
         if (legacy_loop) {
             custom_trigger_active[i] = 1;
             custom_trigger_timers[i] = 0;
@@ -2419,10 +2876,11 @@ static void custom_fire_triggers(int event) {
 }
 static void custom_run_forever_triggers(float dt) {
     for (int i = 0; i < custom_object_count; ++i) {
-        OnLevelObject *trigger = &custom_objects[i];
+        OnLevelObject *trigger = &custom_level.objects[i];
         if (trigger->type != ON_LEVEL_TRIGGER ||
             trigger->trigger_kind != ON_TRIGGER_KIND_FOREVER ||
-            trigger->trigger_has_group || !trigger->visible) continue;
+            trigger->trigger_has_group || !trigger->visible ||
+            custom_object_collision_disabled(trigger)) continue;
         if (!custom_trigger_active[i]) {
             custom_trigger_active[i] = 1;custom_trigger_timers[i] = 0;
             continue;
@@ -2434,83 +2892,171 @@ static void custom_run_forever_triggers(float dt) {
         }
     }
 }
+static int custom_resolve_player_solids(void) {
+    if (!custom_player_collision_enabled) return 0;
+    int grounded = 0;
+    for (int iteration = 0; iteration < 4; ++iteration) {
+        int collided = 0;
+        for (int i = 0; i < custom_object_count; ++i) {
+            OnLevelObject *object = &custom_level.objects[i];
+            if (!custom_solid(object)) continue;
+            float player_x, player_y, player_w, player_h;
+            custom_player_visible_hitbox(&player_x, &player_y, &player_w, &player_h);
+            CustomContact contact;
+            if (!custom_player_object_contact(player_x, player_y,
+                    player_w, player_h, object, custom_player_vx,
+                    custom_player_vy, &contact)) continue;
+            custom_player_x += contact.x * contact.depth;
+            custom_player_y += contact.y * contact.depth;
+            float inward_velocity = custom_player_vx * contact.x +
+                                    custom_player_vy * contact.y;
+            if (inward_velocity < 0) {
+                custom_player_vx -= inward_velocity * contact.x;
+                custom_player_vy -= inward_velocity * contact.y;
+            }
+            if (contact.y < (object->type == ON_LEVEL_SLOPE ? -.35f : -.5f))
+                grounded = 1;
+            collided = 1;
+        }
+        if (!collided) break;
+    }
+    return grounded;
+}
 static void custom_platformer_update(float dt) {
     if (!custom_level_active || custom_level_won) return;
     if (dt < 0) dt = 0;
     if (dt > .05f) dt = .05f;
-    float before_y = custom_player_y;
+    if (custom_player_dead) return;
+    custom_elapsed_time += dt;
     custom_player_vx = (float)custom_control_axis * 250.0f;
-    if (custom_jump_request && custom_player_grounded) {
+    if (custom_control_axis < 0) custom_player_facing_left = 1;
+    else if (custom_control_axis > 0) custom_player_facing_left = 0;
+    float jetpack_velocity = custom_control_vertical ?
+        -(float)custom_control_vertical * 250.0f : 0.0f;
+    if (custom_jetpack_mode) {
+        custom_player_vy = jetpack_velocity;
+    } else if (custom_jump_request && !custom_activate_orb() &&
+               custom_player_grounded) {
         custom_player_vy = -570.0f;custom_player_grounded = 0;
     }
     custom_jump_request = 0;
-    custom_player_vy = fminf(780.0f, custom_player_vy + 1450.0f * dt);
-    custom_player_x += custom_player_vx * dt;
-    if (custom_player_x < -CUSTOM_WORLD_LIMIT * CUSTOM_TILE_W)
-        custom_player_x = -CUSTOM_WORLD_LIMIT * CUSTOM_TILE_W;
-    if (custom_player_x > CUSTOM_WORLD_LIMIT * CUSTOM_TILE_W - custom_player_w)
-        custom_player_x = CUSTOM_WORLD_LIMIT * CUSTOM_TILE_W - custom_player_w;
-    for (int i = 0; i < custom_object_count; i++) {
-        OnLevelObject *o = &custom_objects[i];
-        if (!custom_solid(o)) continue;
-        float x = o->x * CUSTOM_TILE_W, y = o->y * CUSTOM_TILE_H;
-        float w = o->w * CUSTOM_TILE_W, h = o->h * CUSTOM_TILE_H;
-        if (!custom_overlap(custom_player_x, custom_player_y, custom_player_w,
-                            custom_player_h, x, y, w, h)) continue;
-        if (custom_player_vx > 0) custom_player_x = x - custom_player_w;
-        else if (custom_player_vx < 0) custom_player_x = x + w;
-    }
-    custom_player_y += custom_player_vy * dt;
+    custom_jetpack_active = custom_jetpack_mode &&
+        (custom_control_axis != 0 || custom_control_vertical != 0);
+    float predicted_vy = custom_jetpack_mode ? custom_player_vy :
+        fminf(780.0f, custom_player_vy + custom_gravity * dt);
+    float displacement = fmaxf(fabsf(custom_player_vx * dt),
+                                fabsf(predicted_vy * dt));
+    int substeps = (int)ceilf(displacement / 4.0f);
+    if (substeps < 1) substeps = 1;
+    if (substeps > 16) substeps = 16;
+    float sub_dt = dt / (float)substeps;
     custom_player_grounded = 0;
-    for (int i = 0; i < custom_object_count; i++) {
-        OnLevelObject *o = &custom_objects[i];
-        if (!custom_solid(o)) continue;
-        float x = o->x * CUSTOM_TILE_W, y = o->y * CUSTOM_TILE_H;
-        float w = o->w * CUSTOM_TILE_W, h = o->h * CUSTOM_TILE_H;
-        if (!custom_overlap(custom_player_x, custom_player_y, custom_player_w,
-                            custom_player_h, x, y, w, h)) continue;
-        if (custom_player_vy >= 0 && before_y + custom_player_h <= y + 8) {
-            custom_player_y = y - custom_player_h;
-            custom_player_vy = 0;custom_player_grounded = 1;
-        } else if (custom_player_vy < 0 && before_y >= y + h - 5) {
-            custom_player_y = y + h;custom_player_vy = 0;
-        }
+    for (int step = 0; step < substeps; ++step) {
+        if (custom_jetpack_mode)
+            custom_player_vy = jetpack_velocity;
+        else
+            custom_player_vy = fminf(780.0f,
+                custom_player_vy + custom_gravity * sub_dt);
+        custom_player_x += custom_player_vx * sub_dt;
+        if (custom_player_x < -CUSTOM_WORLD_LIMIT * CUSTOM_TILE_W)
+            custom_player_x = -CUSTOM_WORLD_LIMIT * CUSTOM_TILE_W;
+        if (custom_player_x > CUSTOM_WORLD_LIMIT * CUSTOM_TILE_W - custom_player_w)
+            custom_player_x = CUSTOM_WORLD_LIMIT * CUSTOM_TILE_W - custom_player_w;
+        custom_player_y += custom_player_vy * sub_dt;
+        custom_player_grounded = custom_resolve_player_solids();
     }
-    if (custom_player_y > CUSTOM_WORLD_LIMIT * CUSTOM_TILE_H ||
-        custom_player_y + custom_player_h < -CUSTOM_WORLD_LIMIT * CUSTOM_TILE_H)
+    int player_respawned = 0;
+    int fell_below_level = custom_player_y + custom_player_h >
+                           custom_fall_plane_y;
+    int escaped_world_top = custom_player_y + custom_player_h <
+                            -CUSTOM_WORLD_LIMIT * CUSTOM_TILE_H;
+    if (fell_below_level) {
+        /* Falling is a terminal death: no checkpoint or automatic restart. */
+        custom_player_dead = 1;
+        custom_player_vx = custom_player_vy = 0;
+        custom_player_grounded = 0;
+        custom_jetpack_active = 0;
+        custom_control_axis = custom_control_vertical = 0;
+        custom_jump_request = custom_jump_held = 0;
+        custom_trigger_request = custom_trigger_held = 0;
+        return;
+    }
+    if (escaped_world_top) {
         custom_player_reset();
-    for (int i = 0; i < custom_object_count; i++) {
-        OnLevelObject *o = &custom_objects[i];
-        if (!o->visible || o->type == ON_LEVEL_PLAYER) continue;
-        float x = o->x * CUSTOM_TILE_W, y = o->y * CUSTOM_TILE_H;
-        float w = o->w * CUSTOM_TILE_W, h = o->h * CUSTOM_TILE_H;
-        if (!custom_overlap(custom_player_x, custom_player_y, custom_player_w,
-                            custom_player_h, x, y, w, h)) continue;
-        if (o->type == ON_LEVEL_HAZARD || o->type == ON_LEVEL_ENEMY) {
-            custom_player_reset();
-        } else if (o->type == ON_LEVEL_COIN) {
-            o->visible = 0;custom_level_coins++;
-            custom_fire_triggers(ON_TRIGGER_COIN);
-        } else if (o->type == ON_LEVEL_GOAL) {
-            custom_level_won = 1;
+        player_respawned = 1;
+    }
+    if (custom_player_collision_enabled && !player_respawned) {
+        float player_x, player_y, player_w, player_h;
+        custom_player_visible_hitbox(&player_x, &player_y, &player_w, &player_h);
+        for (int i = 0; i < custom_object_count; ++i) {
+            OnLevelObject *object = &custom_level.objects[i];
+            if (!object->visible ||
+                (object->type != ON_LEVEL_HAZARD && object->type != ON_LEVEL_ENEMY) ||
+                custom_object_collision_disabled(object) ||
+                !custom_player_object_contact(player_x, player_y,
+                    player_w, player_h, object, custom_player_vx,
+                    custom_player_vy, NULL)) continue;
+            custom_player_reset();player_respawned = 1;break;
+        }
+        if (!player_respawned) {
+            custom_player_visible_hitbox(&player_x, &player_y, &player_w, &player_h);
+            for (int i = 0; i < custom_object_count; ++i) {
+                OnLevelObject *object = &custom_level.objects[i];
+                if (!object->visible || object->type == ON_LEVEL_PLAYER ||
+                    object->type == ON_LEVEL_TRIGGER || object->type == ON_LEVEL_PARTICLE ||
+                    object->type == ON_LEVEL_ORB_YELLOW ||
+                    object->type == ON_LEVEL_ORB_ORANGE ||
+                    object->type == ON_LEVEL_HAZARD || object->type == ON_LEVEL_ENEMY ||
+                    custom_object_collision_disabled(object) ||
+                    !custom_player_object_contact(player_x, player_y,
+                        player_w, player_h, object, custom_player_vx,
+                        custom_player_vy, NULL)) continue;
+                if (object->type == ON_LEVEL_COIN) {
+                    object->visible = 0;custom_level_coins++;
+                    custom_fire_triggers(ON_TRIGGER_COIN);
+                } else if (object->type == ON_LEVEL_GOAL) {
+                    custom_level_won = 1;
+                } else if (object->type == ON_LEVEL_CHECKPOINT) {
+                    custom_activate_checkpoint(object);
+                }
+            }
         }
     }
+    custom_update_portals(custom_player_collision_enabled && !player_respawned);
+    custom_jetpack_active = custom_jetpack_mode &&
+        (custom_control_axis != 0 || custom_control_vertical != 0);
     custom_fire_triggers(ON_TRIGGER_TOUCH);
     if (custom_trigger_request) custom_fire_triggers(ON_TRIGGER_MANUAL);
     custom_trigger_request = 0;
     custom_run_forever_triggers(dt);
     custom_update_group_rotations(dt);
 }
+static int custom_object_can_manually_recolor(int type) {
+    return type == ON_LEVEL_BLOCK || type == ON_LEVEL_GROUND ||
+           type == ON_LEVEL_HAZARD || type == ON_LEVEL_TRIGGER ||
+           type == ON_LEVEL_SLOPE || type == ON_LEVEL_PARTICLE;
+}
 static void custom_draw_object(const OnLevelObject *o) {
+    if (!o || o->type == ON_LEVEL_TRIGGER || o->type == ON_LEVEL_PARTICLE) return;
     int x = (int)lrintf(o->x * CUSTOM_TILE_W - custom_camera_x);
     int y = (int)lrintf(o->y * CUSTOM_TILE_H - custom_camera_y);
     int w = (int)lrintf(o->w * CUSTOM_TILE_W), h = (int)lrintf(o->h * CUSTOM_TILE_H);
     if (w < 3 || h < 3) return;
-    uint32_t fill = custom_color(o->color);
     int rotated = fabsf(o->angle) >= .01f;
+    uint32_t tint = COL((o->color >> 16) & 255u,
+                        (o->color >> 8) & 255u, o->color & 255u);
+    int tint_opacity = custom_object_can_manually_recolor(o->type) ? 128 : 0;
 #define DRAW_LEVEL_ART(id) do { \
-        if (rotated) sprite_draw_rotated((id), x, y, w, h, o->angle); \
-        else sprite_draw((id), x, y, w, h, 0); \
+        if (tint_opacity > 0 && rotated) \
+            sprite_draw_rotated_tinted_flipped((id), x, y, w, h, \
+                o->angle, o->flip_x, o->flip_y, tint, tint_opacity); \
+        else if (tint_opacity > 0) \
+            sprite_draw_tinted_flipped((id), x, y, w, h, \
+                o->flip_x, o->flip_y, tint, tint_opacity); \
+        else if (rotated) \
+            sprite_draw_rotated_flipped((id), x, y, w, h, o->angle, \
+                o->flip_x, o->flip_y); \
+        else sprite_draw_flipped((id), x, y, w, h, o->flip_x, o->flip_y); \
     } while (0)
     switch (o->type) {
     case ON_LEVEL_BLOCK:
@@ -2525,90 +3071,191 @@ static void custom_draw_object(const OnLevelObject *o) {
                 for (int dx = 0; dx < w; dx += tile_w) {
                     int draw_w = w - dx < tile_w ? w - dx : tile_w;
                     int draw_h = h - dy < tile_h ? h - dy : tile_h;
-                    sprite_draw(PV_ART_LEVEL_PLATFORM, x + dx, y + dy,
-                                draw_w, draw_h, 0);
+                    if (tint_opacity > 0)
+                        sprite_draw_tinted_flipped(PV_ART_LEVEL_PLATFORM,
+                            x + dx, y + dy, draw_w, draw_h,
+                            o->flip_x, o->flip_y, tint, tint_opacity);
+                    else
+                        sprite_draw_flipped(PV_ART_LEVEL_PLATFORM,
+                            x + dx, y + dy, draw_w, draw_h,
+                            o->flip_x, o->flip_y);
                 }
         }
         break;
     }
     case ON_LEVEL_HAZARD:
         DRAW_LEVEL_ART(PV_ART_LEVEL_SPIKE);break;
+    case ON_LEVEL_SLOPE:
+        DRAW_LEVEL_ART(PV_ART_LEVEL_SLOPE);break;
     case ON_LEVEL_COIN:
         DRAW_LEVEL_ART(PV_ART_COIN);break;
-    case ON_LEVEL_ENEMY:
-        if (rotated) sprite_draw_rotated(PV_ART_DUCK, x, y, w, h, o->angle);
-        else sprite_draw(PV_ART_DUCK, x, y, w, h, 1);
+    case ON_LEVEL_ORB_YELLOW:
+        DRAW_LEVEL_ART(PV_ART_LEVEL_ORB_YELLOW);break;
+    case ON_LEVEL_ORB_ORANGE:
+        DRAW_LEVEL_ART(PV_ART_LEVEL_ORB_ORANGE);break;
+    case ON_LEVEL_ENEMY: {
+        int flip_x = !o->flip_x;
+        if (rotated) sprite_draw_rotated_flipped(PV_ART_DUCK, x, y, w, h,
+            o->angle, flip_x, o->flip_y);
+        else sprite_draw_flipped(PV_ART_DUCK, x, y, w, h,
+                                 flip_x, o->flip_y);
         break;
+    }
     case ON_LEVEL_PLAYER: /* The moving player is rendered separately. */
         break;
     case ON_LEVEL_GOAL:
         DRAW_LEVEL_ART(PV_ART_LEVEL_FLAG);break;
-    case ON_LEVEL_TRIGGER: {
-        rect_blend(x, y, x + w - 1, y + h - 1, fill, 50);
-        int art = o->trigger_kind == ON_TRIGGER_KIND_ROTATE ?
-                  PV_ART_LEVEL_TRIGGER_ROTATE :
-                  o->trigger_kind == ON_TRIGGER_KIND_FOREVER ?
-                  PV_ART_LEVEL_TRIGGER_FOREVER : PV_ART_LEVEL_TRIGGER;
-        if (rotated) sprite_draw_rotated(art, x, y, w, h, o->angle);
-        else sprite_draw(art, x, y, w, h, 0);
-        break;
-    }
+    case ON_LEVEL_CHECKPOINT:
+        DRAW_LEVEL_ART(custom_checkpoint_id == o->id ?
+                       PV_ART_LEVEL_CHECKPOINT_ACTIVE :
+                       PV_ART_LEVEL_CHECKPOINT_INACTIVE);break;
+    case ON_LEVEL_PORTAL_NORMAL:
+        DRAW_LEVEL_ART(PV_ART_LEVEL_PORTAL_NORMAL);break;
+    case ON_LEVEL_PORTAL_JETPACK:
+        DRAW_LEVEL_ART(PV_ART_LEVEL_PORTAL_JETPACK);break;
+    case ON_LEVEL_TRIGGER:
+        break; /* Trigger textures are editor-only; triggers stay hidden in play. */
     }
 #undef DRAW_LEVEL_ART
-    if (o->number) draw_int(x + 3, y + 3, 2, COL(255, 255, 255), o->number);
+}
+static void custom_particle_dot(float x, float y, float radius,
+                                uint32_t color, float opacity) {
+    if (opacity <= .01f) return;
+    if (opacity > 1.0f) opacity = 1.0f;
+    int cx = (int)lrintf(x), cy = (int)lrintf(y);
+    int extent = (int)ceilf(radius);
+    if (extent < 1) extent = 1;
+    float radius_sq = radius * radius;
+    if (radius_sq < 1.0f) radius_sq = 1.0f;
+    for (int dy = -extent; dy <= extent; ++dy)
+        for (int dx = -extent; dx <= extent; ++dx) {
+            float distance_sq = (float)(dx * dx + dy * dy);
+            if (distance_sq > radius_sq) continue;
+            float edge = .72f + .28f * (1.0f - distance_sq / radius_sq);
+            int alpha = (int)lrintf(255.0f * opacity * edge);
+            if (alpha > 0) setpixA(cx + dx, cy + dy, color, alpha);
+        }
+}
+static uint32_t custom_particle_color(const OnLevelObject *object) {
+    if (object->type == ON_LEVEL_ORB_YELLOW) return COL(255, 248, 107);
+    if (object->type == ON_LEVEL_ORB_ORANGE) return COL(255, 187, 102);
+    return COL((object->color >> 16) & 255u,
+               (object->color >> 8) & 255u, object->color & 255u);
+}
+static void custom_draw_particle_effects(void) {
+    const int orb_particle_count = 5;
+    int particle_budget = 4096;
+    for (int object_index = 0; object_index < custom_object_count; ++object_index) {
+        const OnLevelObject *object = &custom_level.objects[object_index];
+        if (!object->visible ||
+            (object->type != ON_LEVEL_PARTICLE &&
+             object->type != ON_LEVEL_ORB_YELLOW &&
+             object->type != ON_LEVEL_ORB_ORANGE) ||
+            custom_object_is_invisible(object)) continue;
+        float width = object->w * CUSTOM_TILE_W;
+        float height = object->h * CUSTOM_TILE_H;
+        float center_x = (object->x + object->w * .5f) * CUSTOM_TILE_W - custom_camera_x;
+        float center_y = (object->y + object->h * .5f) * CUSTOM_TILE_H - custom_camera_y;
+        float extent = fmaxf(width, height) + 32.0f;
+        if (object->type == ON_LEVEL_PARTICLE) {
+            float life = object->emitter.lifetime;
+            extent += object->emitter.speed * life +
+                (object->emitter.gravity_enabled ?
+                 .5f * object->emitter.gravity * life * life : 0.0f);
+        }
+        if (center_x + extent < 0 || center_x - extent >= GAME_W ||
+            center_y + extent < 102 || center_y - extent >= GAME_H) continue;
+        float radians = object->angle * 0.01745329251994329577f;
+        float c = cosf(radians), s = sinf(radians);
+        uint32_t color = custom_particle_color(object);
+        if (object->type == ON_LEVEL_ORB_YELLOW ||
+            object->type == ON_LEVEL_ORB_ORANGE) {
+            float orbit = fminf(width, height) * .58f;
+            for (int i = 0; i < orb_particle_count; ++i) {
+                float phase = custom_elapsed_time * 2.1f +
+                    i * 6.2831853071795864769f / orb_particle_count +
+                    (object->id % 4093) * .023f;
+                float local_x = cosf(phase) * orbit * (object->flip_x ? -1.0f : 1.0f);
+                float local_y = sinf(phase) * orbit * .7f *
+                                (object->flip_y ? -1.0f : 1.0f);
+                float x = center_x + local_x * c - local_y * s;
+                float y = center_y + local_x * s + local_y * c;
+                float flicker = .5f + .5f * sinf(phase * 1.6f);
+                custom_particle_dot(x, y, 1.2f + flicker * .8f, color,
+                                    .18f + flicker * .62f);
+            }
+        } else {
+            const OnLevelParticle *emitter = &object->emitter;
+            if (particle_budget <= 0 || !emitter->enabled) continue;
+            for (int i = 0; i < ON_LEVEL_PARTICLE_MAX_VISIBLE &&
+                            particle_budget > 0; ++i) {
+                float local_x, local_y, size, opacity;
+                if (!on_level_particle_sample(emitter, object->id,
+                        custom_elapsed_time, i, width, height,
+                        &local_x, &local_y, &size, &opacity)) continue;
+                local_x *= object->flip_x ? -1.0f : 1.0f;
+                local_y *= object->flip_y ? -1.0f : 1.0f;
+                float x = center_x + local_x * c - local_y * s;
+                float y = center_y + local_x * s + local_y * c;
+                if (emitter->glow)
+                    custom_particle_dot(x, y, size * 1.5f, color, opacity * .16f);
+                custom_particle_dot(x, y, fmaxf(.7f, size * .5f), color, opacity);
+                particle_budget--;
+            }
+        }
+    }
 }
 static void custom_platformer_draw(void) {
     custom_camera_x = custom_player_x + custom_player_w * .5f - GAME_W * .40f;
     custom_camera_y = custom_player_y + custom_player_h * .5f - 411.0f;
-    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(139, 204, 230));
-    float cloud_scroll_f = fmodf(custom_camera_x * .18f, GAME_W + 300.0f);
-    if (cloud_scroll_f < 0) cloud_scroll_f += GAME_W + 300.0f;
-    int cloud_scroll = (int)cloud_scroll_f;
-    int cloud_y = 100 - (int)(custom_camera_y * .05f);
-    for (int base = -cloud_scroll - 160; base < GAME_W + 300; base += GAME_W + 300) {
-        ellipse(base + 190, cloud_y, 78, 24, COL(239, 247, 227));
-        ellipse(base + 225, cloud_y, 53, 30, COL(239, 247, 227));
-    }
-    int grass_y = 590 - (int)lrintf(custom_camera_y);
-    if (grass_y < GAME_H) {
-        if (grass_y < 103) grass_y = 103;
-        rect(0, grass_y, GAME_W - 1, GAME_H - 1, COL(143, 190, 93));
-        for (int x = 0; x < GAME_W; x += 80)
-            rect(x, grass_y, x + 54, grass_y + 3, COL(190, 221, 124));
-    }
+    uint32_t rendered_background = preferences_neutral_background_enabled() ?
+                                  CUSTOM_BACKGROUND_DEFAULT : custom_background_color;
+    rect(0, 0, GAME_W - 1, GAME_H - 1,
+         COL((rendered_background >> 16) & 255u,
+             (rendered_background >> 8) & 255u,
+             rendered_background & 255u));
+    /* A flat neutral backdrop keeps background colors from looking like
+     * collision overlays; the level's own artwork remains visible. */
     for (int i = 0; i < custom_object_count; i++)
-        if (custom_objects[i].visible && custom_objects[i].type != ON_LEVEL_PLAYER)
-            custom_draw_object(&custom_objects[i]);
-    int player_visible = 1;
+        if (custom_level.objects[i].visible && !custom_object_is_invisible(&custom_level.objects[i]) &&
+            custom_level.objects[i].type != ON_LEVEL_PLAYER &&
+            custom_level.objects[i].type != ON_LEVEL_TRIGGER)
+            custom_draw_object(&custom_level.objects[i]);
+    custom_draw_particle_effects();
+    int player_visible = 1, player_flip_x = 0, player_flip_y = 0;
     float player_angle = 0;
-    for (int i = 0; i < custom_object_count; ++i)
-        if (custom_objects[i].type == ON_LEVEL_PLAYER) {
-            player_visible = custom_objects[i].visible;
-            player_angle = custom_objects[i].angle;
-            break;
-        }
-    if (custom_level_active && player_visible) {
+    if (custom_player_index >= 0 && custom_player_index < custom_object_count) {
+        const OnLevelObject *player = &custom_level.objects[custom_player_index];
+        player_visible = player->visible && !custom_object_is_invisible(player);
+        player_angle = player->angle;
+        player_flip_x = custom_player_facing_left;
+        player_flip_y = player->flip_y;
+    }
+    if (custom_level_active && player_visible && !custom_player_dead) {
         int px = (int)lrintf(custom_player_x - custom_camera_x);
         int py = (int)lrintf(custom_player_y - custom_camera_y);
+        int player_art = !custom_jetpack_mode ? PV_ART_BREAD :
+            custom_jetpack_active ? PV_ART_JETPACK_ACTIVE : PV_ART_JETPACK_INACTIVE;
         if (fabsf(player_angle) >= .01f)
-            sprite_draw_rotated(PV_ART_BREAD, px, py, (int)custom_player_w,
-                                (int)custom_player_h, player_angle);
+            sprite_draw_rotated_flipped(player_art, px, py,
+                (int)custom_player_w, (int)custom_player_h, player_angle,
+                player_flip_x, player_flip_y);
         else
-            sprite_draw(PV_ART_BREAD, px, py, (int)custom_player_w,
-                        (int)custom_player_h, 0);
+            sprite_draw_flipped(player_art, px, py,
+                (int)custom_player_w, (int)custom_player_h,
+                player_flip_x, player_flip_y);
     }
-    rect(0, 0, GAME_W - 1, 102, COL(190, 190, 190));
-    rect(0, 100, GAME_W - 1, 102, COL(0, 0, 0));
-    draw_text(24, 19, 3, COL(17, 17, 17), custom_level.title);
+    rect(0, 0, GAME_W - 1, 102, COL(220, 232, 239));
+    rect(0, 100, GAME_W - 1, 102, COL(36, 59, 82));
+    draw_text(24, 19, 3, COL(36, 59, 82), custom_level.title);
     char label_text[48];
-    snprintf(label_text, sizeof label_text, "ID %s   МОНЕТЫ %d", custom_level.id, custom_level_coins);
-    draw_text(26, 64, 2, COL(68, 68, 68), label_text);
+    snprintf(label_text, sizeof label_text, "МОНЕТЫ %d", custom_level_coins);
+    draw_text(26, 64, 2, COL(83, 106, 128), label_text);
     if (custom_level_won) {
-        rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(20, 20, 20), 170);
-        rect(358, 264, 922, 447, COL(0, 0, 0));
-        rect(365, 271, 915, 440, COL(245, 245, 245));
-        draw_text_c(640, 304, 5, COL(17, 17, 17), "УРОВЕНЬ ПРОЙДЕН!");
-        draw_text_c(640, 373, 2, COL(68, 68, 68), "НАЖМИ «К УРОВНЯМ», ЧТОБЫ ВЕРНУТЬСЯ");
+        rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(32, 53, 75), 170);
+        rect(358, 264, 922, 447, COL(36, 59, 82));
+        rect(365, 271, 915, 440, COL(247, 243, 232));
+        draw_text_c(640, 304, 5, COL(36, 59, 82), "УРОВЕНЬ ПРОЙДЕН!");
     }
 }
 
@@ -2660,7 +3307,7 @@ static void draw_workshop_fallback(void) {
 static void render(void) {
     if (phase == PH_WORKSHOP || phase == PH_WORKSHOP_DETAILS ||
         phase == PH_WORKSHOP_EDIT) {draw_workshop_fallback();return;}
-    if (phase == PH_CUSTOM_LEVELS) {rect(0, 0, GAME_W - 1, GAME_H - 1, COL(226, 226, 226));return;}
+    if (phase == PH_CUSTOM_LEVELS) {rect(0, 0, GAME_W - 1, GAME_H - 1, COL(245, 242, 232));return;}
     if (phase == PH_CUSTOM_PLAY) {custom_platformer_draw();return;}
     if (phase == PH_ONLINE_ROOMS) {draw_online_rooms();return;}
     if (phase == PH_ONLINE_LOBBY) {draw_online_lobby();return;}
@@ -2739,14 +3386,9 @@ void game_tick(float dt, uint32_t *fb) {
         update_online(dt > 0.05f ? 0.05f : dt);
         if (online_hint_time > 0) online_hint_time -= dt;
     } else if (phase == PH_CUSTOM_LEVELS) {
-        OnNetView levels;on_net_view(&levels);
-        if (levels.level_loaded) {
+        if (on_net_take_loaded_level(&custom_level)) {
             custom_play_return = PH_CUSTOM_LEVELS;
-            if (custom_platformer_start(&levels.loaded_level)) {
-                on_net_level_consumed();phase = PH_CUSTOM_PLAY;
-            } else {
-                on_net_level_consumed();
-            }
+            if (custom_platformer_start(&custom_level)) phase = PH_CUSTOM_PLAY;
         }
     } else if (phase == PH_CUSTOM_PLAY) {
         custom_platformer_update(dt > 0.05f ? 0.05f : dt);
@@ -2763,7 +3405,10 @@ void game_tick(float dt, uint32_t *fb) {
             if (intro_t >= length[intro_step]) advance_intro();
         }
     }
-    if (fb) { FB = fb; render(); }
+    if (fb) {
+        FB = fb;
+        render();
+    }
 }
 
 int game_phase(void) { return (int)phase; }
@@ -3181,11 +3826,24 @@ float game_debug_cooldown(int plant) {
 }
 float game_debug_custom_player_x(void) {return custom_player_x;}
 float game_debug_custom_player_y(void) {return custom_player_y;}
+float game_debug_custom_player_vx(void) {return custom_player_vx;}
+float game_debug_custom_player_vy(void) {return custom_player_vy;}
+int game_debug_custom_player_grounded(void) {return custom_player_grounded;}
+int game_debug_custom_player_facing_left(void) {return custom_player_facing_left;}
+float game_debug_custom_gravity(void) {return custom_gravity;}
+uint32_t game_debug_custom_background_color(void) {return custom_background_color;}
+int game_debug_custom_checkpoint_id(void) {return custom_checkpoint_id;}
+int game_debug_custom_jetpack_mode(void) {return custom_jetpack_mode;}
+int game_debug_custom_jetpack_active(void) {return custom_jetpack_active;}
 int game_debug_custom_object(int id, OnLevelObject *out) {
     if (!out) return 0;
     OnLevelObject *object = custom_find_id(id);
     if (!object) return 0;
     *out = *object;return 1;
+}
+int game_debug_custom_object_invisible(int id) {
+    OnLevelObject *object = custom_find_id(id);
+    return object ? custom_object_is_invisible(object) : 0;
 }
 int game_debug_garden_plant_type(int row, int col) {
     if ((unsigned)row >= ROWS || (unsigned)col >= COLS) return PT_NONE;

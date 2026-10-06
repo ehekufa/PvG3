@@ -30,7 +30,10 @@ typedef struct {
     int level_publish_busy;
     char level_publish_id[ON_LEVEL_ID_SIZE];
     char level_publish_notice[144];
-    OnPublishedLevel loaded_level;
+    /* Lightweight immutable snapshot metadata; object storage is copied only
+     * when the main thread consumes a freshly loaded level. */
+    char loaded_level_id[ON_LEVEL_ID_SIZE];
+    char loaded_level_title[ON_LEVEL_TITLE_SIZE];
 } OnNetView;
 
 void on_net_open(void);
@@ -43,6 +46,9 @@ void on_net_level_fetch(const char *id);
 /* Explicit native-workshop action: creates a new public level and index entry. */
 int on_net_level_publish(const OnPublishedLevel *level);
 void on_net_level_cancel(void);
+/* Copies the pending record to caller-owned storage without exposing worker
+ * memory; caller storage should be static/heap-backed for the 20k-object cap. */
+int on_net_take_loaded_level(OnPublishedLevel *out);
 void on_net_level_consumed(void);
 void on_net_create(int map);
 void on_net_join(const char *id);

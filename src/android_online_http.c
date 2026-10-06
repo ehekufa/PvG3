@@ -94,8 +94,10 @@ int on_http_request(const char *path, const char *method, const char *body,
     conn = (*env)->CallObjectMethod(env, url, open);
     if (!conn || !good(env) || !(*env)->IsInstanceOf(env, conn, http_class)) goto done;
     (*env)->CallVoidMethod(env, conn, set_method, verb);
-    (*env)->CallVoidMethod(env, conn, connect_timeout, 7500);
-    (*env)->CallVoidMethod(env, conn, read_timeout, 7500);
+    int level_transfer = !strncmp(path, "levels/", 7);
+    jint timeout_ms = level_transfer ? 60000 : 7500;
+    (*env)->CallVoidMethod(env, conn, connect_timeout, timeout_ms);
+    (*env)->CallVoidMethod(env, conn, read_timeout, timeout_ms);
     (*env)->CallVoidMethod(env, conn, caches, JNI_FALSE);
     property(env, conn, header, "Accept", "application/json");
     property(env, conn, header, "Cache-Control", "no-cache");
@@ -103,7 +105,7 @@ int on_http_request(const char *path, const char *method, const char *body,
     if (!good(env)) goto done;
     if (body && !strcmp(method, "PUT")) {
         size_t length = strlen(body);
-        if (length > 65536) goto done;
+        if (length >= ON_LEVEL_JSON_CAP) goto done;
         property(env, conn, header, "Content-Type", "application/json; charset=utf-8");
         (*env)->CallVoidMethod(env, conn, set_output, JNI_TRUE);
         if (!good(env)) goto done;
@@ -124,6 +126,9 @@ int on_http_request(const char *path, const char *method, const char *body,
     }
     result = (*env)->CallIntMethod(env, conn, status);
     if (!good(env)) {result = -1;goto done;}
+    /* Firebase echoes successful PUT values. The level publisher only needs
+     * the status, so avoid buffering a second copy of a multi-megabyte level. */
+    if (level_transfer && !strcmp(method, "PUT") && result < 400) goto done;
     stream = (*env)->CallObjectMethod(env, conn, result >= 400 ? get_error : get_input);
     if (!good(env)) {result = -1;goto done;}
     if (stream) {

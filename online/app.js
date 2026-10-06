@@ -5,11 +5,14 @@ import {DATABASE, validId, randomPlayerId, listRooms, getRoom, createRoom,
         listPublishedLevels, getPublishedLevel, publishLevel} from './firebase.js';
 import {preloadArtwork, drawGame} from './draw.js';
 import {LEVEL_WIDTH, LEVEL_HEIGHT, MAX_LEVEL_OBJECTS, WORLD_LIMIT,
-        MIN_OBJECT_SIZE, MAX_OBJECT_WIDTH, MAX_OBJECT_HEIGHT, TYPE_LABELS,
-        TRIGGER_LABELS, newDraft,
+        MIN_OBJECT_SIZE, MAX_OBJECT_WIDTH, MAX_OBJECT_HEIGHT, TILE_W, TILE_H,
+        TYPE_LABELS, TRIGGER_KINDS, TRIGGER_LABELS, canManuallyRecolorType,
+        isOfficialLevel, newDraft, setTriggerKind,
         addObject, findObjectAt, validateDraft, draftFromPublished,
-        moveObjects, resizeObjects, rotateObjects, panCamera, copyObjects, pasteObjects,
-        createPreviewState, stepPreview, drawEditorCanvas, drawPreviewCanvas,
+        moveObjects, resizeObjects, rotateObjects, flipObjects, panCamera, copyObjects, pasteObjects,
+        createPreviewState, stepPreview,
+        drawEditorCanvas, drawPreviewCanvas, normalizeParticleEmitter,
+        drawParticleEmitterPreview,
         resolveControlMode, createTouchButtonState} from './workshop.js';
 
 const $ = id => document.getElementById(id);
@@ -23,25 +26,41 @@ let lastFrame = performance.now(), lastPing = 0, generation = 0;
 let toastTimer;
 const WS_DRAFT_KEY = 'pvg3-workshop-draft-v1';
 const WS_CONTROL_KEY = 'pvg3-workshop-control-v1';
+const WS_DB_NAME = 'pvg3-workshop';
+const WS_DB_STORE = 'drafts';
+const WS_LOCAL_FALLBACK_MAX = 1024 * 1024;
+let wsDbPromise = null;
+let wsDraftSaveTimer = 0;
 const wsPages = {home: $('ws-home-page'), editor: $('ws-editor-page'),
   preview: $('ws-preview-page'), catalog: $('ws-catalog-page')};
+let wsDraftFromLocalStorage = false;
 let wsPage = 'home', wsDraft = loadWorkshopDraft(), wsTool = 'build', wsType = 'block';
-let wsTriggerKind = 'move', wsPaletteSelected = true;
+let wsDraftReady = Promise.resolve();
+let wsTriggerKind = 'move', wsBlockType = 'block', wsOrbType = 'orb-yellow';
+let wsGoalType = 'goal', wsPortalType = 'portal-normal', wsPaletteSelected = true;
 let wsSelectedId = 0, wsSelectedIds = new Set(), wsClipboard = [];
 let wsDrag = null, wsPanDrag = null, wsCatalogGeneration = 0, wsCatalog = [];
 let wsCamera = {x: 0, y: 0};
 let wsPreviewState = null, wsPreviewLevel = null, wsPreviewReturn = 'editor';
+let wsParticleDialogObjectId = 0, wsParticlePreviewTime = 0, wsParticleAnimation = 0;
 let wsControlPreference = localSetting(WS_CONTROL_KEY, 'auto'), wsControlMode = 'keyboard';
 let wsJumpQueued = false, wsTriggerQueued = false;
 const wsTouchButtons = createTouchButtonState();
 const wsKeys = new Set();
 let wsWinAnnounced = false;
 const WS_ART_FILES = {
-  block: 'Блок.png', ground: 'Платформа.png', hazard: 'Шип.png',
+  block: 'Блок.png', ground: 'Платформа.png', hazard: 'Шип.png', slope: 'Склон.png',
   coin: 'coin-token.png', enemy: 'zombie-duck.png', player: 'khlebushek.png',
   goal: 'Флажок - финиш.png',
   triggerMove: 'Триггер-движения.png', triggerRotate: 'Триггер-вращения.png',
   triggerForever: 'Триггер-вечно.png',
+  triggerInvisibility: 'Триггер-невидимости.png',
+  triggerNoCollision: 'Триггер-нет столкновения.png',
+  triggerGravity: 'Триггер-гравитации.png', triggerColor: 'Триггер-цвет.png',
+  'orb-orange': 'Оранжевый opб.png', 'orb-yellow': 'Жёлтый орб.png',
+  checkpoint: 'Чекпоинт-выключен.png', checkpointActive: 'Чекпоинт-включён.png',
+  'portal-normal': 'Портал-обычный.png', 'portal-jetpack': 'Портал-джетпака.png',
+  jetpackActive: 'джетпак-активен.png', jetpackInactive: 'Джетпак-отключён.png',
 };
 const wsArt = Object.fromEntries(Object.entries(WS_ART_FILES).map(([type, file]) => {
   const image = new Image();
@@ -71,34 +90,90 @@ function localSetting(key, fallback) {
   try {return localStorage.getItem(key) ?? fallback;}
   catch {return fallback;}
 }
+function normalizeWorkshopDraft(saved) {
+  const validShape = saved && saved.width === LEVEL_WIDTH && saved.height === LEVEL_HEIGHT &&
+    typeof saved.title === 'string' && saved.title.length <= 80 &&
+    typeof saved.description === 'string' && saved.description.length <= 160 &&
+    Array.isArray(saved.objects) && saved.objects.length <= MAX_LEVEL_OBJECTS &&
+    saved.objects.every(o => o && Object.hasOwn(TYPE_LABELS, o.type) && Number.isInteger(o.id) &&
+      Number.isFinite(o.x) && Number.isFinite(o.y) && Number.isFinite(o.w) && Number.isFinite(o.h) &&
+      typeof o.color === 'string' && /^#[0-9a-f]{6}$/i.test(o.color));
+  if (!validShape) return null;
+  for (const object of saved.objects) {
+    if (!canManuallyRecolorType(object.type)) object.color = '#fffdf8';
+    object.flipX = object.flipX === true;object.flipY = object.flipY === true;
+    if (object.type === 'particle') object.emitter = normalizeParticleEmitter(object.emitter);
+    if (object.type !== 'trigger') continue;
+    object.trigger ||= {event: 'touch', action: 'move', targetId: 0, value: 1, color: '#ffc54e'};
+    object.trigger.kind ||= 'move';
+    if (object.trigger.kind === 'rotate' && object.trigger.duration === undefined) {
+      const target = saved.objects.find(candidate => candidate.id === object.trigger.targetId);
+      if (!Number.isInteger(object.trigger.groupId))
+        object.trigger.groupId = Number.isInteger(target?.number) ? target.number : 0;
+      object.trigger.duration = 3;
+      object.trigger.action = 'rotate';
+      delete object.trigger.degrees;delete object.trigger.value;
+    } else if (object.trigger.kind === 'gravity') {
+      object.trigger.action = 'set-gravity';
+      const value = Number.isInteger(object.trigger.value) ? object.trigger.value : 0;
+      object.trigger.value = Math.max(-100, Math.min(100, value));
+    }
+  }
+  return saved;
+}
 function loadWorkshopDraft() {
   try {
-    const saved = JSON.parse(localStorage.getItem(WS_DRAFT_KEY) || 'null');
-    const validShape = saved && saved.width === LEVEL_WIDTH && saved.height === LEVEL_HEIGHT &&
-      typeof saved.title === 'string' && saved.title.length <= 80 &&
-      typeof saved.description === 'string' && saved.description.length <= 160 &&
-      Array.isArray(saved.objects) && saved.objects.length <= MAX_LEVEL_OBJECTS &&
-      saved.objects.every(o => o && Object.hasOwn(TYPE_LABELS, o.type) && Number.isInteger(o.id) &&
-        Number.isFinite(o.x) && Number.isFinite(o.y) && Number.isFinite(o.w) && Number.isFinite(o.h) &&
-        typeof o.color === 'string' && /^#[0-9a-f]{6}$/i.test(o.color));
-    if (validShape) {
-      for (const object of saved.objects) if (object.type === 'trigger') {
-        object.trigger ||= {event: 'touch', action: 'move', targetId: 0, value: 1, color: '#ffc54e'};
-        object.trigger.kind ||= 'move';
-        if (object.trigger.kind === 'rotate' && object.trigger.duration === undefined) {
-          const target = saved.objects.find(candidate => candidate.id === object.trigger.targetId);
-          if (!Number.isInteger(object.trigger.groupId))
-            object.trigger.groupId = Number.isInteger(target?.number) ? target.number : 0;
-          object.trigger.duration = 3;
-          object.trigger.action = 'rotate';
-          delete object.trigger.degrees;delete object.trigger.value;
-        }
-      }
-      return saved;
-    }
+    const saved = normalizeWorkshopDraft(JSON.parse(localStorage.getItem(WS_DRAFT_KEY) || 'null'));
+    if (saved) {wsDraftFromLocalStorage = true;return saved;}
   } catch {}
   return newDraft();
 }
+function openWorkshopDb() {
+  if (!globalThis.indexedDB) return Promise.reject(new Error('IndexedDB недоступна'));
+  if (!wsDbPromise) {
+    wsDbPromise = new Promise((resolve, reject) => {
+      const request = indexedDB.open(WS_DB_NAME, 1);
+      request.onupgradeneeded = () => {
+        if (!request.result.objectStoreNames.contains(WS_DB_STORE))
+          request.result.createObjectStore(WS_DB_STORE);
+      };
+      request.onsuccess = () => {
+        const db = request.result;
+        db.onversionchange = () => {db.close();wsDbPromise = null;};
+        resolve(db);
+      };
+      request.onerror = () => reject(request.error || new Error('Не удалось открыть хранилище'));
+      request.onblocked = () => reject(new Error('Хранилище черновика занято другой вкладкой'));
+    }).catch(error => {wsDbPromise = null;throw error;});
+  }
+  return wsDbPromise;
+}
+function readWorkshopDraftFromDb() {
+  return openWorkshopDb().then(db => new Promise((resolve, reject) => {
+    const request = db.transaction(WS_DB_STORE, 'readonly').objectStore(WS_DB_STORE).get(WS_DRAFT_KEY);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('Не удалось прочитать черновик'));
+  }));
+}
+function writeWorkshopDraftToDb(serialized) {
+  return openWorkshopDb().then(db => new Promise((resolve, reject) => {
+    const transaction = db.transaction(WS_DB_STORE, 'readwrite');
+    transaction.objectStore(WS_DB_STORE).put(serialized, WS_DRAFT_KEY);
+    transaction.oncomplete = resolve;
+    transaction.onerror = () => reject(transaction.error || new Error('Не удалось сохранить черновик'));
+    transaction.onabort = () => reject(transaction.error || new Error('Сохранение черновика отменено'));
+  }));
+}
+async function loadWorkshopDraftFromDb() {
+  if (wsDraftFromLocalStorage) return; // recent small drafts already live in the sync fallback
+  try {
+    const serialized = await readWorkshopDraftFromDb();
+    if (typeof serialized !== 'string') return;
+    const saved = normalizeWorkshopDraft(JSON.parse(serialized));
+    if (saved) wsDraft = saved;
+  } catch {}
+}
+wsDraftReady = loadWorkshopDraftFromDb();
 function setWorkshopPage(page) {
   if (!wsPages[page]) return;
   wsPage = page;
@@ -111,22 +186,35 @@ function setWorkshopPage(page) {
 }
 function renderWorkshopHome() {
   $('ws-draft-title').textContent = wsDraft.title.trim() || 'Новый уровень';
-  const check = validateDraft(wsDraft);
-  $('ws-draft-summary').textContent = `${wsDraft.objects.length} объектов · бесконечная карта · ` +
-    (check.ok ? 'можно проверять и публиковать.' : check.message);
   $('ws-draft-status').textContent = wsDraft.publishedId ?
-    `Последняя публикация: ID ${wsDraft.publishedId}. Повторная публикация создаст новую запись.` :
-    'Черновик хранится только в этом браузере.';
+    `Последняя публикация: ID ${wsDraft.publishedId}` : '';
 }
-function saveWorkshopDraft(message = 'Черновик сохранён на этом устройстве.') {
-  try {
-    localStorage.setItem(WS_DRAFT_KEY, JSON.stringify(wsDraft));
-    $('ws-autosave-status').textContent = message;
-  } catch {
-    $('ws-autosave-status').textContent = 'Не удалось сохранить черновик в браузере.';
+async function persistWorkshopDraft() {
+  let serialized, localSaved = false;
+  try {serialized = JSON.stringify(wsDraft);} catch {return;}
+  if (serialized.length <= WS_LOCAL_FALLBACK_MAX) {
+    try {localStorage.setItem(WS_DRAFT_KEY, serialized);localSaved = true;} catch {}
   }
+  try {
+    await writeWorkshopDraftToDb(serialized);
+    if (!localSaved) {
+      try {localStorage.removeItem(WS_DRAFT_KEY);} catch {}
+    }
+  } catch {}
+}
+function saveWorkshopDraft() {
+  clearTimeout(wsDraftSaveTimer);
+  wsDraftSaveTimer = setTimeout(() => {
+    wsDraftSaveTimer = 0;
+    void persistWorkshopDraft();
+  }, 250);
   $('ws-object-count').textContent = `${wsDraft.objects.length} / ${MAX_LEVEL_OBJECTS} объектов`;
   renderWorkshopHome();
+}
+function flushWorkshopDraft() {
+  if (!wsDraftSaveTimer) return;
+  clearTimeout(wsDraftSaveTimer);wsDraftSaveTimer = 0;
+  void persistWorkshopDraft();
 }
 function showWorkshopMessage(message = '') {
   const node = $('ws-editor-message');
@@ -139,24 +227,57 @@ function renderPaletteOptions() {
   for (const button of document.querySelectorAll('[data-ws-type]'))
     button.classList.toggle('active', button.dataset.wsType === wsType);
   container.replaceChildren();
-  const options = wsType === 'trigger' ? [
+  const options = wsType === 'block' ? [
+    {kind: 'block', label: TYPE_LABELS.block, art: 'block'},
+    {kind: 'slope', label: TYPE_LABELS.slope, art: 'slope'},
+    {kind: 'ground', label: TYPE_LABELS.ground, art: 'ground'},
+  ] : wsType === 'trigger' ? [
     {kind: 'move', label: TRIGGER_LABELS.move, art: 'triggerMove'},
     {kind: 'rotate', label: TRIGGER_LABELS.rotate, art: 'triggerRotate'},
     {kind: 'forever', label: TRIGGER_LABELS.forever, art: 'triggerForever'},
+    {kind: 'invisibility', label: TRIGGER_LABELS.invisibility, art: 'triggerInvisibility'},
+    {kind: 'no-collision', label: TRIGGER_LABELS['no-collision'], art: 'triggerNoCollision'},
+    {kind: 'gravity', label: TRIGGER_LABELS.gravity, art: 'triggerGravity'},
+    {kind: 'recolor', label: TRIGGER_LABELS.recolor, art: 'triggerColor'},
+    {kind: 'background', label: TRIGGER_LABELS.background, art: 'triggerColor'},
+  ] : wsType === 'orb' ? [
+    {kind: 'orb-yellow', label: TYPE_LABELS['orb-yellow'], art: 'orb-yellow'},
+    {kind: 'orb-orange', label: TYPE_LABELS['orb-orange'], art: 'orb-orange'},
+  ] : wsType === 'goal' ? [
+    {kind: 'goal', label: TYPE_LABELS.goal, art: 'goal'},
+    {kind: 'checkpoint', label: TYPE_LABELS.checkpoint, art: 'checkpoint'},
+  ] : wsType === 'portal' ? [
+    {kind: 'portal-normal', label: TYPE_LABELS['portal-normal'], art: 'portal-normal'},
+    {kind: 'portal-jetpack', label: TYPE_LABELS['portal-jetpack'], art: 'portal-jetpack'},
+  ] : wsType === 'particle' ? [
+    {kind: 'single', label: TYPE_LABELS.particle, glyph: 'P'},
   ] : [{kind: 'single', label: TYPE_LABELS[wsType], art: wsType}];
   for (const option of options) {
     const button = document.createElement('button');
     button.type = 'button';button.className = 'ws-palette-item';
     const active = wsPaletteSelected &&
-      (wsType !== 'trigger' || wsTriggerKind === option.kind);
+      (wsType === 'trigger' ? wsTriggerKind === option.kind :
+        wsType === 'block' ? wsBlockType === option.kind :
+        wsType === 'orb' ? wsOrbType === option.kind :
+        wsType === 'goal' ? wsGoalType === option.kind :
+        wsType === 'portal' ? wsPortalType === option.kind : true);
     if (active) button.classList.add('active');
-    const icon = document.createElement('img');
-    icon.alt = '';icon.setAttribute('aria-hidden', 'true');
-    icon.src = wsArt[option.art]?.src || '';
+    const icon = option.glyph ? document.createElement('span') : document.createElement('img');
+    if (option.glyph) {
+      icon.className = 'ws-palette-glyph';icon.textContent = option.glyph;
+    } else {
+      icon.alt = '';icon.setAttribute('aria-hidden', 'true');
+      icon.src = wsArt[option.art]?.src || '';
+    }
+    icon.setAttribute('aria-hidden', 'true');
     const label = document.createElement('span');label.textContent = option.label;
     button.append(icon, label);
     button.addEventListener('click', () => {
       if (wsType === 'trigger') wsTriggerKind = option.kind;
+      else if (wsType === 'block') wsBlockType = option.kind;
+      else if (wsType === 'orb') wsOrbType = option.kind;
+      else if (wsType === 'goal') wsGoalType = option.kind;
+      else if (wsType === 'portal') wsPortalType = option.kind;
       wsPaletteSelected = true;
       wsTool = 'build';
       renderWorkshopEditor();
@@ -215,12 +336,15 @@ function renderSelectedObject() {
   panel.classList.toggle('hidden', !selected.length);
   $('ws-selection-count').textContent = `${selected.length} выбрано`;
   $('ws-single-properties').classList.toggle('hidden', selected.length !== 1);
+  $('ws-particle-fields').classList.toggle('hidden',
+    selected.length !== 1 || selected[0]?.type !== 'particle');
   const canCopy = selected.some(item => item.type !== 'player' && item.type !== 'goal');
   $('ws-copy-selected').disabled = !canCopy;
   $('ws-paste-selected').disabled = !wsClipboard.length ||
     wsDraft.objects.length + wsClipboard.length > MAX_LEVEL_OBJECTS;
   $('ws-delete-selected').disabled = !selected.length;
-  for (const button of document.querySelectorAll('[data-ws-nudge], [data-ws-scale], [data-ws-rotate]'))
+  $('ws-particle-settings').disabled = selected.length !== 1 || selected[0]?.type !== 'particle';
+  for (const button of document.querySelectorAll('[data-ws-nudge], [data-ws-scale], [data-ws-rotate], [data-ws-flip]'))
     button.disabled = !selected.length;
   if (!selected.length) return;
   if (selected.length > 1) {
@@ -236,33 +360,100 @@ function renderSelectedObject() {
   $('ws-object-height').value = Number(object.h.toFixed(2));
   $('ws-object-angle').value = Number((object.angle || 0).toFixed(1));
   $('ws-object-number').value = object.number || 0;
-  $('ws-object-color').value = object.color;
+  const colorInput = $('ws-object-color');
+  const canRecolor = canManuallyRecolorType(object.type);
+  colorInput.value = object.color;
+  colorInput.disabled = !canRecolor;
+  colorInput.closest('.ws-color-field').classList.toggle('is-disabled', !canRecolor);
   const triggerFields = $('ws-trigger-fields');
   triggerFields.classList.toggle('hidden', object.type !== 'trigger');
+  if (object.type === 'particle') object.emitter = normalizeParticleEmitter(object.emitter);
   if (object.type !== 'trigger') return;
   const t = object.trigger || {};
-  const kind = t.kind || 'move';
+  const kind = TRIGGER_KINDS.includes(t.kind) ? t.kind : 'move';
+  $('ws-trigger-kind').value = kind;
   const forever = kind === 'forever';
   const rotate = kind === 'rotate';
+  const gravity = kind === 'gravity';
+  const background = kind === 'background';
+  const recolor = kind === 'recolor';
+  const moving = kind === 'move';
   const legacyTarget = wsDraft.objects.find(candidate => candidate.id === t.targetId);
   const groupId = Number.isInteger(t.groupId) ? t.groupId :
     Number.isInteger(legacyTarget?.number) ? legacyTarget.number : 0;
   $('ws-trigger-event').value = t.event || 'touch';
-  $('ws-trigger-motion-fields').classList.toggle('hidden', forever);
-  $('ws-trigger-move-fields').classList.toggle('hidden', rotate);
+  $('ws-trigger-motion-fields').classList.toggle('hidden', forever || gravity || background);
+  $('ws-trigger-move-fields').classList.toggle('hidden', !moving);
   $('ws-trigger-rotate-field').classList.toggle('hidden', !rotate);
   $('ws-trigger-forever-fields').classList.toggle('hidden', !forever);
+  $('ws-trigger-gravity-field').classList.toggle('hidden', !gravity);
+  $('ws-trigger-color-field').classList.toggle('hidden', !recolor && !background);
+  $('ws-trigger-color-label').textContent = background ? 'Цвет фона' : 'Цвет объектов';
+  $('ws-trigger-color').value = /^#[0-9a-f]{6}$/i.test(t.color || '') ? t.color : '#ffc54e';
   $('ws-trigger-group').value = groupId;
   $('ws-trigger-forever-group').value = groupId;
   $('ws-trigger-action').value = ['activate', 'unactivate'].includes(t.action) ? t.action : 'activate';
   $('ws-trigger-x').value = t.valueX ?? t.value ?? 0;
   $('ws-trigger-y').value = t.valueY ?? 0;
   $('ws-trigger-duration').value = t.duration ?? 3;
+  const gravityValue = Number.isInteger(t.value) ? Math.max(-100, Math.min(100, t.value)) : 0;
+  $('ws-trigger-gravity').value = gravityValue;
+  $('ws-trigger-gravity-value').textContent = `${gravityValue > 0 ? '+' : ''}${gravityValue}`;
 }
 function wsRedrawEditor() {
   renderSelectedObject();
   drawEditorCanvas($('ws-editor-canvas'), wsDraft, wsSelectedIds, wsTool, wsArt, wsCamera);
   $('ws-object-count').textContent = `${wsDraft.objects.length} / ${MAX_LEVEL_OBJECTS} объектов`;
+}
+function updateParticleDialogFields(emitter) {
+  for (const input of document.querySelectorAll('[data-emitter-key]')) {
+    const key = input.dataset.emitterKey;
+    if (input.type === 'checkbox') input.checked = emitter[key];
+    else input.value = emitter[key];
+  }
+  $('ws-emitter-rate-value').textContent = String(emitter.rate);
+  $('ws-emitter-rate-label').textContent = emitter.continuous ? 'Частиц в секунду' :
+    'Частиц во всплеске';
+  $('ws-emitter-lifetime-value').textContent = `${emitter.lifetime.toFixed(1)} с`;
+  $('ws-emitter-speed-value').textContent = `${emitter.speed} px/с`;
+  $('ws-emitter-spread-value').textContent = `${emitter.spread}°`;
+  $('ws-emitter-direction-value').textContent = `${emitter.direction}°`;
+  $('ws-emitter-size-value').textContent = `${emitter.size} px`;
+  $('ws-emitter-gravity-value').textContent = `${emitter.gravity} px/с²`;
+  $('ws-emitter-gravity').disabled = !emitter.gravityEnabled;
+}
+function openParticleDialog() {
+  const object = wsObject(wsSelectedId);
+  if (!object || object.type !== 'particle' || wsSelectedIds.size !== 1) return;
+  wsParticleDialogObjectId = object.id;
+  object.emitter = normalizeParticleEmitter(object.emitter);
+  updateParticleDialogFields(object.emitter);
+  wsParticlePreviewTime = 0;
+  const dialog = $('ws-particle-dialog');
+  if (!dialog.open) dialog.showModal();
+  if (wsParticleAnimation) cancelAnimationFrame(wsParticleAnimation);
+  let previousFrame = 0;
+  const animate = now => {
+    if (!dialog.open) {wsParticleAnimation = 0;return;}
+    if (previousFrame) wsParticlePreviewTime += Math.min(.05, (now - previousFrame) / 1000);
+    previousFrame = now;
+    const current = wsObject(wsParticleDialogObjectId);
+    if (current?.type === 'particle')
+      drawParticleEmitterPreview($('ws-particle-preview'), current.emitter,
+        current.color, wsParticlePreviewTime);
+    wsParticleAnimation = requestAnimationFrame(animate);
+  };
+  wsParticleAnimation = requestAnimationFrame(animate);
+}
+function updateSelectedParticleEmitter(key, value) {
+  const object = wsObject(wsParticleDialogObjectId);
+  if (!object || object.type !== 'particle') return;
+  const emitter = normalizeParticleEmitter(object.emitter);
+  emitter[key] = ['enabled', 'continuous', 'gravityEnabled', 'glow'].includes(key) ?
+    !!value : Number(value);
+  object.emitter = normalizeParticleEmitter(emitter);
+  updateParticleDialogFields(object.emitter);
+  wsRedrawEditor();saveWorkshopDraft();
 }
 function setWorkshopTool(tool) {
   if (!['build', 'select', 'multi', 'delete', 'pan'].includes(tool)) return;
@@ -290,12 +481,14 @@ function wsPointerDown(event) {
   const object = findObjectAt(wsDraft, point.x, point.y);
   showWorkshopMessage('');
   if (wsTool === 'build') {
-    if (!wsPaletteSelected) {
-      showWorkshopMessage('Сначала выбери объект в выбранной категории.');return;
-    }
-    const placed = addObject(wsDraft, wsType, Math.floor(point.x), Math.floor(point.y), wsTriggerKind);
+    if (!wsPaletteSelected) return;
+    const objectType = wsType === 'block' ? wsBlockType :
+      wsType === 'orb' ? wsOrbType :
+      wsType === 'goal' ? wsGoalType :
+      wsType === 'portal' ? wsPortalType : wsType;
+    const placed = addObject(wsDraft, objectType, Math.floor(point.x), Math.floor(point.y), wsTriggerKind);
     if (!placed) {
-      showWorkshopMessage('Достигнут лимит 120 объектов. Удали лишние объекты перед добавлением новых.');return;
+      showWorkshopMessage(`Достигнут общий лимит ${MAX_LEVEL_OBJECTS} объектов. Удали лишние объекты перед добавлением новых.`);return;
     }
     // Player and finish are singletons: addObject moves the existing object.
     setWorkshopSelection([placed.id], placed.id);
@@ -358,7 +551,8 @@ function wsPointerUp(event) {
 }
 function updateSelectedProperty(property, value) {
   const object = wsObject(wsSelectedId);
-  if (!object || wsSelectedIds.size !== 1) return;
+  if (!object || wsSelectedIds.size !== 1 ||
+      (property === 'color' && !canManuallyRecolorType(object.type))) return;
   const n = Number(value);
   if (property !== 'color' && !Number.isFinite(n)) return;
   if (property === 'x' || property === 'y') {
@@ -390,7 +584,7 @@ function wsPan(direction) {
   wsRedrawEditor();
 }
 function wsNudge(direction, multiplier = 1) {
-  const step = wsStep('ws-move-step', 1) * multiplier;
+  const step = wsStep('ws-move-step', .5) * multiplier;
   const offsets = {left: [-step, 0], right: [step, 0], up: [0, -step], down: [0, step]};
   const [dx, dy] = offsets[direction] || [0, 0];
   if (!moveObjects(wsDraft, wsSelectedIds, dx, dy)) return;
@@ -406,6 +600,10 @@ function wsRotate(sign) {
   if (!rotateObjects(wsDraft, wsSelectedIds, step)) return;
   saveWorkshopDraft();wsRedrawEditor();
 }
+function wsFlip(axis) {
+  if (!flipObjects(wsDraft, wsSelectedIds, axis)) return;
+  saveWorkshopDraft();wsRedrawEditor();
+}
 function wsUpdateRotateLabels() {
   const step = Math.round(wsStep('ws-rotate-step', 45) * 10) / 10;
   for (const button of document.querySelectorAll('[data-ws-rotate]')) {
@@ -416,8 +614,7 @@ function wsUpdateRotateLabels() {
 }
 function wsCopySelection() {
   wsClipboard = copyObjects(wsDraft, wsSelectedIds);
-  showWorkshopMessage(wsClipboard.length ? `Скопировано объектов: ${wsClipboard.length}.` :
-    'Игрок и финиш уникальны. Выбери обычный объект для копирования.');
+  showWorkshopMessage(wsClipboard.length ? `Скопировано объектов: ${wsClipboard.length}.` : '');
   wsRedrawEditor();
 }
 function wsPasteSelection() {
@@ -447,7 +644,9 @@ function updateSelectedTrigger(property, value) {
   const object = wsObject(wsSelectedId);
   if (!object || object.type !== 'trigger') return;
   const t = object.trigger ||= {kind: 'move', event: 'touch', action: 'move'};
-  if (property === 'event') {
+  if (property === 'kind') {
+    if (!setTriggerKind(wsDraft, object.id, value)) return;
+  } else if (property === 'event') {
     t.event = value;
   } else if (property === 'groupId') {
     const n = Number(value);if (!Number.isFinite(n)) return;
@@ -462,6 +661,15 @@ function updateSelectedTrigger(property, value) {
     t.duration = Math.max(1, Math.min(9999, Math.trunc(n)));
     t.action = 'rotate';
     delete t.degrees;delete t.value;
+  } else if (property === 'gravity') {
+    const n = Number(value);if (!Number.isFinite(n)) return;
+    t.value = Math.max(-100, Math.min(100, Math.trunc(n)));
+    t.action = 'set-gravity';
+  } else if (property === 'color') {
+    if (!/^#[0-9a-f]{6}$/i.test(value)) return;
+    t.color = value;
+    if (t.kind === 'recolor') t.action = 'recolor';
+    if (t.kind === 'background') t.action = 'set-background';
   } else if (property === 'action') {
     if (!['activate', 'unactivate'].includes(value)) return;
     t.action = value;
@@ -471,8 +679,10 @@ function updateSelectedTrigger(property, value) {
 function beginNewDraft() {
   if (!confirm('Создать новый уровень вместо текущего черновика? Опубликованные уровни не затрагиваются.')) return;
   wsDraft = newDraft();setWorkshopSelection([]);wsClipboard = [];wsTool = 'build';wsType = 'block';
-  wsTriggerKind = 'move';wsPaletteSelected = true;wsCamera = {x: 0, y: 0};
-  saveWorkshopDraft('Создан новый черновик.');setWorkshopPage('editor');
+  wsTriggerKind = 'move';wsGoalType = 'goal';wsPortalType = 'portal-normal';
+  wsPaletteSelected = true;
+  wsCamera = {x: 0, y: 0};
+  saveWorkshopDraft();setWorkshopPage('editor');
 }
 function setCatalogMessage(message = '') {
   const node = $('ws-catalog-message');node.textContent = message;
@@ -482,16 +692,25 @@ function renderWorkshopCatalog(levels) {
   const list = $('ws-catalog-list');list.replaceChildren();
   if (!levels.length) {
     const empty = document.createElement('p');empty.className = 'muted';
-    empty.textContent = 'В каталоге пока нет опубликованных уровней. Создай свой и нажми «Опубликовать».';
+    empty.textContent = 'В каталоге пока нет опубликованных уровней.';
     list.append(empty);return;
   }
   for (const level of levels) {
-    const card = document.createElement('article');card.className = 'ws-level-card';
+    const official = isOfficialLevel(level.id);
+    const card = document.createElement('article');
+    card.className = official ? 'ws-level-card ws-level-card-official' : 'ws-level-card';
     const content = document.createElement('div');
+    const meta = document.createElement('div');meta.className = 'ws-level-meta';
     const id = document.createElement('small');id.className = 'ws-level-id';id.textContent = `ID ${level.id}`;
+    meta.append(id);
+    if (official) {
+      const badge = document.createElement('span');badge.className = 'ws-official-badge';
+      badge.textContent = 'ОФИЦИАЛЬНЫЙ';badge.setAttribute('aria-label', 'Официальный уровень');
+      meta.append(badge);
+    }
     const title = document.createElement('h3');title.textContent = level.title;
     const description = document.createElement('p');description.textContent = level.description || 'Авторский платформерный уровень.';
-    content.append(id, title, description);
+    content.append(meta, title, description);
     const button = document.createElement('button');button.type = 'button';button.textContent = 'Играть';
     button.addEventListener('click', () => playPublishedLevel(level.id, button));
     card.append(content, button);list.append(card);
@@ -520,25 +739,43 @@ async function playPublishedLevel(id, button) {
   try {
     const record = await getPublishedLevel(id);
     const level = draftFromPublished(record);
-    startWorkshopPreview(level, record.title, 'catalog');
+    startWorkshopPreview(level, record.title, 'catalog', isOfficialLevel(record.id));
   } catch (error) {
     setCatalogMessage(error.status === 401 || error.status === 403 ?
       'Firebase запретил чтение /levels. Проверь правила базы.' : error.message);
   } finally {button.disabled = false;}
 }
-function startWorkshopPreview(level, title, returnPage) {
+function startWorkshopPreview(level, title, returnPage, official = false) {
   const check = validateDraft(level);
   if (!check.ok) {showWorkshopMessage(check.message);return;}
   wsPreviewLevel = level;wsPreviewState = createPreviewState(level);
   wsPreviewReturn = returnPage;wsWinAnnounced = false;
-  $('ws-preview-title').textContent = title || level.title;
-  $('ws-preview-status').textContent = 'Доберись до финиша и попробуй собрать монеты.';
+  const previewTitle = $('ws-preview-title');
+  previewTitle.replaceChildren(document.createTextNode(title || level.title));
+  if (official) {
+    const badge = document.createElement('span');badge.className = 'ws-official-badge ws-official-badge-heading';
+    badge.textContent = 'ОФИЦИАЛЬНЫЙ';badge.setAttribute('aria-label', 'Официальный уровень');
+    previewTitle.append(' ', badge);
+  }
+  $('ws-preview-status').textContent = '';
   $('ws-preview-back').textContent = returnPage === 'catalog' ? 'Назад · Каталог' : 'Назад · В редактор';
   clearWorkshopInput();applyWorkshopControl(wsControlPreference);
   setWorkshopPage('preview');
 }
 function drawCurrentPreview() {
   if (wsPreviewState) drawPreviewCanvas($('ws-preview-canvas'), wsPreviewState, wsControlMode, wsArt);
+}
+function updateWorkshopJetpackControls() {
+  const jetpack = !!wsPreviewState?.jetpack;
+  for (const button of document.querySelectorAll('[data-ws-normal-control]'))
+    button.classList.toggle('hidden', jetpack);
+  for (const button of document.querySelectorAll('[data-ws-jetpack-control]'))
+    button.classList.toggle('hidden', !jetpack);
+}
+function previewJumpPointerDown(event) {
+  if (screen !== 'workshop' || wsPage !== 'preview' || !wsPreviewState) return;
+  event.preventDefault();
+  if (!wsPreviewState.jetpack) wsJumpQueued = true;
 }
 function applyWorkshopControl(preference) {
   wsControlPreference = ['auto', 'buttons', 'keyboard'].includes(preference) ? preference : 'auto';
@@ -547,10 +784,7 @@ function applyWorkshopControl(preference) {
   wsControlMode = resolveControlMode(wsControlPreference === 'auto' ? '' : wsControlPreference, coarsePointer);
   $('ws-control-select').value = wsControlPreference;
   $('ws-buttons-controls').classList.toggle('hidden', wsControlMode !== 'buttons');
-  $('ws-control-help').textContent = wsControlMode === 'keyboard' ?
-    'Клавиши A / D для движения, пробел или W для прыжка, E для действия.' :
-    'Удерживай «Назад» или «Вперёд». Одновременно нажми «Прыжок»; «Действие» запускает ручные триггеры.';
-  clearWorkshopInput();drawCurrentPreview();
+  clearWorkshopInput();updateWorkshopJetpackControls();drawCurrentPreview();
 }
 function clearWorkshopInput() {
   wsTouchButtons.clear();
@@ -559,18 +793,26 @@ function clearWorkshopInput() {
 function resetWorkshopPreview() {
   if (!wsPreviewLevel) return;
   wsPreviewState = createPreviewState(wsPreviewLevel);wsWinAnnounced = false;
-  $('ws-preview-status').textContent = 'С начала. Доберись до финиша и попробуй собрать монеты.';
-  clearWorkshopInput();drawCurrentPreview();
+  $('ws-preview-status').textContent = '';
+  clearWorkshopInput();updateWorkshopJetpackControls();drawCurrentPreview();
 }
 function workshopFrame(dt) {
   if (screen !== 'workshop' || wsPage !== 'preview' || !wsPreviewState) return;
   const axis = wsControlMode === 'buttons' ? wsTouchButtons.axis :
     Number(wsKeys.has('d') || wsKeys.has('arrowright')) - Number(wsKeys.has('a') || wsKeys.has('arrowleft'));
-  const jump = wsJumpQueued || (wsControlMode === 'keyboard' &&
-    (wsKeys.has(' ') || wsKeys.has('arrowup') || wsKeys.has('w')));
+  const vertical = wsPreviewState.jetpack ?
+    wsControlMode === 'buttons' ? wsTouchButtons.vertical :
+      Number(wsKeys.has('arrowup') || wsKeys.has('w')) -
+      Number(wsKeys.has('arrowdown') || wsKeys.has('s')) : 0;
+  const jump = !wsPreviewState.jetpack && (wsJumpQueued ||
+    (wsControlMode === 'keyboard' &&
+      (wsKeys.has(' ') || wsKeys.has('arrowup') || wsKeys.has('w'))));
   const trigger = wsTriggerQueued || (wsControlMode === 'keyboard' && wsKeys.has('e'));
   wsJumpQueued = false;wsTriggerQueued = false;
-  stepPreview(wsPreviewState, {axis, jump, trigger}, dt);
+  stepPreview(wsPreviewState, {axis, vertical, jump, trigger}, dt);
+  updateWorkshopJetpackControls();
+  if (wsPreviewState.orbActivated)
+    $('ws-preview-status').textContent = 'Орб активирован!';
   drawCurrentPreview();
   if (wsPreviewState.won && !wsWinAnnounced) {
     wsWinAnnounced = true;$('ws-preview-status').textContent = `Уровень пройден! Собрано монет: ${wsPreviewState.coins}.`;
@@ -581,11 +823,11 @@ async function publishWorkshopDraft() {
   const check = validateDraft(wsDraft);
   if (!check.ok) {showWorkshopMessage(check.message);return;}
   const button = $('ws-publish');button.disabled = true;
-  showWorkshopMessage('');$('ws-autosave-status').textContent = 'Публикуем уровень…';
+  showWorkshopMessage('');
   try {
     const result = await publishLevel(wsDraft);
     wsDraft.publishedId = result.id;wsDraft.publishedAt = Date.now();
-    saveWorkshopDraft(`Опубликовано · ID ${result.id}. Запись появилась в каталоге.`);
+    saveWorkshopDraft();
     showWorkshopMessage(`Уровень опубликован под ID ${result.id}. Он доступен в каталоге и нативной игре.`);
     notice(`Уровень опубликован · ID ${result.id}`, 6000);
   } catch (error) {
@@ -593,11 +835,13 @@ async function publishWorkshopDraft() {
       error.status === 401 || error.status === 403 ?
       'Firebase отклонил запись. Для публикации правила должны разрешать создание записей в /levels и /levels-index. Правила базы автоматически не менялись.' :
       error.message;
-    $('ws-autosave-status').textContent = 'Черновик сохранён локально; публикация не подтверждена.';
     showWorkshopMessage(message);
   } finally {button.disabled = false;}
 }
-function openWorkshop() {setWorkshopPage('home');}
+async function openWorkshop() {
+  await wsDraftReady;
+  setWorkshopPage('home');
+}
 async function refreshRooms() {
   const list = $('room-list');
   if (screen !== 'rooms') return;
@@ -637,7 +881,6 @@ async function refreshRooms() {
 function renderLobby() {
   if (!roomId || !room) return;
   $('room-code').textContent = roomId;
-  $('lobby-subtitle').textContent = `${room.map === 5 ? 'Водная карта' : 'Обычный газон'} · ${room.guest ? 'оба игрока подключены' : 'ждём второго игрока'}`;
   const mine = room[slot]?.role, otherSlot = slot === 'host' ? 'guest' : 'host';
   const other = room[otherSlot]?.role;
   for (const card of document.querySelectorAll('.side-card')) {
@@ -645,12 +888,6 @@ function renderLobby() {
     card.classList.toggle('selected', mine === role);
     card.disabled = !!room.state || (other === role && mine !== role);
   }
-  $('plants-taken').textContent = mine === 'plants' ? 'ТВОЯ СТОРОНА' : other === 'plants' ? 'Занято соперником' : 'Выбрать растения';
-  $('zombies-taken').textContent = mine === 'zombies' ? 'ТВОЯ СТОРОНА' : other === 'zombies' ? 'Занято соперником' : 'Выбрать зомби';
-  $('lobby-status').textContent = !room.guest ? 'Поделись ссылкой и жди друга. Сторону можно выбрать уже сейчас.' :
-    mine && other && mine !== other ? 'Оба игрока готовы! Бой начинается…' :
-    mine && mine === other ? 'Выбрана одна сторона. Одному игроку нужно поменять выбор.' :
-    mine ? 'Ты готов. Ждём выбора соперника…' : 'Выбери, за кого будешь играть.';
 }
 function enterMatch() {
   if (screen === 'match') return;
@@ -658,9 +895,6 @@ function enterMatch() {
   $('match-code').textContent = roomId;
   $('match-title').textContent = room?.[slot]?.role === 'plants' ? 'Защити Хлебушка' : 'Прорви защиту Кирилла';
   $('finish-wave').classList.toggle('hidden', room?.[slot]?.role !== 'zombies');
-  $('match-hint').textContent = room?.[slot]?.role === 'plants' ?
-    'Выбери пакетик и клетку. Монеты подсолнуха собираются касанием.' :
-    'Выбери вид утки слева и коснись нужного ряда на поле.';
 }
 async function enterRoom(id, alreadyJoined = false) {
   if (!validId(id)) {notice('Неверный код комнаты.');return;}
@@ -890,9 +1124,14 @@ for (const button of document.querySelectorAll('[data-ws-tool]'))
 for (const button of document.querySelectorAll('[data-ws-type]')) button.addEventListener('click', () => {
   wsType = button.dataset.wsType;
   if (wsType === 'trigger') wsTriggerKind = 'move';
+  if (wsType === 'block') wsBlockType = 'block';
+  if (wsType === 'orb') wsOrbType = 'orb-yellow';
+  if (wsType === 'goal') wsGoalType = 'goal';
+  if (wsType === 'portal') wsPortalType = 'portal-normal';
   wsPaletteSelected = false;wsTool = 'build';
   renderWorkshopEditor();
 });
+$('ws-preview-canvas').addEventListener('pointerdown', previewJumpPointerDown);
 $('ws-editor-canvas').addEventListener('pointerdown', wsPointerDown);
 $('ws-editor-canvas').addEventListener('pointermove', wsPointerMove);
 $('ws-editor-canvas').addEventListener('pointerup', wsPointerUp);
@@ -909,6 +1148,8 @@ for (const button of document.querySelectorAll('[data-ws-scale]')) {
 }
 for (const button of document.querySelectorAll('[data-ws-rotate]'))
   button.addEventListener('click', () => wsRotate(Number(button.dataset.wsRotate)));
+for (const button of document.querySelectorAll('[data-ws-flip]'))
+  button.addEventListener('click', () => wsFlip(button.dataset.wsFlip));
 $('ws-rotate-step').addEventListener('input', wsUpdateRotateLabels);
 wsUpdateRotateLabels();
 for (const button of document.querySelectorAll('[data-ws-pan]'))
@@ -920,12 +1161,35 @@ $('ws-object-height').addEventListener('change', e => updateSelectedProperty('he
 $('ws-object-angle').addEventListener('change', e => updateSelectedProperty('angle', e.target.value));
 $('ws-object-number').addEventListener('change', e => updateSelectedProperty('number', e.target.value));
 $('ws-object-color').addEventListener('input', e => updateSelectedProperty('color', e.target.value));
+$('ws-particle-settings').addEventListener('click', openParticleDialog);
+for (const id of ['ws-particle-close', 'ws-particle-close-bottom'])
+  $(id).addEventListener('click', () => $('ws-particle-dialog').close());
+$('ws-particle-reset').addEventListener('click', () => {
+  const object = wsObject(wsParticleDialogObjectId);
+  if (!object || object.type !== 'particle') return;
+  object.emitter = normalizeParticleEmitter();
+  updateParticleDialogFields(object.emitter);wsRedrawEditor();saveWorkshopDraft();
+});
+$('ws-particle-dialog').addEventListener('close', () => {
+  wsParticleDialogObjectId = 0;
+  if (wsParticleAnimation) cancelAnimationFrame(wsParticleAnimation);
+  wsParticleAnimation = 0;
+});
+for (const input of document.querySelectorAll('[data-emitter-key]')) {
+  const eventName = input.type === 'checkbox' ? 'change' : 'input';
+  input.addEventListener(eventName, () =>
+    updateSelectedParticleEmitter(input.dataset.emitterKey,
+      input.type === 'checkbox' ? input.checked : input.value));
+}
+$('ws-trigger-kind').addEventListener('change', e => updateSelectedTrigger('kind', e.target.value));
 $('ws-trigger-event').addEventListener('change', e => updateSelectedTrigger('event', e.target.value));
 $('ws-trigger-group').addEventListener('change', e => updateSelectedTrigger('groupId', e.target.value));
 $('ws-trigger-forever-group').addEventListener('change', e => updateSelectedTrigger('groupId', e.target.value));
 $('ws-trigger-x').addEventListener('change', e => updateSelectedTrigger('valueX', e.target.value));
 $('ws-trigger-y').addEventListener('change', e => updateSelectedTrigger('valueY', e.target.value));
 $('ws-trigger-duration').addEventListener('change', e => updateSelectedTrigger('duration', e.target.value));
+$('ws-trigger-gravity').addEventListener('input', e => updateSelectedTrigger('gravity', e.target.value));
+$('ws-trigger-color').addEventListener('input', e => updateSelectedTrigger('color', e.target.value));
 $('ws-trigger-action').addEventListener('change', e => updateSelectedTrigger('action', e.target.value));
 $('ws-control-select').addEventListener('change', e => applyWorkshopControl(e.target.value));
 for (const button of document.querySelectorAll('[data-ws-hold]')) {
@@ -969,9 +1233,11 @@ window.addEventListener('keydown', event => {
   }
   if (wsPage !== 'preview' || wsControlMode !== 'keyboard') return;
   const key = event.key.toLowerCase();
-  if (['arrowleft', 'arrowright', 'arrowup', ' ', 'a', 'd', 'w', 'e'].includes(key)) event.preventDefault();
+  if (['arrowleft', 'arrowright', 'arrowup', 'arrowdown', ' ',
+       'a', 'd', 'w', 's', 'e'].includes(key)) event.preventDefault();
   wsKeys.add(key);
-  if (!event.repeat && ['arrowup', ' ', 'w'].includes(key)) wsJumpQueued = true;
+  if (!wsPreviewState?.jetpack && !event.repeat &&
+      ['arrowup', ' ', 'w'].includes(key)) wsJumpQueued = true;
   if (!event.repeat && key === 'e') wsTriggerQueued = true;
 });
 window.addEventListener('keyup', event => wsKeys.delete(event.key.toLowerCase()));
@@ -992,6 +1258,7 @@ $('finish-wave').addEventListener('click', () => {
   if (room?.[slot]?.role === 'zombies') send({kind:'finish'});
 });
 $('book').addEventListener('click', () => $('book-dialog').showModal());
+window.addEventListener('pagehide', flushWorkshopDraft);
 $('music').addEventListener('click', async () => {
   const audio = $('soundtrack');
   if (audio.paused) {

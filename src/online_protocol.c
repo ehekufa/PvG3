@@ -10,8 +10,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define JSON_MAX_BYTES (1024u * 1024u)
-#define JSON_MAX_TOKENS 32768
+/* A 20,000-object level can require several megabytes of JSON and roughly
+ * 1.1 million parser tokens. Grow the bounded token table as needed so
+ * ordinary room traffic keeps its small memory footprint. */
+#define JSON_MAX_BYTES (ON_LEVEL_JSON_CAP - 1u)
+#define JSON_INITIAL_TOKENS 256
+#define JSON_MAX_TOKENS 1300000
 #define JSON_MAX_DEPTH 32
 
 typedef struct { char type; int start, end, after, count; } JT;
@@ -22,7 +26,13 @@ static void ws(JD *d) {
                              d->s[d->at] == '\n' || d->s[d->at] == '\r')) d->at++;
 }
 static int token(JD *d, char type, int start) {
-    if (d->used >= d->cap) { d->bad = 1; return -1; }
+    if (d->used >= d->cap) {
+        if (d->cap >= JSON_MAX_TOKENS) { d->bad = 1; return -1; }
+        int next = d->cap > JSON_MAX_TOKENS / 2 ? JSON_MAX_TOKENS : d->cap * 2;
+        JT *grown = (JT *)realloc(d->t, (size_t)next * sizeof *grown);
+        if (!grown) { d->bad = 1; return -1; }
+        d->t = grown;d->cap = next;
+    }
     int at = d->used++;
     d->t[at] = (JT){type, start, 0, 0, 0};
     return at;
@@ -131,9 +141,9 @@ static int doc_open(JD *d, const char *s) {
     size_t n = strlen(s);
     if (n > JSON_MAX_BYTES) return 0;
     memset(d, 0, sizeof(*d));
-    d->t = (JT *)calloc(JSON_MAX_TOKENS, sizeof(JT));
+    d->t = (JT *)calloc(JSON_INITIAL_TOKENS, sizeof(JT));
     if (!d->t) return 0;
-    d->s = s;d->n = n;d->cap = JSON_MAX_TOKENS;
+    d->s = s;d->n = n;d->cap = JSON_INITIAL_TOKENS;
     int root = parse_value(d, 0);
     ws(d);
     if (root != 0 || d->bad || d->at != n) {
@@ -271,7 +281,9 @@ static int color_value(const JD *d, int token, uint32_t *out) {
 }
 static int level_object_type(const JD *d, int token) {
     static const char *const names[] = {
-        "block", "ground", "hazard", "coin", "enemy", "player", "goal", "trigger"
+        "block", "ground", "hazard", "coin", "enemy", "player", "goal", "trigger",
+        "slope", "orb-yellow", "orb-orange", "particle", "checkpoint",
+        "portal-normal", "portal-jetpack"
     };
     for (int i = 0; i < (int)(sizeof names / sizeof names[0]); i++)
         if (eq(d, token, names[i])) return i;
@@ -281,6 +293,7 @@ static int level_event(const JD *d, int token) {
     if (eq(d, token, "touch")) return ON_TRIGGER_TOUCH;
     if (eq(d, token, "coin")) return ON_TRIGGER_COIN;
     if (eq(d, token, "manual")) return ON_TRIGGER_MANUAL;
+    if (eq(d, token, "start")) return ON_TRIGGER_START;
     return -1;
 }
 static int level_action(const JD *d, int token) {
@@ -291,13 +304,53 @@ static int level_action(const JD *d, int token) {
     if (eq(d, token, "rotate")) return ON_TRIGGER_ROTATE;
     if (eq(d, token, "activate")) return ON_TRIGGER_ACTIVATE;
     if (eq(d, token, "unactivate")) return ON_TRIGGER_UNACTIVATE;
+    if (eq(d, token, "invisible")) return ON_TRIGGER_INVISIBLE;
+    if (eq(d, token, "no-collision")) return ON_TRIGGER_NO_COLLISION;
+    if (eq(d, token, "set-gravity")) return ON_TRIGGER_SET_GRAVITY;
+    if (eq(d, token, "set-background")) return ON_TRIGGER_SET_BACKGROUND;
     return -1;
 }
 static int level_trigger_kind(const JD *d, int token) {
     if (eq(d, token, "move")) return ON_TRIGGER_KIND_MOVE;
     if (eq(d, token, "rotate")) return ON_TRIGGER_KIND_ROTATE;
     if (eq(d, token, "forever")) return ON_TRIGGER_KIND_FOREVER;
+    if (eq(d, token, "invisibility")) return ON_TRIGGER_KIND_INVISIBILITY;
+    if (eq(d, token, "no-collision")) return ON_TRIGGER_KIND_NO_COLLISION;
+    if (eq(d, token, "gravity")) return ON_TRIGGER_KIND_GRAVITY;
+    if (eq(d, token, "recolor")) return ON_TRIGGER_KIND_RECOLOR;
+    if (eq(d, token, "background")) return ON_TRIGGER_KIND_BACKGROUND;
     return -1;
+}
+static int parse_particle_emitter(const JD *d, int object,
+                                 OnLevelParticle *emitter) {
+    if (!d || !emitter) return 0;
+    *emitter = on_level_particle_default();
+    int config = field(d, object, "emitter");
+    if (config < 0) return 1; /* older published records use these defaults */
+    if (d->t[config].type != 'o') return 0;
+    int token = field(d, config, "enabled");
+    if (token >= 0 && !bool_field(d, config, "enabled", &emitter->enabled)) return 0;
+    token = field(d, config, "continuous");
+    if (token >= 0 && !bool_field(d, config, "continuous", &emitter->continuous)) return 0;
+    token = field(d, config, "gravityEnabled");
+    if (token >= 0 && !bool_field(d, config, "gravityEnabled", &emitter->gravity_enabled)) return 0;
+    token = field(d, config, "glow");
+    if (token >= 0 && !bool_field(d, config, "glow", &emitter->glow)) return 0;
+    token = field(d, config, "rate");
+    if (token >= 0 && !int_field(d, config, "rate", &emitter->rate)) return 0;
+    token = field(d, config, "lifetime");
+    if (token >= 0 && !float_field(d, config, "lifetime", &emitter->lifetime)) return 0;
+    token = field(d, config, "speed");
+    if (token >= 0 && !int_field(d, config, "speed", &emitter->speed)) return 0;
+    token = field(d, config, "spread");
+    if (token >= 0 && !int_field(d, config, "spread", &emitter->spread)) return 0;
+    token = field(d, config, "size");
+    if (token >= 0 && !int_field(d, config, "size", &emitter->size)) return 0;
+    token = field(d, config, "direction");
+    if (token >= 0 && !int_field(d, config, "direction", &emitter->direction)) return 0;
+    token = field(d, config, "gravity");
+    if (token >= 0 && !int_field(d, config, "gravity", &emitter->gravity)) return 0;
+    return on_level_particle_valid(emitter);
 }
 int on_protocol_valid_level_id(const char *id) {
     if (!id || !*id || strlen(id) >= ON_LEVEL_ID_SIZE) return 0;
@@ -306,6 +359,18 @@ int on_protocol_valid_level_id(const char *id) {
         if (!isdigit(*p)) return 0;
     char *end = NULL;long value = strtol(id, &end, 10);
     return end && !*end && value > 0 && value <= 999999;
+}
+
+#define LEVEL_OBJECT_ID_MAX 1000000
+#define LEVEL_OBJECT_ID_BITMAP_BYTES ((LEVEL_OBJECT_ID_MAX + 7u) / 8u)
+static int mark_level_object_id(uint8_t *seen, int id) {
+    if (!seen || id < 1 || id > LEVEL_OBJECT_ID_MAX) return 0;
+    size_t bit = (size_t)(id - 1);
+    uint8_t mask = (uint8_t)(1u << (bit & 7u));
+    uint8_t *byte = &seen[bit >> 3];
+    if (*byte & mask) return 0;
+    *byte |= mask;
+    return 1;
 }
 int on_protocol_level_index(const char *json, OnPublishedLevelSummary *out, int cap) {
     if (!json || cap < 0 || (cap && !out)) return -1;
@@ -343,6 +408,10 @@ static int parse_level_object(const JD *d, int node, OnLevelObject *out) {
     if (node < 0 || d->t[node].type != 'o' || !out) return 0;
     OnLevelObject item = {0};
     int type = level_object_type(d, field(d, node, "type"));
+    int flip_x_token = field(d, node, "flipX");
+    int flip_y_token = field(d, node, "flipY");
+    if ((flip_x_token >= 0 && !bool_field(d, node, "flipX", &item.flip_x)) ||
+        (flip_y_token >= 0 && !bool_field(d, node, "flipY", &item.flip_y))) return 0;
     if (type < 0 || !int_field(d, node, "id", &item.id) || item.id < 1 || item.id > 1000000 ||
         !float_field(d, node, "x", &item.x) || !float_field(d, node, "y", &item.y) ||
         !float_field(d, node, "w", &item.w) || !float_field(d, node, "h", &item.h) ||
@@ -358,6 +427,8 @@ static int parse_level_object(const JD *d, int node, OnLevelObject *out) {
     item.type = type;
     int name = field(d, node, "name");
     if (!text_string(d, name, item.name, sizeof item.name)) return 0;
+    if (type == ON_LEVEL_PARTICLE &&
+        !parse_particle_emitter(d, node, &item.emitter)) return 0;
     if (type == ON_LEVEL_TRIGGER) {
         int trigger = field(d, node, "trigger");
         if (trigger < 0 || d->t[trigger].type != 'o') return 0;
@@ -394,10 +465,11 @@ static int parse_level_object(const JD *d, int node, OnLevelObject *out) {
             item.trigger_has_duration = 1;
         }
         if (item.trigger_kind < ON_TRIGGER_KIND_MOVE ||
-            item.trigger_kind > ON_TRIGGER_KIND_FOREVER ||
+            item.trigger_kind > ON_TRIGGER_KIND_BACKGROUND ||
             item.trigger_event < 0 || item.trigger_action < 0 ||
             (target_token >= 0 && !int_field(d, trigger, "targetId", &item.target_id)) ||
             (value_y_token >= 0 && !float_field(d, trigger, "valueY", &item.trigger_value_y)) ||
+            !isfinite(item.trigger_value) || !isfinite(item.trigger_value_y) ||
             (group_token >= 0 && (!int_field(d, trigger, "groupId", &item.trigger_group_id) ||
                                   item.trigger_group_id < 0 || item.trigger_group_id > 9999)) ||
             item.target_id < 0 || item.target_id > 1000000 ||
@@ -405,8 +477,7 @@ static int parse_level_object(const JD *d, int node, OnLevelObject *out) {
              !color_value(d, field(d, trigger, "color"), &item.trigger_color))) return 0;
         item.trigger_has_group = group_token >= 0;
         if (item.trigger_kind == ON_TRIGGER_KIND_MOVE) {
-            if ((item.trigger_action == ON_TRIGGER_ACTIVATE ||
-                 item.trigger_action == ON_TRIGGER_UNACTIVATE) ||
+            if (item.trigger_action > ON_TRIGGER_ROTATE ||
                 item.trigger_value < -9999 || item.trigger_value > 9999 ||
                 item.trigger_value_y < -9999 || item.trigger_value_y > 9999 ||
                 (item.trigger_has_group && item.trigger_group_id > 9999)) return 0;
@@ -414,15 +485,38 @@ static int parse_level_object(const JD *d, int node, OnLevelObject *out) {
             if (item.trigger_has_duration) {
                 if (item.trigger_action != ON_TRIGGER_ROTATE || !item.trigger_has_group ||
                     item.trigger_duration < 1 || item.trigger_duration > 9999) return 0;
-            } else if ((item.trigger_action == ON_TRIGGER_ACTIVATE ||
-                        item.trigger_action == ON_TRIGGER_UNACTIVATE) ||
+            } else if (item.trigger_action > ON_TRIGGER_ROTATE ||
                        item.trigger_value < -360 || item.trigger_value > 360) return 0;
-        } else if (item.trigger_has_group) {
-            if (item.trigger_action != ON_TRIGGER_ACTIVATE &&
-                item.trigger_action != ON_TRIGGER_UNACTIVATE) return 0;
-        } else if ((item.trigger_action == ON_TRIGGER_ACTIVATE ||
-                    item.trigger_action == ON_TRIGGER_UNACTIVATE) ||
-                   item.trigger_value < -100 || item.trigger_value > 100) return 0;
+        } else if (item.trigger_kind == ON_TRIGGER_KIND_FOREVER) {
+            if (item.trigger_has_group) {
+                if (item.trigger_action != ON_TRIGGER_ACTIVATE &&
+                    item.trigger_action != ON_TRIGGER_UNACTIVATE) return 0;
+            } else if (item.trigger_action > ON_TRIGGER_ROTATE ||
+                       item.trigger_value < -100 || item.trigger_value > 100) return 0;
+        } else if (item.trigger_kind == ON_TRIGGER_KIND_GRAVITY) {
+            if (item.trigger_action != ON_TRIGGER_SET_GRAVITY || item.trigger_has_group ||
+                item.target_id != 0 || item.trigger_has_duration || value_token < 0 ||
+                item.trigger_value < -100 || item.trigger_value > 100 ||
+                floorf(item.trigger_value) != item.trigger_value || item.trigger_value_y != 0)
+                return 0;
+        } else if (item.trigger_kind == ON_TRIGGER_KIND_RECOLOR) {
+            if (item.trigger_action != ON_TRIGGER_RECOLOR || !item.trigger_has_group ||
+                item.target_id != 0 || item.trigger_has_duration || value_token >= 0 ||
+                value_y_token >= 0 || item.trigger_value != 0 || item.trigger_value_y != 0)
+                return 0;
+        } else if (item.trigger_kind == ON_TRIGGER_KIND_BACKGROUND) {
+            if (item.trigger_action != ON_TRIGGER_SET_BACKGROUND || item.trigger_has_group ||
+                item.target_id != 0 || item.trigger_has_duration || value_token >= 0 ||
+                value_y_token >= 0 || item.trigger_value != 0 || item.trigger_value_y != 0)
+                return 0;
+        } else if (!item.trigger_has_group && item.target_id <= 0) {
+            return 0;
+        } else if ((item.trigger_kind == ON_TRIGGER_KIND_INVISIBILITY &&
+                    item.trigger_action != ON_TRIGGER_INVISIBLE) ||
+                   (item.trigger_kind == ON_TRIGGER_KIND_NO_COLLISION &&
+                    item.trigger_action != ON_TRIGGER_NO_COLLISION)) {
+            return 0;
+        }
     }
     *out = item;return 1;
 }
@@ -430,45 +524,46 @@ int on_protocol_published_level(const char *json, const char *expected_id,
                                 OnPublishedLevel *out) {
     if (!json || !out || !on_protocol_valid_level_id(expected_id)) return 0;
     JD d;if (!doc_open(&d, json)) return 0;
-    int project = field(&d, 0, "project");
-    OnPublishedLevel value = {0};int version = 0;
+    OnPublishedLevel *value = (OnPublishedLevel *)calloc(1, sizeof(*value));
+    if (!value) {free(d.t);return 0;}
+    int project = field(&d, 0, "project"), version = 0;
     int ok = eq(&d, field(&d, 0, "format"), "PVG3-PUBLISHED-LEVEL") &&
              int_field(&d, 0, "version", &version) && version == 1 &&
-             str(&d, field(&d, 0, "id"), value.id, sizeof value.id) &&
-             !strcmp(value.id, expected_id) &&
-             text_string(&d, field(&d, 0, "title"), value.title, sizeof value.title) &&
-             value.title[0] && project >= 0 && d.t[project].type == 'o' &&
+             str(&d, field(&d, 0, "id"), value->id, sizeof value->id) &&
+             !strcmp(value->id, expected_id) &&
+             text_string(&d, field(&d, 0, "title"), value->title, sizeof value->title) &&
+             value->title[0] && project >= 0 && d.t[project].type == 'o' &&
              eq(&d, field(&d, project, "format"), "PVG3-MAKER") &&
              int_field(&d, project, "version", &version) && version == 1 &&
-             int_field(&d, project, "width", &value.width) && value.width == 16 &&
-             int_field(&d, project, "height", &value.height) && value.height == 10;
+             int_field(&d, project, "width", &value->width) && value->width == 16 &&
+             int_field(&d, project, "height", &value->height) && value->height == 10;
     int description_token = field(&d, 0, "description");
     if (ok && description_token >= 0 &&
-        !text_string(&d, description_token, value.description, sizeof value.description)) ok = 0;
+        !text_string(&d, description_token, value->description, sizeof value->description)) ok = 0;
     if (ok && description_token < 0) {
         description_token = field(&d, project, "description");
         if (description_token >= 0 &&
-            !text_string(&d, description_token, value.description, sizeof value.description)) ok = 0;
+            !text_string(&d, description_token, value->description, sizeof value->description)) ok = 0;
     }
     int objects = field(&d, project, "objects");
     if (ok && (objects < 0 || d.t[objects].type != 'a' ||
                d.t[objects].count < 1 || d.t[objects].count > ON_LEVEL_OBJECT_CAP)) ok = 0;
+    uint8_t *seen = ok ? (uint8_t *)calloc(LEVEL_OBJECT_ID_BITMAP_BYTES, 1) : NULL;
+    if (ok && !seen) ok = 0;
     int has_player = 0, has_goal = 0;
     if (ok) {
         for (int token = objects + 1; token < d.t[objects].after; token = d.t[token].after) {
-            OnLevelObject *item = &value.objects[value.object_count];
-            if (!parse_level_object(&d, token, item)) {ok = 0;break;}
-            for (int i = 0; i < value.object_count; i++)
-                if (value.objects[i].id == item->id) {ok = 0;break;}
-            if (!ok) break;
+            OnLevelObject *item = &value->objects[value->object_count];
+            if (!parse_level_object(&d, token, item) ||
+                !mark_level_object_id(seen, item->id)) {ok = 0;break;}
             has_player |= item->type == ON_LEVEL_PLAYER;
             has_goal |= item->type == ON_LEVEL_GOAL;
-            value.object_count++;
+            value->object_count++;
         }
     }
     if (ok && (!has_player || !has_goal)) ok = 0;
-    if (ok) *out = value;
-    free(d.t);return ok;
+    if (ok) *out = *value;
+    free(seen);free(value);free(d.t);return ok;
 }
 int on_protocol_valid_room_id(const char *id) {
     if (!id || strlen(id) != 6) return 0;
@@ -715,11 +810,12 @@ int on_protocol_rooms(const char *json, OnRoomSummary *out, int cap, int64_t now
 
 typedef struct { char *out; size_t cap, at; int bad; } JW;
 static void put(JW *w, const char *fmt, ...) {
-    if (w->bad) return;
-    if (w->at >= w->cap) {w->bad = 1;return;}
+    if (w->bad || w->at >= w->cap) {w->bad = 1;return;}
     va_list args;
     va_start(args, fmt);
-    int n = vsnprintf(w->out + w->at, w->cap - w->at, fmt, args);
+    int n = w->out ?
+        vsnprintf(w->out + w->at, w->cap - w->at, fmt, args) :
+        vsnprintf(NULL, 0, fmt, args);
     va_end(args);
     if (n < 0 || (size_t)n >= w->cap - w->at) {w->bad = 1;return;}
     w->at += (size_t)n;
@@ -847,10 +943,10 @@ static int utf8_units(const char *text, size_t cap, size_t limit) {
 }
 static int published_trigger_valid(const OnLevelObject *o) {
     if (!o || o->trigger_kind < ON_TRIGGER_KIND_MOVE ||
-        o->trigger_kind > ON_TRIGGER_KIND_FOREVER ||
-        o->trigger_event < ON_TRIGGER_TOUCH || o->trigger_event > ON_TRIGGER_MANUAL ||
+        o->trigger_kind > ON_TRIGGER_KIND_BACKGROUND ||
+        o->trigger_event < ON_TRIGGER_TOUCH || o->trigger_event > ON_TRIGGER_START ||
         o->trigger_action < ON_TRIGGER_TOGGLE ||
-        o->trigger_action > ON_TRIGGER_UNACTIVATE ||
+        o->trigger_action > ON_TRIGGER_SET_BACKGROUND ||
         o->target_id < 0 || o->target_id > 1000000 ||
         (o->trigger_has_group != 0 && o->trigger_has_group != 1) ||
         (o->trigger_has_group &&
@@ -871,11 +967,32 @@ static int published_trigger_valid(const OnLevelObject *o) {
         return o->trigger_action <= ON_TRIGGER_ROTATE &&
             o->trigger_value >= -360 && o->trigger_value <= 360;
     }
-    if (o->trigger_has_group)
-        return o->trigger_action == ON_TRIGGER_ACTIVATE ||
-               o->trigger_action == ON_TRIGGER_UNACTIVATE;
-    return o->trigger_action <= ON_TRIGGER_ROTATE &&
-        o->trigger_value >= -100 && o->trigger_value <= 100;
+    if (o->trigger_kind == ON_TRIGGER_KIND_FOREVER) {
+        if (o->trigger_has_group)
+            return o->trigger_action == ON_TRIGGER_ACTIVATE ||
+                   o->trigger_action == ON_TRIGGER_UNACTIVATE;
+        return o->trigger_action <= ON_TRIGGER_ROTATE &&
+            o->trigger_value >= -100 && o->trigger_value <= 100;
+    }
+    if (o->trigger_kind == ON_TRIGGER_KIND_GRAVITY)
+        return o->trigger_action == ON_TRIGGER_SET_GRAVITY &&
+            !o->trigger_has_group && o->target_id == 0 &&
+            !o->trigger_has_duration && o->trigger_value >= -100 &&
+            o->trigger_value <= 100 && floorf(o->trigger_value) == o->trigger_value &&
+            o->trigger_value_y == 0;
+    if (o->trigger_kind == ON_TRIGGER_KIND_RECOLOR)
+        return o->trigger_action == ON_TRIGGER_RECOLOR && o->trigger_has_group &&
+            o->target_id == 0 && !o->trigger_has_duration &&
+            o->trigger_value == 0 && o->trigger_value_y == 0;
+    if (o->trigger_kind == ON_TRIGGER_KIND_BACKGROUND)
+        return o->trigger_action == ON_TRIGGER_SET_BACKGROUND && !o->trigger_has_group &&
+            o->target_id == 0 && !o->trigger_has_duration &&
+            o->trigger_value == 0 && o->trigger_value_y == 0;
+    if (!o->trigger_has_group && o->target_id <= 0) return 0;
+    return (o->trigger_kind == ON_TRIGGER_KIND_INVISIBILITY &&
+            o->trigger_action == ON_TRIGGER_INVISIBLE) ||
+           (o->trigger_kind == ON_TRIGGER_KIND_NO_COLLISION &&
+            o->trigger_action == ON_TRIGGER_NO_COLLISION);
 }
 
 static int published_level_valid(const OnPublishedLevel *level) {
@@ -886,11 +1003,13 @@ static int published_level_valid(const OnPublishedLevel *level) {
         !utf8_units(level->description, sizeof level->description, 160) ||
         !level->width || !level->height || level->width != 16 || level->height != 10 ||
         level->object_count < 1 || level->object_count > ON_LEVEL_OBJECT_CAP) return 0;
-    int has_player = 0, has_goal = 0;
+    uint8_t *seen = (uint8_t *)calloc(LEVEL_OBJECT_ID_BITMAP_BYTES, 1);
+    if (!seen) return 0;
+    int has_player = 0, has_goal = 0, valid = 1;
     for (int i = 0; i < level->object_count; ++i) {
         const OnLevelObject *o = &level->objects[i];
-        if (o->id < 1 || o->id > 1000000 || o->type < ON_LEVEL_BLOCK ||
-            o->type > ON_LEVEL_TRIGGER || !memchr(o->name, 0, sizeof o->name) ||
+        if (!mark_level_object_id(seen, o->id) || o->type < ON_LEVEL_BLOCK ||
+            o->type > ON_LEVEL_PORTAL_JETPACK || !memchr(o->name, 0, sizeof o->name) ||
             !utf8_units(o->name, sizeof o->name, 48) || !isfinite(o->x) || !isfinite(o->y) || !isfinite(o->w) ||
             !isfinite(o->h) || !isfinite(o->angle) ||
             o->x < -ON_LEVEL_WORLD_LIMIT || o->y < -ON_LEVEL_WORLD_LIMIT ||
@@ -898,31 +1017,48 @@ static int published_level_valid(const OnPublishedLevel *level) {
             o->x + o->w > ON_LEVEL_WORLD_LIMIT ||
             o->y + o->h > ON_LEVEL_WORLD_LIMIT || o->w > 64 || o->h > 40 ||
             o->angle < 0 || o->angle >= 360 || o->color > 0xffffffu ||
-            o->number < 0 || o->number > 9999 || (o->visible != 0 && o->visible != 1)) return 0;
-        for (int j = 0; j < i; ++j)
-            if (level->objects[j].id == o->id) return 0;
+            (o->flip_x != 0 && o->flip_x != 1) ||
+            (o->flip_y != 0 && o->flip_y != 1) ||
+            o->number < 0 || o->number > 9999 || (o->visible != 0 && o->visible != 1)) {
+            valid = 0;break;
+        }
         has_player |= o->type == ON_LEVEL_PLAYER;
         has_goal |= o->type == ON_LEVEL_GOAL;
-        if (o->type == ON_LEVEL_TRIGGER && !published_trigger_valid(o)) return 0;
+        if ((o->type == ON_LEVEL_TRIGGER && !published_trigger_valid(o)) ||
+            (o->type == ON_LEVEL_PARTICLE &&
+             !on_level_particle_valid(&o->emitter))) {
+            valid = 0;break;
+        }
     }
-    return has_player && has_goal;
+    free(seen);
+    return valid && has_player && has_goal;
 }
 
 size_t on_protocol_published_level_json(const OnPublishedLevel *level,
                                         char *out, size_t cap) {
-    if (!out || !cap || !published_level_valid(level)) return 0;
+    int measure_only = !out && !cap;
+    if ((!out && !measure_only) || (out && !cap) ||
+        !published_level_valid(level)) return 0;
     static const char *const types[] = {
-        "block", "ground", "hazard", "coin", "enemy", "player", "goal", "trigger"
+        "block", "ground", "hazard", "coin", "enemy", "player", "goal", "trigger",
+        "slope", "orb-yellow", "orb-orange", "particle", "checkpoint",
+        "portal-normal", "portal-jetpack"
     };
-    static const char *const events[] = {"touch", "coin", "manual"};
+    static const char *const events[] = {"touch", "coin", "manual", "start"};
     static const char *const actions[] = {
-        "toggle", "move", "recolor", "number", "rotate", "activate", "unactivate"
+        "toggle", "move", "recolor", "number", "rotate", "activate", "unactivate",
+        "invisible", "no-collision", "set-gravity", "set-background"
     };
-    static const char *const trigger_kinds[] = {"move", "rotate", "forever"};
+    static const char *const trigger_kinds[] = {
+        "move", "rotate", "forever", "invisibility", "no-collision", "gravity",
+        "recolor", "background"
+    };
     static const char *const names[] = {
-        "Блок", "Платформа", "Шипы", "Монета", "Гусь", "Игрок", "Финиш", "Триггер"
+        "Блок", "Платформа", "Шипы", "Монета", "Гусь", "Игрок", "Финиш", "Триггер",
+        "Склон", "Жёлтый орб", "Оранжевый орб", "Эмиттер частиц", "Чекпоинт",
+        "Обычный портал", "Портал Jetpack"
     };
-    JW w = {out, cap, 0, 0};
+    JW w = {out, measure_only ? SIZE_MAX : cap, 0, 0};
     put(&w, "{\"format\":\"PVG3-PUBLISHED-LEVEL\",\"version\":1,\"id\":");
     put_json_string(&w, level->id);
     put(&w, ",\"title\":");put_json_string(&w, level->title);
@@ -936,10 +1072,12 @@ size_t on_protocol_published_level_json(const OnPublishedLevel *level,
             i ? "," : "", o->id, types[o->type]);
         put_json_string(&w, o->name[0] ? o->name : names[o->type]);
         put(&w, ",\"x\":%.4f,\"y\":%.4f,\"w\":%.4f,\"h\":%.4f,"
-            "\"angle\":%.3f,\"color\":\"#%06x\",\"number\":%d,"
+            "\"angle\":%.3f,\"flipX\":%s,\"flipY\":%s,"
+            "\"color\":\"#%06x\",\"number\":%d,"
             "\"visible\":%s,\"layer\":0,\"layer2\":0,\"zOrder\":0",
             (double)o->x, (double)o->y, (double)o->w, (double)o->h,
-            (double)o->angle, (unsigned)o->color, o->number,
+            (double)o->angle, o->flip_x ? "true" : "false",
+            o->flip_y ? "true" : "false", (unsigned)o->color, o->number,
             o->visible ? "true" : "false");
         if (o->type == ON_LEVEL_TRIGGER) {
             put(&w, ",\"trigger\":{\"kind\":\"%s\",\"event\":\"%s\",\"action\":\"%s\",\"targetId\":%d",
@@ -957,15 +1095,30 @@ size_t on_protocol_published_level_json(const OnPublishedLevel *level,
                 else
                     put(&w, ",\"degrees\":%.4f,\"value\":%.4f",
                         (double)o->trigger_value, (double)o->trigger_value);
-            } else if (!o->trigger_has_group) {
+            } else if (o->trigger_kind == ON_TRIGGER_KIND_FOREVER &&
+                       !o->trigger_has_group) {
+                put(&w, ",\"value\":%.4f", (double)o->trigger_value);
+            } else if (o->trigger_kind == ON_TRIGGER_KIND_GRAVITY) {
                 put(&w, ",\"value\":%.4f", (double)o->trigger_value);
             }
             put(&w, ",\"color\":\"#%06x\"}", (unsigned)o->trigger_color);
+        } else if (o->type == ON_LEVEL_PARTICLE) {
+            const OnLevelParticle *emitter = &o->emitter;
+            put(&w, ",\"emitter\":{\"enabled\":%s,\"continuous\":%s,"
+                "\"gravityEnabled\":%s,\"glow\":%s,\"rate\":%d,"
+                "\"lifetime\":%.1f,\"speed\":%d,\"spread\":%d,"
+                "\"size\":%d,\"direction\":%d,\"gravity\":%d}",
+                emitter->enabled ? "true" : "false",
+                emitter->continuous ? "true" : "false",
+                emitter->gravity_enabled ? "true" : "false",
+                emitter->glow ? "true" : "false", emitter->rate,
+                (double)emitter->lifetime, emitter->speed, emitter->spread,
+                emitter->size, emitter->direction, emitter->gravity);
         }
         put(&w, "}");
     }
     put(&w, "]}}");
-    if (w.bad) {out[0] = 0;return 0;}
+    if (w.bad) {if (out) out[0] = 0;return 0;}
     return w.at;
 }
 size_t on_protocol_level_summary_json(const OnPublishedLevel *level,

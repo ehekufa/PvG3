@@ -1,6 +1,6 @@
 /* Validate the committed music as both an independently usable WAV and
  * the exact stereo PCM format streamed by the Android audio callback.
- * gcc -std=c11 -O2 -Wall -Wextra -Werror -Isrc \
+ * clang -std=c11 -O2 -Wall -Wextra -Werror -Isrc \
  *     src/music_wav.c tools/music_test.c -o music_test -lm && ./music_test
  */
 #include "music_wav.h"

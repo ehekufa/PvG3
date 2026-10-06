@@ -15,7 +15,9 @@ class FirebaseError extends Error {
 
 async function request(path, method = 'GET', body, ifMatch = '') {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 9000);
+  // A 20k-object level is a multi-megabyte payload; keep normal room polls
+  // snappy while allowing large level reads and writes to finish on mobile.
+  const timeout = setTimeout(() => controller.abort(), path.startsWith('levels/') ? 60_000 : 9000);
   try {
     const headers = {};
     if (body !== undefined) headers['Content-Type'] = 'application/json';

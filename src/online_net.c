@@ -28,7 +28,8 @@
 #define NET_CLOCK_MONOTONIC CLOCK_MONOTONIC
 #endif
 
-#define RESPONSE_CAP (1024u * 1024u + 1u)
+#define RESPONSE_BASE_CAP (1024u * 1024u + 1u)
+#define RESPONSE_CAP ON_LEVEL_JSON_CAP
 
 enum { A_NONE, A_CREATE, A_JOIN, A_ROLE, A_LEAVE, A_REFRESH };
 enum { T_IDLE, T_CREATE, T_JOIN, T_ROLE, T_LEAVE, T_REFRESH,
@@ -52,7 +53,9 @@ typedef struct {
     int level_list_requested, level_fetch_requested;
     unsigned level_generation;
     char level_fetch_id[ON_LEVEL_ID_SIZE];
+    OnPublishedLevel loaded_level;
     char *response;
+    size_t response_cap;
     int level_publish_requested;
     unsigned level_publish_generation;
     OnPublishedLevel level_to_publish;
@@ -139,11 +142,28 @@ static const char *http_error(int code) {
     if (code <= 0) return "НЕТ СВЯЗИ С FIREBASE. ПРОВЕРЬ ИНТЕРНЕТ.";
     return "ОШИБКА FIREBASE. ПОПРОБУЙ ЕЩЁ РАЗ.";
 }
+static void compact_response(void) {
+    if (!net.response || net.response_cap <= RESPONSE_BASE_CAP) return;
+    char *smaller = (char *)realloc(net.response, RESPONSE_BASE_CAP);
+    if (smaller) {net.response = smaller;net.response_cap = RESPONSE_BASE_CAP;}
+}
 static int request(const char *path, const char *method, const char *body,
                    const char *if_match) {
     if (!net.response) return -1;
+    int large_level = path && !strncmp(path, "levels/", 7);
+    int large_level_get = large_level && method && !strcmp(method, "GET");
+    size_t needed = large_level_get ? RESPONSE_CAP : RESPONSE_BASE_CAP;
+    if (net.response_cap < needed) {
+        char *larger = (char *)realloc(net.response, needed);
+        if (!larger) return -1;
+        net.response = larger;net.response_cap = needed;
+    }
     net.response[0] = 0;
-    return on_http_request(path, method, body, if_match, net.response, RESPONSE_CAP);
+    int code = on_http_request(path, method, body, if_match, net.response,
+                               net.response_cap);
+    /* PUT responses are only status-checked; don't retain their echoed level. */
+    if (large_level && method && strcmp(method, "GET")) compact_response();
+    return code;
 }
 #ifndef ON_NET_MANUAL
 static void *worker(void *arg) {
@@ -166,7 +186,10 @@ static void *worker(void *arg) {
 #endif
 static int ensure_transport_locked(void) {
     if (!net.player_id[0]) make_id(net.player_id);
-    if (!net.response) net.response = (char *)malloc(RESPONSE_CAP);
+    if (!net.response) {
+        net.response = (char *)malloc(RESPONSE_BASE_CAP);
+        if (net.response) net.response_cap = RESPONSE_BASE_CAP;
+    }
     if (!net.response) {
         snprintf(net.view.notice, sizeof(net.view.notice), "НЕ ХВАТИЛО ПАМЯТИ ДЛЯ СЕТИ");
         return 0;
@@ -227,7 +250,7 @@ void on_net_shutdown(void) {
     net.level_publish_requested = 0;
     net.view.level_publish_busy = 0;
     net.generation++;
-    free(net.response);net.response = NULL;
+    free(net.response);net.response = NULL;net.response_cap = 0;
     pthread_mutex_unlock(&mu);
 }
 void on_net_view(OnNetView *out) {
@@ -235,6 +258,17 @@ void on_net_view(OnNetView *out) {
     pthread_mutex_lock(&mu);
     *out = net.view;
     pthread_mutex_unlock(&mu);
+}
+int on_net_take_loaded_level(OnPublishedLevel *out) {
+    if (!out) return 0;
+    pthread_mutex_lock(&mu);
+    if (!net.view.level_loaded) {
+        pthread_mutex_unlock(&mu);return 0;
+    }
+    *out = net.loaded_level;
+    net.view.level_loaded = 0;
+    pthread_mutex_unlock(&mu);
+    return 1;
 }
 void on_net_refresh(void) {
     pthread_mutex_lock(&mu);
@@ -385,23 +419,33 @@ static void finish_level_publish(unsigned publish_gen, const char *id,
     }
     pthread_mutex_unlock(&mu);
 }
-static void publish_level_record(unsigned publish_gen,
-                                 const OnPublishedLevel *source) {
-    char *body = (char *)malloc(RESPONSE_CAP);
-    if (!body) {
-        finish_level_publish(publish_gen, "", "НЕ ХВАТИЛО ПАМЯТИ ДЛЯ ПУБЛИКАЦИИ");
-        return;
-    }
-    OnPublishedLevel record = *source;
+static void publish_level_record(unsigned publish_gen, OnPublishedLevel *record) {
+    char *body = NULL;
+    size_t body_cap = 0;
     int code = 0;char saved_id[ON_LEVEL_ID_SIZE] = {0};
     for (int attempt = 0; attempt < 5; ++attempt) {
-        level_code(record.id);
-        if (!on_protocol_published_level_json(&record, body, RESPONSE_CAP)) {
+        level_code(record->id);
+        size_t body_size = on_protocol_published_level_json(record, NULL, 0);
+        if (!body_size || body_size >= RESPONSE_CAP) {
             free(body);
             finish_level_publish(publish_gen, "", "ЧЕРНОВИК ПОВРЕЖДЁН ИЛИ НЕ ПОДДЕРЖИВАЕТСЯ");
             return;
         }
-        char path[48];snprintf(path, sizeof path, "levels/%s.json", record.id);
+        if (body_cap < body_size + 1) {
+            char *larger = (char *)realloc(body, body_size + 1);
+            if (!larger) {
+                free(body);
+                finish_level_publish(publish_gen, "", "НЕ ХВАТИЛО ПАМЯТИ ДЛЯ ПУБЛИКАЦИИ");
+                return;
+            }
+            body = larger;body_cap = body_size + 1;
+        }
+        if (on_protocol_published_level_json(record, body, body_cap) != body_size) {
+            free(body);
+            finish_level_publish(publish_gen, "", "ЧЕРНОВИК ПОВРЕЖДЁН ИЛИ НЕ ПОДДЕРЖИВАЕТСЯ");
+            return;
+        }
+        char path[48];snprintf(path, sizeof path, "levels/%s.json", record->id);
         code = request(path, "PUT", body, "null_etag");
         if (code != 412) break;
     }
@@ -417,9 +461,9 @@ static void publish_level_record(unsigned publish_gen,
             "НЕ УДАЛОСЬ ОПУБЛИКОВАТЬ УРОВЕНЬ. ПРОВЕРЬ ИНТЕРНЕТ.");
         return;
     }
-    snprintf(saved_id, sizeof saved_id, "%s", record.id);
+    snprintf(saved_id, sizeof saved_id, "%s", record->id);
     char summary[ON_LEVEL_TITLE_SIZE + ON_LEVEL_DESCRIPTION_SIZE + 128];
-    if (!on_protocol_level_summary_json(&record, summary, sizeof summary,
+    if (!on_protocol_level_summary_json(record, summary, sizeof summary,
                                         clock_ms(NET_CLOCK_REALTIME))) {
         free(body);
         finish_level_publish(publish_gen, saved_id,
@@ -454,7 +498,6 @@ void on_net_pump_once(void) {
     char level_id[ON_LEVEL_ID_SIZE] = {0};
     OnCommand command = {0};
     OnMatch state;
-    OnPublishedLevel level_to_publish;
     unsigned revision = 0;
     int64_t now = clock_ms(NET_CLOCK_MONOTONIC);
     pthread_mutex_lock(&mu);
@@ -476,7 +519,6 @@ void on_net_pump_once(void) {
         net.level_list_requested = 0;
     } else if (net.level_publish_requested) {
         task = T_LEVEL_PUBLISH;net.level_publish_requested = 0;
-        level_to_publish = net.level_to_publish;
     } else if (net.action) {
         task = net.action == A_CREATE ? T_CREATE : net.action == A_JOIN ? T_JOIN :
                net.action == A_ROLE ? T_ROLE : net.action == A_LEAVE ? T_LEAVE : T_REFRESH;
@@ -505,7 +547,8 @@ void on_net_pump_once(void) {
     pthread_mutex_unlock(&mu);
     if (task == T_IDLE) return;
     if (task == T_LEVEL_PUBLISH) {
-        publish_level_record(publish_gen, &level_to_publish);return;
+        /* The busy flag keeps this shared, large record immutable until done. */
+        publish_level_record(publish_gen, &net.level_to_publish);return;
     }
 
     char path[96], body[256];
@@ -542,14 +585,19 @@ void on_net_pump_once(void) {
     if (task == T_LEVEL_GET) {
         snprintf(path, sizeof path, "levels/%s.json", level_id);
         code = request(path, "GET", NULL, NULL);
-        OnPublishedLevel loaded;
-        int valid = code == 200 && on_protocol_published_level(net.response, level_id, &loaded);
+        /* A fetch request clears level_loaded before this worker writes. The
+         * main thread only copies this storage while holding mu after success. */
+        int valid = code == 200 &&
+            on_protocol_published_level(net.response, level_id, &net.loaded_level);
         pthread_mutex_lock(&mu);
         if (level_gen == net.level_generation) {
             net.view.levels_busy = 0;
             net.view.level_loaded = valid;
             if (valid) {
-                net.view.loaded_level = loaded;
+                snprintf(net.view.loaded_level_id, sizeof net.view.loaded_level_id,
+                         "%s", net.loaded_level.id);
+                snprintf(net.view.loaded_level_title, sizeof net.view.loaded_level_title,
+                         "%s", net.loaded_level.title);
                 net.view.levels_notice[0] = 0;
             } else {
                 snprintf(net.view.levels_notice, sizeof net.view.levels_notice,
@@ -559,7 +607,7 @@ void on_net_pump_once(void) {
                     "Не удалось загрузить уровень. Проверь интернет.");
             }
         }
-        pthread_mutex_unlock(&mu);return;
+        pthread_mutex_unlock(&mu);compact_response();return;
     }
     if (task == T_REFRESH) {on_net_refresh();return;}
     if (task == T_LIST) {

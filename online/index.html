@@ -35,8 +35,8 @@
             <button class="primary-button" id="create" type="button"><span class="plus icon-plus" aria-hidden="true"></span> Создать комнату</button>
           </section>
           <section class="panel list-panel" aria-labelledby="list-title">
-            <div class="panel-title"><span class="round-icon outline round-icon-grid" aria-hidden="true"></span><div><span class="overline">ВЫБЕРИ КОМНАТУ</span><h2 id="list-title">Свободные комнаты</h2></div>
-              <button class="refresh" id="refresh" type="button" title="Обновить список" aria-label="Обновить список"><span class="refresh-icon" aria-hidden="true"></span></button></div>
+            <div class="panel-title"><span class="round-icon outline round-icon-grid" aria-hidden="true"></span><div><span class="overline">КОМНАТЫ</span><h2 id="list-title">Свободные комнаты</h2></div>
+              <button class="refresh" id="refresh" type="button" title="Обновить список" aria-label="Обновить список"><img class="refresh-icon" src="../assets/art/Переворот-блоков.png" alt="" aria-hidden="true"></button></div>
             <div class="room-list" id="room-list"><p class="muted">Ищем открытые комнаты…</p></div>
             <p class="hint">Друг может поделиться ссылкой с кодом комнаты. Закрытые и занятые комнаты в список не попадают.</p>
           </section>
@@ -54,15 +54,13 @@
         <div class="workshop-heading">
           <button class="back-link" id="workshop-online-back" type="button">Назад · В онлайн</button>
           <div><span class="eyebrow">ПЛАТФОРМЕННЫЙ РЕДАКТОР</span>
-            <h1 id="workshop-title">Мастерская</h1>
-            <p class="muted">Создавай, испытывай и публикуй собственные уровни. Черновик сохраняется на этом устройстве.</p></div>
+            <h1 id="workshop-title">Мастерская</h1></div>
         </div>
 
         <section class="ws-page" id="ws-home-page" aria-label="Главная мастерской">
           <div class="ws-home-grid">
             <article class="ws-home-card ws-draft-card">
               <span class="overline">ТВОЙ ПРОЕКТ</span><h2 id="ws-draft-title">Новый уровень</h2>
-              <p id="ws-draft-summary" class="muted">Бесконечная карта · окно просмотра 16 × 10 · игрок и финиш уже на месте.</p>
               <div class="ws-card-actions">
                 <button class="primary-button" id="ws-continue" type="button">Продолжить редактор</button>
                 <button class="small-button" id="ws-new-draft" type="button"><span class="plus icon-plus" aria-hidden="true"></span>Новый уровень</button>
@@ -71,11 +69,9 @@
             </article>
             <article class="ws-home-card ws-catalog-card">
               <span class="overline">ИГРАЙ И ПУБЛИКУЙ</span><h2>Уровни игроков</h2>
-              <p class="muted">Открой каталог опубликованных уровней и испытай их в браузере. Новая публикация появится и в C/native-клиенте.</p>
               <button class="primary-button" id="ws-open-catalog" type="button">Открыть каталог</button>
             </article>
           </div>
-          <p class="ws-safety-note">Публикация общедоступна и не требует аккаунта. Firebase может отклонить запись, если правила базы не разрешают публикацию.</p>
         </section>
 
         <section class="ws-page hidden" id="ws-editor-page" aria-label="Редактор уровня">
@@ -87,14 +83,13 @@
             </div>
           </div>
           <div class="ws-project-fields">
-            <label>Название уровня<input id="ws-title-input" maxlength="80" autocomplete="off" placeholder="Например: Острова над рекой"></label>
-            <label>Краткое описание<textarea id="ws-description-input" maxlength="160" rows="2" placeholder="Что ждёт игрока? (до 160 символов)"></textarea></label>
+            <label>Название уровня<input id="ws-title-input" maxlength="80" autocomplete="off"></label>
+            <label>Краткое описание<textarea id="ws-description-input" maxlength="160" rows="2"></textarea></label>
           </div>
           <div class="ws-editor-layout">
             <div class="ws-board-column">
-              <div class="ws-board-heading"><strong>Сцена · окно карты 16 × 10</strong><span id="ws-object-count">0 / 120 объектов</span></div>
+              <div class="ws-board-heading"><strong>Сцена · окно карты 16 × 10</strong><span id="ws-object-count">0 / 20000 объектов</span></div>
               <div class="canvas-wrap ws-canvas-wrap"><canvas id="ws-editor-canvas" width="1280" height="720" aria-label="Окно бесконечной прокручиваемой карты платформера"></canvas></div>
-              <p class="hint">Перетаскивай объекты в «Выбрать», карту — в «Карта». Зелёные стрелки двигают выделение; бирюзовые — окно карты. Для группы включи «Мульти» или Shift + нажатие.</p>
               <p class="ws-error hidden" id="ws-editor-message" role="status" aria-live="polite"></p>
             </div>
             <aside class="ws-tools" aria-label="Инструменты редактора">
@@ -105,11 +100,11 @@
                 <strong id="ws-selection-count" aria-live="polite">0 выбрано</strong>
                 <div class="ws-transform-actions"><button id="ws-copy-selected" type="button" disabled>Копировать</button><button id="ws-paste-selected" type="button" disabled>Вставить</button></div>
                 <div class="ws-transform-move">
-                  <label>Шаг перемещения<input id="ws-move-step" type="number" min="0.1" max="100" step="0.1" value="1"></label>
+                  <label>Шаг перемещения<input id="ws-move-step" type="number" min="0.1" max="100" step="0.1" value="0.5"></label>
                   <div class="ws-nudge-grid" role="group" aria-label="Переместить выбранные объекты">
-                    <span></span><button type="button" data-ws-nudge="up" aria-label="Сдвинуть объекты вверх" title="Сдвинуть объекты вверх"><span class="ws-editor-arrow arrow-up" aria-hidden="true"></span></button><span></span>
-                    <button type="button" data-ws-nudge="left" aria-label="Сдвинуть объекты влево" title="Сдвинуть объекты влево"><span class="ws-editor-arrow arrow-left" aria-hidden="true"></span></button><span class="ws-nudge-center" aria-hidden="true"></span><button type="button" data-ws-nudge="right" aria-label="Сдвинуть объекты вправо" title="Сдвинуть объекты вправо"><span class="ws-editor-arrow arrow-right" aria-hidden="true"></span></button>
-                    <span></span><button type="button" data-ws-nudge="down" aria-label="Сдвинуть объекты вниз" title="Сдвинуть объекты вниз"><span class="ws-editor-arrow arrow-down" aria-hidden="true"></span></button><span></span>
+                    <span></span><button type="button" data-ws-nudge="up" aria-label="Сдвинуть объекты вверх на полблока"><span class="ws-editor-arrow arrow-head-only arrow-up" aria-hidden="true"></span></button><span></span>
+                    <button type="button" data-ws-nudge="left" aria-label="Сдвинуть объекты влево на полблока"><span class="ws-editor-arrow arrow-head-only arrow-left" aria-hidden="true"></span></button><span class="ws-nudge-center" aria-hidden="true"></span><button type="button" data-ws-nudge="right" aria-label="Сдвинуть объекты вправо на полблока"><span class="ws-editor-arrow arrow-head-only arrow-right" aria-hidden="true"></span></button>
+                    <span></span><button type="button" data-ws-nudge="down" aria-label="Сдвинуть объекты вниз на полблока"><span class="ws-editor-arrow arrow-head-only arrow-down" aria-hidden="true"></span></button><span></span>
                   </div>
                 </div>
                 <label>Шаг размера<input id="ws-scale-step" type="number" min="0.1" max="16" step="0.1" value="0.1"></label>
@@ -118,8 +113,13 @@
                 </div>
                 <label>Шаг поворота, °<input id="ws-rotate-step" type="number" min="0.1" max="359.9" step="0.1" value="45"></label>
                 <div class="ws-rotate-actions" role="group" aria-label="Повернуть выделение">
-                  <button type="button" data-ws-rotate="-1" aria-label="Повернуть против часовой стрелки" title="Повернуть против часовой стрелки"><svg class="ws-rotate-icon rotate-ccw" viewBox="0 0 32 32" aria-hidden="true"><path d="M22 5a12 12 0 1 0 5 14"/><path d="M27 11v9h-9"/></svg><span data-ws-rotate-label>-45°</span></button>
-                  <button type="button" data-ws-rotate="1" aria-label="Повернуть по часовой стрелке" title="Повернуть по часовой стрелке"><svg class="ws-rotate-icon rotate-cw" viewBox="0 0 32 32" aria-hidden="true"><path d="M22 5a12 12 0 1 0 5 14"/><path d="M27 11v9h-9"/></svg><span data-ws-rotate-label>+45°</span></button>
+                  <button type="button" data-ws-rotate="-1" aria-label="Повернуть против часовой стрелки"><img class="ws-rotate-icon rotate-ccw" src="../assets/art/Переворот-блоков.png" alt="" aria-hidden="true"><span data-ws-rotate-label>-45°</span></button>
+                  <button type="button" data-ws-rotate="1" aria-label="Повернуть по часовой стрелке"><img class="ws-rotate-icon rotate-cw" src="../assets/art/Переворот-блоков.png" alt="" aria-hidden="true"><span data-ws-rotate-label>+45°</span></button>
+                </div>
+                <span class="overline">ЗЕРКАЛЬНОЕ ОТРАЖЕНИЕ</span>
+                <div class="ws-flip-actions" role="group" aria-label="Отразить выделение">
+                  <button type="button" data-ws-flip="x" aria-label="Отразить слева направо"><svg class="ws-flip-icon" viewBox="0 0 32 32" aria-hidden="true"><path class="mirror-axis" d="M16 3v26"/><path d="M12 8 5 16l7 8z"/><path d="m20 8 7 8-7 8z"/></svg><span>Слева ↔ справа</span></button>
+                  <button type="button" data-ws-flip="y" aria-label="Отразить сверху вниз"><svg class="ws-flip-icon" viewBox="0 0 32 32" aria-hidden="true"><path class="mirror-axis" d="M3 16h26"/><path d="m8 12 8-7 8 7z"/><path d="m8 20 8 7 8-7z"/></svg><span>Сверху ↕ снизу</span></button>
                 </div>
               </div>
               <div class="ws-tool-group ws-map-pan-tools">
@@ -127,22 +127,24 @@
                 <div class="ws-transform-move">
                   <label>Шаг карты<input id="ws-pan-step" type="number" min="0.1" max="100" step="0.1" value="1"></label>
                   <div class="ws-nudge-grid ws-pan-grid" role="group" aria-label="Сдвинуть окно карты">
-                    <span></span><button type="button" data-ws-pan="up" aria-label="Сдвинуть карту вверх" title="Сдвинуть карту вверх"><span class="ws-editor-arrow arrow-up" aria-hidden="true"></span></button><span></span>
-                    <button type="button" data-ws-pan="left" aria-label="Сдвинуть карту влево" title="Сдвинуть карту влево"><span class="ws-editor-arrow arrow-left" aria-hidden="true"></span></button><span class="ws-nudge-center" aria-hidden="true"></span><button type="button" data-ws-pan="right" aria-label="Сдвинуть карту вправо" title="Сдвинуть карту вправо"><span class="ws-editor-arrow arrow-right" aria-hidden="true"></span></button>
-                    <span></span><button type="button" data-ws-pan="down" aria-label="Сдвинуть карту вниз" title="Сдвинуть карту вниз"><span class="ws-editor-arrow arrow-down" aria-hidden="true"></span></button><span></span>
+                    <span></span><button type="button" data-ws-pan="up" aria-label="Сдвинуть карту вверх"><span class="ws-editor-arrow arrow-up" aria-hidden="true"></span></button><span></span>
+                    <button type="button" data-ws-pan="left" aria-label="Сдвинуть карту влево"><span class="ws-editor-arrow arrow-left" aria-hidden="true"></span></button><span class="ws-nudge-center" aria-hidden="true"></span><button type="button" data-ws-pan="right" aria-label="Сдвинуть карту вправо"><span class="ws-editor-arrow arrow-right" aria-hidden="true"></span></button>
+                    <span></span><button type="button" data-ws-pan="down" aria-label="Сдвинуть карту вниз"><span class="ws-editor-arrow arrow-down" aria-hidden="true"></span></button><span></span>
                   </div>
                 </div>
               </div>
               <div class="ws-tool-group"><span class="overline">КАТЕГОРИИ ОБЪЕКТОВ</span>
                 <div id="ws-palette" class="ws-palette ws-category-list">
-                  <button type="button" data-ws-type="block"><img src="../assets/art/Блок.png" alt=""><span>Блок</span></button>
-                  <button type="button" data-ws-type="ground"><img src="../assets/art/Платформа.png" alt=""><span>Платформа</span></button>
+                  <button type="button" data-ws-type="block"><img src="../assets/art/Блок.png" alt=""><span>Блоки</span></button>
                   <button type="button" data-ws-type="hazard"><img src="../assets/art/Шип.png" alt=""><span>Шипы</span></button>
                   <button type="button" data-ws-type="coin"><img src="../assets/art/coin-token.png" alt=""><span>Монета</span></button>
-                  <button type="button" data-ws-type="enemy"><img src="../assets/art/zombie-duck.png" alt=""><span>Гусь</span></button>
+                  <button type="button" data-ws-type="enemy"><img src="../assets/art/zombie-duck.png" alt=""><span>Утка</span></button>
                   <button type="button" data-ws-type="player"><img src="../assets/art/khlebushek.png" alt=""><span>Игрок</span></button>
-                  <button type="button" data-ws-type="goal"><img src="../assets/art/Флажок - финиш.png" alt=""><span>Финиш</span></button>
+                  <button type="button" data-ws-type="goal"><img src="../assets/art/Флажок - финиш.png" alt=""><span>Цели</span></button>
                   <button type="button" data-ws-type="trigger"><img src="../assets/art/Триггер-движения.png" alt=""><span>Триггер</span></button>
+                  <button type="button" data-ws-type="orb"><img src="../assets/art/Жёлтый орб.png" alt=""><span>Орбы</span></button>
+                  <button type="button" data-ws-type="portal"><img src="../assets/art/Портал-обычный.png" alt=""><span>Порталы</span></button>
+                  <button type="button" data-ws-type="particle"><span class="ws-category-glyph" aria-hidden="true">P</span><span>Частицы</span></button>
                 </div>
                 <div id="ws-palette-items" class="ws-palette-items" aria-live="polite"></div>
               </div>
@@ -152,8 +154,12 @@
                   <div class="ws-number-fields"><label>X<input id="ws-object-x" type="number" min="-100000" max="100000" step="0.1"></label><label>Y<input id="ws-object-y" type="number" min="-100000" max="100000" step="0.1"></label><label>Число<input id="ws-object-number" type="number" min="0" max="9999" step="1"></label></div>
                   <div class="ws-number-fields"><label>Ширина<input id="ws-object-width" type="number" min="0.1" max="64" step="0.1"></label><label>Высота<input id="ws-object-height" type="number" min="0.1" max="40" step="0.1"></label><label>Поворот<input id="ws-object-angle" type="number" min="0" max="359.9" step="0.1"></label></div>
                   <label class="ws-color-field">Цвет<input id="ws-object-color" type="color" value="#55c8ea"></label>
+                  <div id="ws-particle-fields" class="ws-particle-fields hidden">
+                    <button class="small-button" id="ws-particle-settings" type="button">Настроить эмиттер</button>
+                  </div>
                   <div id="ws-trigger-fields" class="hidden">
-                  <label id="ws-trigger-event-field">Событие<select id="ws-trigger-event"><option value="touch">Касание</option><option value="coin">Подбор монеты</option><option value="manual">Кнопка действия</option></select></label>
+                  <label>Вид триггера<select id="ws-trigger-kind"><option value="move">Движение</option><option value="rotate">Разворот</option><option value="forever">Вечно</option><option value="invisibility">Невидимость</option><option value="no-collision">Нет столкновения</option><option value="gravity">Гравитация</option><option value="recolor">Перекраска</option><option value="background">Фон</option></select></label>
+                  <label id="ws-trigger-event-field">Событие<select id="ws-trigger-event"><option value="touch">Касание</option><option value="coin">Подбор монеты</option><option value="manual">Кнопка действия</option><option value="start">Старт уровня</option></select></label>
                   <div id="ws-trigger-motion-fields">
                     <label>Целевая группа<input id="ws-trigger-group" type="number" min="0" max="9999" step="1"></label>
                     <div id="ws-trigger-move-fields" class="ws-number-fields ws-trigger-values">
@@ -162,19 +168,24 @@
                     </div>
                     <div id="ws-trigger-rotate-field" class="hidden">
                       <label>Время вращения, с<input id="ws-trigger-duration" type="number" min="1" max="9999" step="1"></label>
-                      <p class="muted">Группа делает один оборот в секунду.</p>
                     </div>
+                  </div>
+                  <div id="ws-trigger-gravity-field" class="ws-trigger-gravity hidden">
+                    <label for="ws-trigger-gravity">Сила гравитации · <output id="ws-trigger-gravity-value">0</output></label>
+                    <input id="ws-trigger-gravity" type="range" min="-100" max="100" step="1" value="0">
+                  </div>
+                  <div id="ws-trigger-color-field" class="ws-color-field hidden ws-trigger-color-field">
+                    <label for="ws-trigger-color"><img class="ws-color-wheel" src="../assets/art/Цветовой-круг.png" alt=""><span id="ws-trigger-color-label">Цвет объектов</span></label>
+                    <input id="ws-trigger-color" type="color" value="#ffc54e">
                   </div>
                   <div id="ws-trigger-forever-fields" class="hidden">
                     <label>Группа<input id="ws-trigger-forever-group" type="number" min="0" max="9999" step="1"></label>
                     <label>Действие<select id="ws-trigger-action"><option value="activate">Активировать</option><option value="unactivate">Деактивировать</option></select></label>
-                    <p class="muted">Состояние группы остаётся таким, пока другой триггер его не изменит.</p>
                   </div>
                   </div>
                 </div>
                 <button class="small-button ws-delete-selected" id="ws-delete-selected" type="button">Удалить выбранное</button>
               </div>
-              <p class="ws-status" id="ws-autosave-status" aria-live="polite">Черновик сохраняется автоматически.</p>
             </aside>
           </div>
         </section>
@@ -182,27 +193,27 @@
         <section class="ws-page hidden" id="ws-preview-page" aria-label="Предпросмотр уровня">
           <div class="ws-page-toolbar"><button class="small-button" id="ws-preview-back" type="button">Назад · В редактор</button>
             <div class="ws-preview-heading"><span class="overline">ПРЕДПРОСМОТР</span><h2 id="ws-preview-title">Уровень</h2></div>
-            <button class="small-button" id="ws-preview-reset" type="button"><span class="refresh-icon" aria-hidden="true"></span>С начала</button></div>
+            <button class="small-button" id="ws-preview-reset" type="button"><img class="refresh-icon" src="../assets/art/Переворот-блоков.png" alt="" aria-hidden="true">С начала</button></div>
           <div class="canvas-wrap ws-canvas-wrap"><canvas id="ws-preview-canvas" width="1280" height="720" aria-label="Предпросмотр платформерного уровня"></canvas></div>
           <div class="ws-control-panel">
             <label class="ws-control-select">Управление
               <select id="ws-control-select"><option value="auto">Авто</option><option value="buttons">Кнопки</option><option value="keyboard">Клавиатура</option></select>
             </label>
-            <p id="ws-control-help" class="muted">На телефоне доступны экранные кнопки; нажимай направление и прыжок одновременно.</p>
             <div class="ws-touch-controls hidden" id="ws-buttons-controls" aria-label="Экранные кнопки">
               <button type="button" data-ws-hold="back" aria-label="Назад"><span class="ws-control-arrow ws-arrow-back" aria-hidden="true"></span><span>НАЗАД</span></button>
               <button type="button" data-ws-hold="forward" aria-label="Вперёд"><span class="ws-control-arrow ws-arrow-forward" aria-hidden="true"></span><span>ВПЕРЁД</span></button>
-              <button type="button" data-ws-press="jump">ПРЫЖОК</button>
+              <button type="button" data-ws-press="jump" data-ws-normal-control>ПРЫЖОК</button>
+              <button type="button" data-ws-hold="up" data-ws-jetpack-control class="hidden" aria-label="Подъём">↑ ВВЕРХ</button>
+              <button type="button" data-ws-hold="down" data-ws-jetpack-control class="hidden" aria-label="Спуск">↓ ВНИЗ</button>
               <button type="button" data-ws-press="trigger">ДЕЙСТВИЕ</button>
             </div>
           </div>
-          <p id="ws-preview-status" class="ws-status" aria-live="polite">Доберись до финиша и попробуй собрать монеты.</p>
+          <p id="ws-preview-status" class="ws-status" aria-live="polite"></p>
         </section>
 
         <section class="ws-page hidden" id="ws-catalog-page" aria-label="Каталог уровней игроков">
           <div class="ws-page-toolbar"><button class="small-button" id="ws-catalog-back" type="button">Назад · Мастерская</button>
-            <h2>Уровни игроков</h2><button class="small-button" id="ws-catalog-refresh" type="button"><span class="refresh-icon" aria-hidden="true"></span>Обновить</button></div>
-          <p class="muted">Уровни доступны на вебе, Android и Windows. Выбери уровень, чтобы сыграть в браузере.</p>
+            <h2>Уровни игроков</h2><button class="small-button" id="ws-catalog-refresh" type="button"><img class="refresh-icon" src="../assets/art/Переворот-блоков.png" alt="" aria-hidden="true">Обновить</button></div>
           <div id="ws-catalog-list" class="ws-catalog-list"><p class="muted">Загружаем каталог…</p></div>
           <p id="ws-catalog-message" class="ws-error hidden" role="status" aria-live="polite"></p>
         </section>
@@ -210,17 +221,16 @@
 
       <section class="screen hidden" id="lobby-screen" aria-labelledby="lobby-title">
         <button type="button" class="back-link" id="leave-lobby">Выйти из комнаты</button>
-        <div class="lobby-top"><div><span class="eyebrow">ВЫ В КОМНАТЕ</span><h1 id="lobby-title">Выбери сторону</h1><p class="muted" id="lobby-subtitle">Ждём соперника…</p></div>
+        <div class="lobby-top"><div><span class="eyebrow">ВЫ В КОМНАТЕ</span><h1 id="lobby-title">Выбор стороны</h1></div>
           <div class="code-panel"><span class="overline">КОД КОМНАТЫ</span><strong id="room-code">------</strong><button type="button" id="share">Скопировать ссылку</button></div></div>
-        <div class="sides"><button type="button" class="side-card plant-side" data-side="plants"><div class="side-art"><img src="../assets/art/peashooter.png" alt="Горохострел"><img src="../assets/art/coin-sunflower.png" alt="Подсолнух"></div><span class="overline">ЗАЩИТА</span><h2>Растения</h2><p>Сажай растения Кирилла, подбирай монеты и не дай уткам пройти к дому.</p><b id="plants-taken">Свободно</b></button>
-          <button type="button" class="side-card duck-side" data-side="zombies"><div class="side-art"><img src="../assets/art/zombie-duck.png" alt="Утка-зомби"><img src="../assets/art/duck-cone.png" alt="Утка с конусом"><img src="../assets/art/duck-bucket.png" alt="Утка с ведром"></div><span class="overline">НАСТУПЛЕНИЕ</span><h2>Зомби-утки</h2><p>Покупай уток, выбирай ряд и прорвись через растения. Конус и ведро дают больше здоровья.</p><b id="zombies-taken">Свободно</b></button></div>
-        <div class="lobby-bottom" id="lobby-status">Оба игрока выбирают разные стороны. Бой начнётся автоматически.</div>
+        <div class="sides"><button type="button" class="side-card plant-side" data-side="plants"><div class="side-art"><img src="../assets/art/peashooter.png" alt="Горохострел"><img src="../assets/art/coin-sunflower.png" alt="Подсолнух"></div><span class="overline">ЗАЩИТА</span><h2>Растения</h2></button>
+          <button type="button" class="side-card duck-side" data-side="zombies"><div class="side-art"><img src="../assets/art/zombie-duck.png" alt="Утка-зомби"><img src="../assets/art/duck-cone.png" alt="Утка с конусом"><img src="../assets/art/duck-bucket.png" alt="Утка с ведром"></div><span class="overline">НАСТУПЛЕНИЕ</span><h2>Зомби-утки</h2></button></div>
       </section>
 
       <section class="screen hidden" id="match-screen" aria-label="Онлайн-бой">
         <div class="match-heading"><div><span class="eyebrow">КОМНАТА <span id="match-code"></span></span><h2 id="match-title">Онлайн-бой</h2></div><button type="button" class="back-link" id="leave-match">Выйти из боя ×</button></div>
-        <div class="canvas-wrap"><canvas id="battle" width="1280" height="720" aria-label="Игровое поле. Выбери карточку слева, затем клетку или ряд." role="img"></canvas></div>
-        <div class="match-controls"><span id="match-hint">Выбери карточку слева и коснись поля.</span><button type="button" id="finish-wave" class="small-button hidden">Закончить волну</button></div>
+        <div class="canvas-wrap"><canvas id="battle" width="1280" height="720" aria-label="Игровое поле" role="img"></canvas></div>
+        <div class="match-controls"><button type="button" id="finish-wave" class="small-button hidden">Закончить волну</button></div>
       </section>
     </main>
   </div>
@@ -230,6 +240,46 @@
     <span class="eyebrow">УМНАЯ КНИГА КИРИЛЛА</span><h2>Растения и противники</h2>
     <div class="book-columns"><div><h3>Растения Кирилла</h3><div id="book-plants"></div></div><div><h3>Утки-зомби</h3><div id="book-ducks"></div></div></div>
     <p class="book-footer">Обычная утка, утка с конусом и утка с ведром показаны на отдельных авторских рисунках.</p>
+  </dialog>
+  <dialog id="ws-particle-dialog" class="ws-particle-dialog" aria-labelledby="ws-particle-title">
+    <header class="ws-particle-dialog-head">
+      <div><span class="overline">ЭФФЕКТ ОБЪЕКТА P</span><h2 id="ws-particle-title">Настройки эмиттера</h2></div>
+      <button id="ws-particle-close" type="button" aria-label="Закрыть настройки">×</button>
+    </header>
+    <div class="ws-particle-dialog-body">
+      <div class="ws-particle-controls">
+        <div class="ws-particle-toggle-grid">
+          <label><input id="ws-emitter-enabled" data-emitter-key="enabled" type="checkbox"><span>Эмиссия включена</span></label>
+          <label><input id="ws-emitter-continuous" data-emitter-key="continuous" type="checkbox"><span>Непрерывно</span></label>
+          <label><input id="ws-emitter-gravity-enabled" data-emitter-key="gravityEnabled" type="checkbox"><span>Гравитация</span></label>
+          <label><input id="ws-emitter-glow" data-emitter-key="glow" type="checkbox"><span>Свечение</span></label>
+        </div>
+        <div class="ws-particle-ranges">
+          <label for="ws-emitter-rate"><span id="ws-emitter-rate-label">Частиц в секунду</span><output id="ws-emitter-rate-value">8</output></label>
+          <input id="ws-emitter-rate" data-emitter-key="rate" type="range" min="1" max="30" step="1">
+          <label for="ws-emitter-lifetime">Время жизни<output id="ws-emitter-lifetime-value">1.2 с</output></label>
+          <input id="ws-emitter-lifetime" data-emitter-key="lifetime" type="range" min="0.2" max="3" step="0.1">
+          <label for="ws-emitter-speed">Скорость<output id="ws-emitter-speed-value">90 px/с</output></label>
+          <input id="ws-emitter-speed" data-emitter-key="speed" type="range" min="0" max="300" step="1">
+          <label for="ws-emitter-direction">Направление<output id="ws-emitter-direction-value">−90°</output></label>
+          <input id="ws-emitter-direction" data-emitter-key="direction" type="range" min="-180" max="180" step="1">
+          <label for="ws-emitter-spread">Разброс<output id="ws-emitter-spread-value">40°</output></label>
+          <input id="ws-emitter-spread" data-emitter-key="spread" type="range" min="0" max="180" step="1">
+          <label for="ws-emitter-size">Размер<output id="ws-emitter-size-value">4 px</output></label>
+          <input id="ws-emitter-size" data-emitter-key="size" type="range" min="1" max="12" step="1">
+          <label for="ws-emitter-gravity">Сила гравитации<output id="ws-emitter-gravity-value">90 px/с²</output></label>
+          <input id="ws-emitter-gravity" data-emitter-key="gravity" type="range" min="0" max="300" step="1">
+        </div>
+      </div>
+      <aside class="ws-particle-preview-panel">
+        <span class="overline">ЖИВОЙ ПРЕДПРОСМОТР</span>
+        <canvas id="ws-particle-preview" width="320" height="320" aria-label="Анимированный предпросмотр эмиттера P"></canvas>
+      </aside>
+    </div>
+    <footer class="ws-particle-dialog-foot">
+      <button id="ws-particle-reset" class="small-button" type="button">По умолчанию</button>
+      <button id="ws-particle-close-bottom" class="small-button primary" type="button">Готово</button>
+    </footer>
   </dialog>
   <audio id="soundtrack" src="../assets/music/kirill-pond-loop.wav" preload="none" loop></audio>
   <script type="module" src="./app.js"></script>

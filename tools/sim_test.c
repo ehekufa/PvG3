@@ -1,6 +1,6 @@
 /* Deterministic desktop regression tests; no Android or framebuffer needed.
- * gcc -std=c11 -O2 -Wall -Wextra -Werror -DGAME_TEST -Isrc \
- *     src/game.c src/font.c tools/sim_test.c -o sim_test -lm && ./sim_test
+ * clang -std=c11 -O2 -Wall -Wextra -Werror -DGAME_TEST -Isrc \
+ *     src/game.c src/font.c src/preferences.c tools/sim_test.c -o sim_test -lm && ./sim_test
  */
 #include <assert.h>
 #include <math.h>
@@ -27,16 +27,17 @@ static void workshop_navigation_and_preview(void) {
     assert(game_phase() == GAME_WORKSHOP_DETAILS);
     game_workshop_open_editor();
     assert(game_phase() == GAME_WORKSHOP_EDIT);
-    OnPublishedLevel level = {0};
+    static OnPublishedLevel level;
+    memset(&level, 0, sizeof level);
     snprintf(level.id, sizeof level.id, "%s", "0");
     snprintf(level.title, sizeof level.title, "%s", "Локальная проверка");
     level.width = 16;level.height = 10;level.object_count = 3;
     level.objects[0] = (OnLevelObject){.id=10,.type=ON_LEVEL_GROUND,
         .x=0,.y=8,.w=16,.h=2,.color=0x65a845u,.visible=1};
     level.objects[1] = (OnLevelObject){.id=11,.type=ON_LEVEL_PLAYER,
-        .x=1,.y=6,.w=.65f,.h=.85f,.color=0x55c8eau,.visible=1};
+        .x=1,.y=6,.w=.65f,.h=.85f,.color=0xffffffu,.visible=1};
     level.objects[2] = (OnLevelObject){.id=12,.type=ON_LEVEL_GOAL,
-        .x=14,.y=6,.w=1,.h=2,.color=0x69d16cu,.visible=1};
+        .x=14,.y=6,.w=1,.h=2,.color=0xffffffu,.visible=1};
     assert(game_workshop_preview(&level));
     assert(game_phase() == GAME_CUSTOM_PLAY);
     game_custom_control(1, 0, 0);game_tick(.05f, NULL);
@@ -66,10 +67,7 @@ static void custom_level_runtime(void) {
     game_custom_level_request(view.levels[0].id);
     on_net_pump_once();
     on_net_view(&view);
-    assert(view.level_loaded && !strcmp(view.loaded_level.id, "104"));
-    assert(!strcmp(view.loaded_level.description,
-                   "Найди скрытый мост и монеты, затем доберись до финиша по платформам."));
-    assert(view.loaded_level.object_count == 3);
+    assert(view.level_loaded && !strcmp(view.loaded_level_id, "104"));
     game_tick(0, NULL);
     assert(game_phase() == GAME_CUSTOM_PLAY);
     float start_x = game_debug_custom_player_x();

@@ -36,8 +36,23 @@ IMAGES = [
     ("LEVEL_TRIGGER", "assets/art/Триггер-движения.png"),
     ("LEVEL_TRIGGER_ROTATE", "assets/art/Триггер-вращения.png"),
     ("LEVEL_TRIGGER_FOREVER", "assets/art/Триггер-вечно.png"),
+    ("LEVEL_TRIGGER_INVISIBILITY", "assets/art/Триггер-невидимости.png"),
+    ("LEVEL_TRIGGER_NO_COLLISION", "assets/art/Триггер-нет столкновения.png"),
     ("LEVEL_FLAG", "assets/art/Флажок - финиш.png"),
     ("LEVEL_SPIKE", "assets/art/Шип.png"),
+    ("LEVEL_SLOPE", "assets/art/Склон.png"),
+    ("LEVEL_TRIGGER_GRAVITY", "assets/art/Триггер-гравитации.png"),
+    ("LEVEL_ORB_ORANGE", "assets/art/Оранжевый opб.png"),
+    ("LEVEL_ORB_YELLOW", "assets/art/Жёлтый орб.png"),
+    ("LEVEL_CHECKPOINT_INACTIVE", "assets/art/Чекпоинт-выключен.png"),
+    ("LEVEL_CHECKPOINT_ACTIVE", "assets/art/Чекпоинт-включён.png"),
+    ("LEVEL_PORTAL_NORMAL", "assets/art/Портал-обычный.png"),
+    ("LEVEL_PORTAL_JETPACK", "assets/art/Портал-джетпака.png"),
+    ("JETPACK_ACTIVE", "assets/art/джетпак-активен.png"),
+    ("JETPACK_INACTIVE", "assets/art/Джетпак-отключён.png"),
+    ("LEVEL_TRIGGER_COLOR", "assets/art/Триггер-цвет.png"),
+    ("WORKSHOP_ROTATE", "assets/art/Переворот-блоков.png"),
+    ("COLOR_WHEEL", "assets/art/Цветовой-круг.png"),
 ]
 
 

@@ -6,6 +6,8 @@
  */
 #include "game.h"
 #include "game_view.h" /* GameOfflineUIState for voiced story lines */
+#include "font.h"
+#include "preferences.h"
 #include "lvgl_ui.h"
 #include "android_music.h"
 #include "android_online_http.h"
@@ -33,7 +35,9 @@ static const char *FS =
     "precision mediump float;\n"
     "varying vec2 v_uv;\n"
     "uniform sampler2D u_tex;\n"
-    "void main(){ gl_FragColor = texture2D(u_tex, vec2(v_uv.x, 1.0 - v_uv.y)); }\n";
+    "void main(){\n"
+    "  gl_FragColor = texture2D(u_tex, vec2(v_uv.x, 1.0 - v_uv.y));\n"
+    "}\n";
 
 static GLuint compile_shader(GLenum type, const char *src) {
     GLuint s = glCreateShader(type);
@@ -62,8 +66,13 @@ static void campaign_save(struct android_app *app);
 static void garden_save(struct android_app *app);
 
 /* No playback from the background, even if the screen/game is still alive. */
+static int requested_music_state = -1;
 static void update_music(void) {
-    android_music_set_playing(G->ready && G->resumed && G->focused);
+    int should_play = G->ready && G->resumed && G->focused &&
+                      preferences_music_enabled();
+    if (requested_music_state == should_play) return;
+    android_music_set_playing(should_play);
+    requested_music_state = should_play;
 }
 
 static void engine_term(Engine *e) {
@@ -170,7 +179,7 @@ static void engine_draw(Engine *e, const uint32_t *fb) {
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, GAME_W, GAME_H, GL_RGBA, GL_UNSIGNED_BYTE, fb);
 
     glViewport(0, 0, e->w, e->h);
-    glClearColor(0.055f, 0.065f, 0.055f, 1.0f);
+    glClearColor(0.125f, 0.208f, 0.294f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
     int left, top, width, height;
     game_viewport(e, &left, &top, &width, &height);
@@ -344,7 +353,7 @@ static void campaign_save(struct android_app *app) {
 }
 
 static int legacy_renderer_phase(int phase) {
-    return phase == GAME_MENU || phase == GAME_INTRO || phase == GAME_PLAY ||
+    return phase == GAME_INTRO || phase == GAME_PLAY ||
            phase == GAME_LEVEL_CLEAR || phase == GAME_WIN || phase == GAME_LOSE ||
            phase == GAME_GARDEN || phase == GAME_BOOK || phase == GAME_SELECT;
 }
@@ -450,6 +459,20 @@ void android_main(struct android_app *app) {
     app->onInputEvent = on_input;
 
     android_online_set_vm(app->activity ? app->activity->vm : NULL);
+    if (app->activity && app->activity->internalDataPath) {
+        char language_path[PATH_MAX];
+        int length = snprintf(language_path, sizeof language_path,
+                              "%s/pvg3-language.v1",
+                              app->activity->internalDataPath);
+        if (length > 0 && (size_t)length < sizeof language_path)
+            font_set_language_path(language_path);
+        char preferences_path[PATH_MAX];
+        length = snprintf(preferences_path, sizeof preferences_path,
+                          "%s/pvg3-settings.v1",
+                          app->activity->internalDataPath);
+        if (length > 0 && (size_t)length < sizeof preferences_path)
+            preferences_set_path(preferences_path);
+    }
     game_init();
     garden_load(app);   /* keep reading the existing pvg3-garden.v1 */
     campaign_load(app);
@@ -512,6 +535,8 @@ void android_main(struct android_app *app) {
         }
         if (engine.ui_ready && !legacy_renderer_phase(game_phase()))
             lvgl_ui_frame(dt, fb);
+        /* The settings toggle can change audio while this frame is being drawn. */
+        update_music();
         engine_draw(&engine, fb);
         if (t - last_save >= 1.0) {
             if (game_phase() == GAME_PLAY) campaign_save(app);
