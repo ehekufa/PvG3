@@ -216,6 +216,8 @@ static const FontTranslation translations[] = {
     {"Пароль: от 6 до 72 знаков без пробелов.",
      "Password: 6 to 72 characters, no spaces."},
     {"Такой аккаунт уже есть.", "That account already exists."},
+    {"Аккаунт занят или Firebase отказал. Войди либо проверь правила.",
+     "The nickname is taken or Firebase refused registration. Sign in or check the rules."},
     {"Неверный ник или пароль.", "Wrong nickname or password."},
     {"Вход выполнен.", "Signed in."},
     {"Вход выполнен. Вы модератор.", "Signed in. You are a moderator."},

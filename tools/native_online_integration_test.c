@@ -99,7 +99,8 @@ static const char *build_room(void) {
  * decisions firebase/database.rules.json makes, so the native client is tested
  * against the same contract as the website. */
 typedef struct {
-    int account_written, token_written, ban_written, ban_value;
+    int account_written, account_if_match_present, token_written;
+    int ban_written, ban_value;
     int comment_written, official_written, official_value;
     int author_written, index_official_written, index_author_written;
     char account_login[ON_LOGIN_SIZE], account_body[512];
@@ -241,9 +242,11 @@ int on_http_request(const char *path, const char *method, const char *body,
         char branch[32], key[ON_LOGIN_SIZE], sub[ON_COMMENT_ID_SIZE + 8];
         if (branch_key(path, branch, key, sub)) {
             if (!strcmp(branch, "accounts") && !strcmp(method, "PUT")) {
-                if (if_match && !strcmp(if_match, "null_etag") &&
-                    accounts.account_written && !strcmp(accounts.account_login, key))
-                    return answer(response, cap, "null", 412);
+                accounts.account_if_match_present = if_match && if_match[0];
+                if (accounts.account_written &&
+                    !strcmp(accounts.account_login, key) &&
+                    (!body || !strstr(body, "\"proof\":")))
+                    return answer(response, cap, "null", 403);
                 if (!body || !strstr(body, "\"hash\":")) return -1;
                 accounts.account_written = 1;
                 snprintf(accounts.account_login, sizeof accounts.account_login,
@@ -1835,6 +1838,7 @@ static int run_lvgl_test(void) {
     assert(account_view.account.signed_in && account_view.account.admin == 1 &&
            !strcmp(account_view.account.login, "qwertyuiopaj1234"));
     assert(accounts.account_written && strstr(accounts.account_body, "\"hash\":"));
+    assert(!accounts.account_if_match_present);
     assert(accounts.token_written && !strcmp(accounts.token_login,
                                              "qwertyuiopaj1234"));
     assert(!lvgl_ui_test_label_present("Войди или создай аккаунт — уровень опубликуется сразу."));
@@ -2005,7 +2009,9 @@ static int run_lvgl_test(void) {
     assert(font_language() == FONT_LANG_EN &&
            !strcmp(font_translate("Гость"), "Guest") &&
            !strcmp(font_translate("Не удалось начать публикацию."),
-                   "Couldn't start publishing."));
+                   "Couldn't start publishing.") &&
+           !strcmp(font_translate("Аккаунт занят или Firebase отказал. Войди либо проверь правила."),
+                   "The nickname is taken or Firebase refused registration. Sign in or check the rules."));
     assert(!lvgl_ui_test_label_present("Controls · WASD") &&
            lvgl_ui_test_label_present("Back to levels") &&
            lvgl_ui_test_label_present("ACTION") &&
@@ -2246,6 +2252,7 @@ int main(void) {
     on_net_account_sign_in(TEST_ADMIN_LOGIN, "my-password", 1);
     tick_pump(12);
     assert(view().account.signed_in && view().account.admin);
+    assert(accounts.account_written && !accounts.account_if_match_present);
     assert(on_net_level_publish(&draft));tick_pump(1);
     OnNetView published = view();
     assert(!published.level_publish_busy && published.level_publish_id[0] &&

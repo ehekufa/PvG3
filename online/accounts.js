@@ -24,6 +24,15 @@ export const MAX_PASSWORD = 72;
 export const MAX_COMMENT = 300;
 const PBKDF2_ROUNDS = 150000;
 const SESSION_KEY = 'pvg3-account-session-v1';
+const ACCOUNT_CREATE_REFUSED = {
+  ru: 'Аккаунт занят или Firebase отказал. Войди либо проверь правила.',
+  en: 'The nickname is taken or Firebase refused registration. Sign in or check the rules.'
+};
+function accountCreateRefusedMessage() {
+  const language = globalThis.document?.documentElement?.lang || 'ru';
+  return language.toLowerCase().startsWith('en') ?
+    ACCOUNT_CREATE_REFUSED.en : ACCOUNT_CREATE_REFUSED.ru;
+}
 
 export const normalizeLogin = value => String(value ?? '').trim().toLowerCase();
 export const validLogin = login => LOGIN_PATTERN.test(normalizeLogin(login));
@@ -145,12 +154,14 @@ export async function createAccount(login, password) {
   const salt = await accountSalt(name);
   const hash = await passwordHash(name, password);
   try {
+    /* The unreadable account branch's .write rule atomically checks
+     * !data.exists(), so account creation does not need an ETag precondition. */
     await request(`accounts/${name}`, 'PUT',
-      {salt, hash, createdAt: Date.now()}, 'null_etag');
+      {salt, hash, createdAt: Date.now()});
   } catch (error) {
     if (statusOf(error) === 412) throw new Error('Такой аккаунт уже есть.');
     if (statusOf(error) === 403)
-      throw new Error('База не приняла аккаунт. Проверь правила Firebase.');
+      throw new Error(accountCreateRefusedMessage());
     throw error;
   }
   return signIn(name, password);

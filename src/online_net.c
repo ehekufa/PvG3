@@ -740,11 +740,12 @@ static void account_sign_in(unsigned gen, int create) {
             return;
         }
         snprintf(path, sizeof path, "accounts/%s.json", login);
-        code = request(path, "PUT", body, "null_etag");
-        if (code == 412) {account_notice(gen, "Такой аккаунт уже есть.");return;}
+        /* The account rule itself atomically allows only !data.exists().
+         * An ETag precondition is unnecessary on this unreadable branch. */
+        code = request(path, "PUT", body, NULL);
         if (code != 200) {
             account_notice(gen, code == 401 || code == 403 ?
-                "База не приняла аккаунт. Проверь правила Firebase." :
+                "Аккаунт занят или Firebase отказал. Войди либо проверь правила." :
                 "Не удалось создать аккаунт. Проверь интернет.");
             return;
         }

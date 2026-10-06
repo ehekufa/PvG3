@@ -41,10 +41,11 @@ function fakeDatabase({admins = ['qwertyuiopaj1234']} = {}) {
     if (method === 'GET') return reply(200, parent[key] ?? null);
     const body = options.body ? JSON.parse(options.body) : null;
     if (segments[0] === 'accounts') {
+      db.lastAccountIfMatch = options.headers?.['If-Match'] || '';
       if (!LOGIN_PATTERN.test(key) || !body?.salt || !body?.hash) return reply(...[deny.status, deny.body]);
       if (parent[key] && options.headers['If-Match'] === 'null_etag')
         return reply(412, {error: 'precondition failed'});
-      if (parent[key] && body.proof !== db.tokens[key]?.token)
+      if (parent[key] && (!body.proof || body.proof !== db.tokens[key]?.token))
         return reply(...[deny.status, deny.body]);
       parent[key] = {...body};
       return reply(200, parent[key]);
@@ -174,11 +175,21 @@ test('create, sign in, refuse a duplicate nick and a wrong password', async () =
     assert.equal(session.admin, true, 'the seeded admin list is respected');
     assert.equal(isModerator(), true);
     assert.match(db.accounts.qwertyuiopaj1234.hash, /^[a-f0-9]{64}$/);
+    assert.equal(db.lastAccountIfMatch, '',
+      'registration does not require read access to the private account branch');
 
     await assert.rejects(createAccount('qwertyuiopaj1234', 'another-one'),
-      /уже есть/, 'the same nick cannot be taken twice');
-    await assert.rejects(createAccount(' QWERTYUIOPAJ1234 ', 'another-one'), /уже есть/,
-      'a nick that differs only by spaces and case is the same account');
+      /Аккаунт занят/, 'the same nick cannot be taken twice');
+    const savedDocument = globalThis.document;
+    globalThis.document = {documentElement: {lang: 'en'}};
+    try {
+      await assert.rejects(createAccount(' QWERTYUIOPAJ1234 ', 'another-one'),
+        /The nickname is taken/,
+        'duplicate-looking nicks report the localized error in English too');
+    } finally {
+      if (savedDocument === undefined) delete globalThis.document;
+      else globalThis.document = savedDocument;
+    }
     await assert.rejects(createAccount('bad nick', 'another-one'), /a–z/);
 
     signOut();
