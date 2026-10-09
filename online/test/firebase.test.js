@@ -5,6 +5,9 @@ import {validId, listRooms, createRoom, getRoom, joinRoom, chooseRole,
         validLevelId, listPublishedLevels, getPublishedLevel, publishLevel} from '../firebase.js';
 import {newDraft, addObject} from '../workshop.js';
 import {newMatch, validMatch, applyCommand} from '../rules.js';
+/* The address lives in the config (or in the gitignored build secret), so the
+ * tests never spell it out themselves. */
+import {DATABASE_HOST as CONFIGURED_HOST} from '../firebase-config.js';
 
 // Fake the RTDB REST surface; never write fixtures to the user's real DB.
 test('room creation, list, compare-and-set join, role choice, actions and exit', async () => {
@@ -12,7 +15,7 @@ test('room creation, list, compare-and-set join, role choice, actions and exit',
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url, opts) => {
     const route = new URL(url);
-    assert.equal(route.hostname, 'pvg3-ae824-default-rtdb.firebaseio.com');
+    assert.equal(route.hostname, CONFIGURED_HOST);
     assert(route.pathname.endsWith('.json'));
     const segments = route.pathname.slice(1,-5).split('/');
     let parent = rooms, key = segments[0];
@@ -80,12 +83,12 @@ test('room creation, list, compare-and-set join, role choice, actions and exit',
     assert.equal(await getRoom(created.id),null);
   } finally {globalThis.fetch=originalFetch;}
 });
-test('publishing creates a compatible level and catalog entry using only the fake REST database', async () => {
+test('publishing creates an account-owned level and catalog entry using only the fake REST database', async () => {
   const database = {levels:{}, 'levels-index':{}};
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url, opts) => {
     const route = new URL(url), path = route.pathname.slice(1, -5).split('/');
-    assert.equal(route.hostname, 'pvg3-ae824-default-rtdb.firebaseio.com');
+    assert.equal(route.hostname, CONFIGURED_HOST);
     assert(['levels', 'levels-index'].includes(path[0]));
     let parent = database;
     for (const segment of path.slice(0, -1)) parent = parent[segment] ||= {};
@@ -102,13 +105,25 @@ test('publishing creates a compatible level and catalog entry using only the fak
   try {
     const draft = newDraft();draft.title = 'Test level';draft.description = 'Fake only';
     addObject(draft, 'coin', 5, 5);
-    const result = await publishLevel(draft);
+    const author = {login: 'player_1', tok: 'a'.repeat(64)};
+    const result = await publishLevel(draft, author);
     assert(validLevelId(result.id));
+    assert.deepEqual(database.levels[result.id].author, author);
     assert.equal(database.levels[result.id].format, 'PVG3-PUBLISHED-LEVEL');
     assert.equal(database['levels-index'][result.id].title, 'Test level');
     assert.deepEqual((await listPublishedLevels()).map(({id}) => id), [result.id]);
     assert.equal((await getPublishedLevel(result.id)).project.format, 'PVG3-MAKER');
     await assert.rejects(getPublishedLevel('0'), /ID/);
+  } finally {globalThis.fetch = originalFetch;}
+});
+
+test('guests cannot publish a level or send a Firebase write', async () => {
+  let requests = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {requests++;return reply(200, null);};
+  try {
+    await assert.rejects(publishLevel(newDraft()), /аккаунт/i);
+    assert.equal(requests, 0, 'the account check happens before any network write');
   } finally {globalThis.fetch = originalFetch;}
 });
 
@@ -125,8 +140,11 @@ test('a catalog permission refusal is surfaced without erasing a saved level', a
     throw new Error(`Unexpected fake path ${path}`);
   };
   try {
-    await assert.rejects(publishLevel(newDraft()), error =>
-      error.status === 403 && /сохранён, но не появился в каталоге/.test(error.message));
+    await assert.rejects(publishLevel(newDraft(),
+      {login: 'player_1', tok: 'b'.repeat(64)}), error =>
+      error.status === 403 && error.levelWritten === true &&
+      validLevelId(error.levelId) &&
+      /сохранён, но не появился в каталоге/.test(error.message));
     assert.equal(Object.keys(stored).length, 1);
   } finally {globalThis.fetch = originalFetch;}
 });

@@ -62,12 +62,13 @@ static void test_custom_level_keeps_original_player_and_flag_art(void) {
     OnPublishedLevel level = {0};
     level.width = 16;level.height = 10;level.object_count = 3;
     level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
-        .x=0,.y=8,.w=16,.h=2,.visible=1,.color=0xffffffu};
-    /* Legacy/custom data may carry any colors; fixed-art objects ignore them. */
+        .x=0,.y=8,.w=16,.h=2,.visible=1,.alpha=100,.color=0xffffffu};
+    /* Legacy/custom data may carry any colors; fixed-art objects ignore them.
+     * C callers must make opacity explicit just as the wire parser does. */
     level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
-        .x=2,.y=7,.w=.65f,.h=.85f,.visible=1,.color=0x69d16cu};
+        .x=2,.y=7,.w=.65f,.h=.85f,.visible=1,.alpha=100,.color=0x69d16cu};
     level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
-        .x=4,.y=6,.w=1,.h=2,.visible=1,.color=0x69d16cu};
+        .x=4,.y=6,.w=1,.h=2,.visible=1,.alpha=100,.color=0x69d16cu};
     game_init();game_workshop_open();game_workshop_open_details();
     game_workshop_open_editor();
     assert(game_workshop_preview(&level));
@@ -102,8 +103,46 @@ static void test_legacy_preferences_migration(void) {
     file = fopen(path, "rb");assert(file);
     char saved[96] = {0};
     assert(fgets(saved, sizeof saved, file));
-    assert(strcmp(saved, "PVG3-PREFERENCES 2\n") == 0);
+    assert(strcmp(saved, "PVG3-PREFERENCES 4\n") == 0);
     assert(fclose(file) == 0);
+    preferences_set_path(NULL);
+    assert(remove(path) == 0);
+}
+
+/* The remembered account is the nick plus what the database handed out — never
+ * the password, and never a hand-edited value. */
+static void test_account_preferences(void) {
+    const char *path = "pvg3-account-settings-test.preference";
+    char login[25], token[65], hash[65];
+    remove(path);
+    preferences_set_path(path);
+    assert(!preferences_account_login(login, sizeof login));
+    assert(!preferences_account_admin());
+    preferences_set_account("qwertyuiopaj1234",
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210", 1);
+    assert(preferences_account_login(login, sizeof login));
+    assert(strcmp(login, "qwertyuiopaj1234") == 0);
+    assert(preferences_account_admin() == 1);
+    preferences_set_path(path); /* reload from disk */
+    assert(preferences_account_login(login, sizeof login));
+    assert(strcmp(login, "qwertyuiopaj1234") == 0);
+    assert(preferences_account_token(token, sizeof token));
+    assert(strcmp(token,
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef") == 0);
+    assert(preferences_account_hash(hash, sizeof hash));
+    assert(preferences_account_admin() == 1);
+    preferences_set_account(NULL, NULL, NULL, 0);
+    preferences_set_path(path);
+    assert(!preferences_account_login(login, sizeof login));
+    /* A damaged record simply means «not signed in». */
+    FILE *file = fopen(path, "wb");assert(file);
+    assert(fputs("PVG3-PREFERENCES 3\naccount_login=bad nick\n"
+                 "account_token=zz\naccount_hash=\naccount_admin=1\n", file) >= 0);
+    assert(fclose(file) == 0);
+    preferences_set_path(path);
+    assert(!preferences_account_login(login, sizeof login));
+    assert(!preferences_account_admin());
     preferences_set_path(NULL);
     assert(remove(path) == 0);
 }
@@ -194,6 +233,7 @@ static void write_bmp(const char *path, int w, int h, const uint32_t *rgba) {
 int main(void) {
     test_language_preference();
     test_legacy_preferences_migration();
+    test_account_preferences();
     test_game_preferences();
     preferences_set_neutral_background_enabled(0);
     assert(!preferences_neutral_background_enabled());
@@ -205,16 +245,16 @@ int main(void) {
     game_init();
     game_tick(0.016f, fb);
     assert(game_phase() == GAME_MENU);
-    /* The menu sky is a soft blue, and the Queen's robot stays on level 5. */
-    assert(fb[365 * GAME_W + 1165] == 0xFFECE0C6u);
-    assert(fb[50 * GAME_W + 100] == 0xFFF8FDFFu); /* player-level tile restored */
-    assert(fb[50 * GAME_W + 480] == 0xFFF8FDFFu); /* campaign uses warm white */
-    assert(fb[70 * GAME_W + 900] == 0xFFF8FDFFu); /* no Zen Garden picture */
+    /* The menu uses raised warm-paper cards; the Queen's robot stays on level 5. */
+    assert(fb[365 * GAME_W + 1165] == 0xFFF8FDFFu); /* hero card */
+    assert(fb[50 * GAME_W + 100] == 0xFFF8FDFFu); /* player-level action */
+    assert(fb[90 * GAME_W + 530] == 0xFFF8FDFFu); /* campaign action */
+    assert(fb[70 * GAME_W + 900] == 0xFFF8FDFFu); /* garden action */
     assert(fb[580 * GAME_W + 105] == 0xFFF8FDFFu); /* book uses warm white */
     assert(fb[560 * GAME_W + 450] == 0xFF708EE6u); /* start uses coral */
     assert(fb[580 * GAME_W + 900] == 0xFFF8FDFFu); /* online uses warm white */
-    assert(fb[538 * GAME_W + 1058] == 0xffb5d3e0u); /* no level-count caption */
-    assert(fb[689 * GAME_W + 640] == 0xffb5d3e0u); /* no autosave footer */
+    assert(fb[538 * GAME_W + 1058] == 0xFFE6F0F4u); /* breathing room */
+    assert(fb[689 * GAME_W + 640] == 0xFFF8FDFFu); /* action dock */
     test_campaign_background_preference();
     game_tick(0.016f, fb);
     write_bmp("shots/menu.bmp", GAME_W, GAME_H, fb);
@@ -289,7 +329,7 @@ int main(void) {
     game_input_press(640, 600);             /* first level */
     game_tick(0, fb);
     assert(game_phase() == GAME_PLAY);
-    assert(fb[35 * GAME_W + 930] == 0xFFF8FDFFu); /* shop's book button uses warm white */
+    assert(fb[40 * GAME_W + 950] == 0xFFF8FDFFu); /* book button uses warm white */
     /* The first playable row starts immediately below the top HUD. */
     assert(fb[125 * GAME_W + 960] != fb[90 * GAME_W + 960]);
     write_bmp("shots/level1.bmp", GAME_W, GAME_H, fb);

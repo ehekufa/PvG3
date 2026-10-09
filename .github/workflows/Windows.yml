@@ -16,6 +16,20 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Write Firebase configuration from repository secrets
+        env:
+          PVG3_DATABASE_HOST: ${{ secrets.PVG3_DATABASE_HOST }}
+          PVG3_DATABASE_AUTH: ${{ secrets.PVG3_DATABASE_AUTH }}
+        # The secrets context is not readable from an `if:` condition, so the
+        # script itself decides: without secrets the encoded default stays.
+        run: |
+          if [ -z "$PVG3_DATABASE_HOST" ] && [ -z "$PVG3_DATABASE_AUTH" ]; then
+            echo "No Firebase secrets: keeping the encoded default host."
+          else
+            sh tools/write_online_config.sh
+          fi
+        shell: bash
+
       - name: Install Clang, ccache and MinGW-w64 link libraries
         uses: msys2/setup-msys2@v2
         with:
@@ -93,6 +107,7 @@ jobs:
           mapfile -t LVGL_SOURCES < <(find src/vendor/lvgl/src -name '*.c' | LC_ALL=C sort)
           SOURCES=(
             src/game.c src/font.c src/preferences.c src/online_rules.c src/online_protocol.c
+            src/online_account.c
             "${LVGL_SOURCES[@]}"
           )
           CFLAGS=(-std=c11 -O2 -pthread -finput-charset=UTF-8 -fexec-charset=UTF-8

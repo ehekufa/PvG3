@@ -25,6 +25,8 @@
 
 static uint32_t *FB;
 static int use_lvgl_ui;
+/* Per-object transparency is scoped around platformer sprite draws. */
+static int sprite_alpha_multiplier = 255;
 
 /* Constant-friendly color macro (usable in static initializers AND runtime). */
 #define COL(r,g,b) (0xFF000000u | ((b)<<16) | ((g)<<8) | (r))
@@ -215,7 +217,8 @@ static void sprite_crop_flipped_tinted(int id, int x, int y, int w, int h,
             int src_x = sx + (flip_x ? sw - 1 - sample_x : sample_x);
             if ((unsigned)src_x >= (unsigned)sp->w) continue;
             uint32_t color = sprite_tinted_pixel(src[src_x], tint, tint_opacity);
-            int alpha = color >> 24;
+            int alpha = (int)(color >> 24);
+            alpha = (alpha * sprite_alpha_multiplier + 127) / 255;
             if (alpha == 255) dst[dx] = color;
             else if (alpha) dst[dx] = blend(dst[dx], color, alpha);
         }
@@ -276,7 +279,8 @@ static void sprite_draw_rotated_tinted_flipped(int id, int x, int y, int w, int 
         if ((unsigned)sx >= (unsigned)sp->w || (unsigned)sy >= (unsigned)sp->h) continue;
         uint32_t color = sprite_tinted_pixel(
             sprite_pixels[id][sy * sp->w + sx], tint, tint_opacity);
-        int alpha = color >> 24;
+        int alpha = (int)(color >> 24);
+        alpha = (alpha * sprite_alpha_multiplier + 127) / 255;
         uint32_t *dst = FB + py * GAME_W + px;
         if (alpha == 255) *dst = color;
         else if (alpha) *dst = blend(*dst, color, alpha);
@@ -486,15 +490,20 @@ static OnPublishedLevel custom_level;
 #define CUSTOM_BACKGROUND_DEFAULT 0x32465au
 #define CUSTOM_FALL_MARGIN_TILES 3.0f
 static int custom_object_count, custom_level_active, custom_level_won, custom_level_coins;
+static int custom_level_attempts, custom_level_total_coins;
+static float custom_start_player_x, custom_start_player_y;
+static float custom_goal_center_x, custom_goal_center_y;
 static uint32_t custom_background_color = CUSTOM_BACKGROUND_DEFAULT;
 static float custom_fall_plane_y;
-static int custom_player_dead;
 static int custom_player_index = -1;
 #define CUSTOM_ID_MAP_CAP 65536
 static int custom_id_map[CUSTOM_ID_MAP_CAP];
 static float custom_player_x, custom_player_y, custom_player_w, custom_player_h;
 static float custom_player_vx, custom_player_vy;
 static float custom_respawn_x, custom_respawn_y;
+static float custom_dash_remaining, custom_dash_cooldown;
+static int custom_dash_direction, custom_dash_request, custom_dash_held;
+static int custom_jump_count, custom_player_wall_contact;
 static int custom_checkpoint_id;
 static float custom_gravity = 1450.0f;
 static float custom_elapsed_time;
@@ -505,10 +514,15 @@ static int custom_jetpack_mode, custom_jetpack_active;
 static uint8_t custom_portal_inside[ON_LEVEL_OBJECT_CAP];
 static uint8_t custom_trigger_fired[ON_LEVEL_OBJECT_CAP];
 static uint8_t custom_trigger_active[ON_LEVEL_OBJECT_CAP];
+static uint8_t custom_trigger_touch_inside[ON_LEVEL_OBJECT_CAP];
+static uint16_t custom_trigger_counts[ON_LEVEL_OBJECT_CAP];
 static float custom_trigger_timers[ON_LEVEL_OBJECT_CAP];
+static float custom_trigger_touch_timers[ON_LEVEL_OBJECT_CAP];
 static uint8_t custom_collision_disabled[ON_LEVEL_OBJECT_CAP];
 static uint8_t custom_invisible[ON_LEVEL_OBJECT_CAP];
 static int custom_player_collision_enabled;
+static int custom_draw_order[ON_LEVEL_OBJECT_CAP];
+static const OnPublishedLevel *custom_draw_sort_level;
 /* A timed rotation completes one full turn per second. */
 #define CUSTOM_GROUP_ROTATION_DEGREES_PER_SECOND 360.0f
 typedef struct {int group_id;float remaining, frame_step;} CustomGroupRotation;
@@ -570,6 +584,7 @@ void game_custom_levels_refresh(void) { on_net_levels_refresh(); }
 void game_workshop_open(void) {
     if (phase != PH_WORKSHOP && phase != PH_WORKSHOP_DETAILS && phase != PH_WORKSHOP_EDIT)
         workshop_return = phase;
+    on_net_account_restore();
     phase = PH_WORKSHOP;
 }
 void game_workshop_open_details(void) {
@@ -612,11 +627,44 @@ void game_custom_vertical_control(int vertical) {
     if (vertical > 1) vertical = 1;
     custom_control_vertical = vertical;
 }
+void game_custom_dash_control(int dash) {
+    dash = !!dash;
+    if (dash && !custom_dash_held) custom_dash_request = 1;
+    custom_dash_held = dash;
+}
 int game_custom_jetpack_mode(void) {
     return custom_level_active && custom_jetpack_mode;
 }
-int game_custom_player_dead(void) { return custom_player_dead; }
-
+void game_custom_hud_snapshot(GameCustomHudSnapshot *out) {
+    if (!out) return;
+    memset(out, 0, sizeof *out);
+    out->active = !!custom_level_active;
+    if (!custom_level_active) return;
+    out->attempts = custom_level_attempts > 0 ? custom_level_attempts : 1;
+    out->elapsed_seconds = custom_elapsed_time > 0 ? custom_elapsed_time : 0;
+    out->coins = custom_level_coins;
+    out->total_coins = custom_level_total_coins;
+    out->won = !!custom_level_won;
+    out->movement_abilities = custom_level.movement_abilities;
+    if (custom_level_won) {
+        out->progress_percent = 100;return;
+    }
+    float start_dx = custom_goal_center_x -
+                     (custom_start_player_x + custom_player_w * .5f);
+    float start_dy = custom_goal_center_y -
+                     (custom_start_player_y + custom_player_h * .5f);
+    float now_dx = custom_goal_center_x -
+                   (custom_player_x + custom_player_w * .5f);
+    float now_dy = custom_goal_center_y -
+                   (custom_player_y + custom_player_h * .5f);
+    float start_distance = hypotf(start_dx, start_dy);
+    if (start_distance > 1.0f) {
+        float progress = (1.0f - hypotf(now_dx, now_dy) / start_distance) * 100.0f;
+        if (progress < 0) progress = 0;
+        if (progress > 100) progress = 100;
+        out->progress_percent = (int)lrintf(progress);
+    }
+}
 static float spawn_t;
 static int to_spawn;
 static int total_zombies;
@@ -1360,20 +1408,20 @@ void game_input_press(int x, int y) {
         return;
     }
     if (phase == PH_MENU) {
-        if (inside(x, y, 83, 25, 389, 171)) {
+        if (inside(x, y, 52, 31, 421, 124)) {
             game_custom_levels_open();
-        } else if (inside(x, y, 440, 548, 840, 680)) {
+        } else if (inside(x, y, 440, 548, 840, 674)) {
             if (saved_battle) phase = PH_PLAY;
             else if (completed_mask == 0 && resume_level == 1) {
                 start_intro(0);
             } else start_level(resume_level);
-        } else if (inside(x, y, 475, 38, 785, 132)) {
+        } else if (inside(x, y, 475, 38, 785, 127)) {
             phase = PH_SELECT;
         } else if (inside(x, y, 850, 38, 1240, 132)) {
             garden_selected = -1;
             phase = PH_GARDEN;
-        } else if (inside(x, y, 98, 568, 392, 670)) open_book();
-        else if (inside(x, y, 887, 563, 1229, 667)) {
+        } else if (inside(x, y, 98, 568, 392, 665)) open_book();
+        else if (inside(x, y, 893, 569, 1223, 661)) {
             online_code[0] = 0;online_page = online_search = 0;
             online_has_match = 0;online_selected = -1;
             on_net_open();phase = PH_ONLINE_ROOMS;
@@ -1658,6 +1706,23 @@ void game_offline_ui_snapshot(GameOfflineUIState *out) {
 
 /* Calm blue/ivory controls with a warm accent for the main action. */
 enum { BUTTON_TONE_GRAY, BUTTON_TONE_WHITE, BUTTON_TONE_BLACK, BUTTON_TONE_ACCENT };
+
+/* Rounded software-rendered surfaces keep the fallback UI in step with LVGL. */
+static void round_rect(int x0, int y0, int x1, int y1, int radius, uint32_t color) {
+    if (x0 > x1) { int t = x0; x0 = x1; x1 = t; }
+    if (y0 > y1) { int t = y0; y0 = y1; y1 = t; }
+    int width = x1 - x0 + 1, height = y1 - y0 + 1;
+    int max_radius = (width < height ? width : height) / 2;
+    if (radius > max_radius) radius = max_radius;
+    if (radius < 1) { rect(x0, y0, x1, y1, color); return; }
+    rect(x0 + radius, y0, x1 - radius, y1, color);
+    rect(x0, y0 + radius, x1, y1 - radius, color);
+    disc(x0 + radius, y0 + radius, radius, color);
+    disc(x1 - radius, y0 + radius, radius, color);
+    disc(x0 + radius, y1 - radius, radius, color);
+    disc(x1 - radius, y1 - radius, radius, color);
+}
+
 static void draw_button_tone(int x0, int y0, int x1, int y1,
                              const char *label, int size, int active, int tone);
 static void draw_button(int x0, int y0, int x1, int y1, const char *label, int size);
@@ -1735,15 +1800,23 @@ static void draw_seed_bar(void) {
 static void draw_button_tone(int x0, int y0, int x1, int y1,
                              const char *label, int size, int active, int tone) {
     int inset = active ? 5 : 3;
-    uint32_t face = tone == BUTTON_TONE_BLACK ? COL(36, 59, 82) :
+    int height = y1 - y0 + 1;
+    int radius = height / 4;
+    if (radius > 18) radius = 18;
+    if (radius < 7) radius = 7;
+    int black = tone == BUTTON_TONE_BLACK;
+    /* The «black» tone is a true black: navy read as bluish on phones. */
+    uint32_t frame = black ? COL(0, 0, 0) : COL(36, 59, 82);
+    uint32_t face = black ? COL(0, 0, 0) :
                     tone == BUTTON_TONE_WHITE ? COL(255, 253, 248) :
                     tone == BUTTON_TONE_ACCENT ? COL(230, 142, 112) :
                                                  COL(220, 232, 239);
-    uint32_t text = tone == BUTTON_TONE_BLACK ? COL(255, 253, 248) :
-                                                COL(36, 59, 82);
-    if (active && tone != BUTTON_TONE_BLACK) face = COL(241, 197, 110);
-    rect(x0, y0, x1, y1, COL(36, 59, 82));
-    rect(x0 + inset, y0 + inset, x1 - inset, y1 - inset, face);
+    uint32_t text = black ? COL(255, 253, 248) : COL(36, 59, 82);
+    if (active && !black) face = COL(241, 197, 110);
+    round_rect(x0 + 1, y0 + 5, x1 - 1, y1 + 5, radius, COL(190, 201, 207));
+    round_rect(x0, y0, x1, y1, radius, frame);
+    round_rect(x0 + inset, y0 + inset, x1 - inset, y1 - inset,
+               radius > inset ? radius - inset : 1, face);
     while (size > 1 && text_w(size, label) > x1 - x0 - 22) size--;
     draw_text_c((x0 + x1) / 2, (y0 + y1 - size * 7) / 2,
                 size, text, label);
@@ -1793,39 +1866,37 @@ static void draw_menu_hero(int image, int cx, int feet_y, int size,
                            const char *name) {
     ellipse(cx, feet_y - 2, size / 2 - 20, 13, COL(124, 145, 159));
     sprite_draw(image, cx - size / 2, feet_y - size, size, size, 0);
-    draw_text_c(cx, feet_y + 8, 3, COL(36, 59, 82), name);
+    draw_text_c(cx, feet_y + 26, 3, COL(36, 59, 82), name);
 }
 
 static void draw_menu(void) {
-    /* Use a soft sky-and-sand palette with the three author's heroes. The
-     * Queen's robot is revealed in the FINAL level, not on this screen. */
-    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(198, 224, 236));
-    rect(0, 508, GAME_W - 1, GAME_H - 1, COL(224, 211, 181));
-    rect(0, 508, GAME_W - 1, 511, COL(179, 161, 126));
-    draw_button_white(83, 25, 389, 171, "УРОВНИ ИГРОКОВ", 4);
+    /* Full-colour character drawings sit on calm, raised interface surfaces. */
+    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(233, 239, 241));
+    rect(0, 510, GAME_W - 1, GAME_H - 1, COL(244, 240, 230));
+    round_rect(30, 18, 1250, 151, 22, COL(32, 53, 75));
+    draw_button_white(52, 31, 421, 124, "Уровни игроков", 3);
     draw_button_white(475, 38, 785, 127, "УРОВНИ 1-10", 4);
-    rect(846, 34, 1244, 137, COL(36, 59, 82));
-    rect(849, 37, 1241, 134, COL(255, 253, 248));
-    draw_text_c(1045, 65, 5, COL(36, 59, 82), "САД ДЗЕН");
+    draw_button_white(850, 38, 1240, 132, "Сад Дзен", 4);
 
-    draw_text_c(640, 177, 6, COL(36, 59, 82), "РАСТЕНИЯ ПРОТИВ ГУСЕЙ");
-    draw_text_c(640, 231, 3, COL(83, 106, 128), "ИСТОРИЯ ХЛЕБУШКА");
-    draw_menu_hero(SPR_KHLEBUSHEK, 256, 491, 212, "ХЛЕБУШЕК");
-    draw_menu_hero(SPR_MASK, 640, 491, 235, "ДИМА");
-    draw_menu_hero(SPR_KIRILL, 1012, 491, 225, "КИРИЛЛ");
+    round_rect(44, 160, 1236, 536, 26, COL(255, 253, 248));
+    draw_text_c(640, 176, 5, COL(36, 59, 82), "Растения против гусей 3");
+    ellipse(256, 359, 119, 107, COL(217, 237, 242));
+    ellipse(640, 359, 119, 107, COL(249, 229, 219));
+    ellipse(1024, 359, 119, 107, COL(244, 236, 214));
+    draw_menu_hero(SPR_KHLEBUSHEK, 256, 461, 190, "Хлебушек");
+    draw_menu_hero(SPR_MASK, 640, 461, 205, "Дима в маске");
+    draw_menu_hero(SPR_KIRILL, 1024, 461, 190, "Кирилл");
 
+    round_rect(44, 545, 1236, 695, 24, COL(255, 253, 248));
     draw_button_white(98, 568, 392, 665, "КНИГА", 5);
     draw_button_tone(440, 548, 840, 674, "СТАРТ", 8, 0, BUTTON_TONE_ACCENT);
     draw_button_white(893, 569, 1223, 661, "ОНЛАЙН", 6);
-    rect(926, 609, 946, 614, COL(36, 59, 82));
-    rect(933, 602, 939, 621, COL(36, 59, 82));
 }
 
 /* Level 0 replays the story; any wave can be replayed. */
 static void draw_level_select(void) {
-    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(245, 242, 232));
-    rect(0, 0, GAME_W - 1, 101, COL(220, 232, 239));
-    rect(0, 99, GAME_W - 1, 102, COL(36, 59, 82));
+    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(233, 239, 241));
+    round_rect(32, 18, 1248, 118, 22, COL(255, 253, 248));
     draw_text_c(630, 32, 6, COL(36, 59, 82), "ВЫБОР УРОВНЯ");
     draw_button_black(1045, 18, 1265, 85, "НАЗАД", 4);
     for (int n = 1; n <= MAX_LEVEL; n++) {
@@ -1833,9 +1904,9 @@ static void draw_level_select(void) {
         int x = 100 + col * 220, y = 155 + row * 190;
         int active = resume_level == n;
         int inset = active ? 5 : 3;
-        rect(x, y, x + 180, y + 130, COL(36, 59, 82));
-        rect(x + inset, y + inset, x + 180 - inset, y + 130 - inset,
-             active ? COL(241, 197, 110) : COL(255, 253, 248));
+        round_rect(x, y, x + 180, y + 130, 15, COL(36, 59, 82));
+        round_rect(x + inset, y + inset, x + 180 - inset, y + 130 - inset,
+                   12, active ? COL(241, 197, 110) : COL(255, 253, 248));
         int water_art = !preferences_neutral_background_enabled() &&
                         n == WATER_LEVEL && sprite_pixels[SPR_WATER_MAP];
         if (water_art) {
@@ -2517,7 +2588,7 @@ static int custom_activate_orb(void) {
             !custom_player_in_orb_range(player_x, player_y, player_w, player_h,
                                         object)) continue;
         custom_player_vy = object->type == ON_LEVEL_ORB_ORANGE ? -1050.0f : -650.0f;
-        custom_player_grounded = 0;
+        custom_player_grounded = 0;custom_jump_count = 1;
         return 1;
     }
     return 0;
@@ -2629,6 +2700,7 @@ static void custom_update_portals(int allow_activation) {
         custom_jetpack_active = 0;
         custom_player_vy = 0;
         custom_player_grounded = 0;
+        custom_jump_count = 0;custom_dash_remaining = 0;
         custom_jump_request = 0;
         form_changed = 1;
     }
@@ -2640,7 +2712,10 @@ static void custom_player_reset(void) {
     custom_player_y = custom_respawn_y;
     custom_player_vx = custom_player_vy = 0;
     custom_player_facing_left = !!custom_level.objects[custom_player_index].flip_x;
+    if (custom_level_attempts < 999999) custom_level_attempts++;
     custom_player_grounded = 0;custom_jetpack_active = 0;
+    custom_jump_count = 0;custom_dash_remaining = custom_dash_cooldown = 0;
+    custom_dash_request = custom_dash_held = 0;
     custom_control_axis = custom_control_vertical = 0;
     memset(custom_portal_inside, 0, sizeof custom_portal_inside);
     custom_jump_request = custom_jump_held = 0;
@@ -2681,13 +2756,15 @@ static int custom_platformer_start(const OnPublishedLevel *source) {
     if (!has_player || !has_goal) return 0;
     memset(custom_trigger_fired, 0, sizeof custom_trigger_fired);
     memset(custom_trigger_active, 0, sizeof custom_trigger_active);
+    memset(custom_trigger_touch_inside, 0, sizeof custom_trigger_touch_inside);
+    memset(custom_trigger_counts, 0, sizeof custom_trigger_counts);
     memset(custom_trigger_timers, 0, sizeof custom_trigger_timers);
+    memset(custom_trigger_touch_timers, 0, sizeof custom_trigger_touch_timers);
     memset(custom_collision_disabled, 0, sizeof custom_collision_disabled);
     memset(custom_invisible, 0, sizeof custom_invisible);
     memset(custom_portal_inside, 0, sizeof custom_portal_inside);
     custom_jetpack_mode = custom_jetpack_active = 0;
     custom_background_color = CUSTOM_BACKGROUND_DEFAULT;
-    custom_player_dead = 0;
     custom_gravity = 1450.0f;custom_elapsed_time = 0;
     custom_player_collision_enabled = 1;
     custom_group_rotation_count = 0;
@@ -2696,22 +2773,40 @@ static int custom_platformer_start(const OnPublishedLevel *source) {
     custom_player_w = CUSTOM_TILE_W * 0.65f;
     custom_player_h = CUSTOM_TILE_H * 0.85f;
     custom_checkpoint_id = 0;
-    custom_respawn_x = custom_level.objects[custom_player_index].x * CUSTOM_TILE_W;
-    custom_respawn_y = custom_level.objects[custom_player_index].y * CUSTOM_TILE_H;
+    custom_level_attempts = 0;custom_level_total_coins = 0;
+    const OnLevelObject *start_player = &custom_level.objects[custom_player_index];
+    custom_start_player_x = start_player->x * CUSTOM_TILE_W;
+    custom_start_player_y = start_player->y * CUSTOM_TILE_H;
+    custom_goal_center_x = custom_goal_center_y = 0;
+    for (int i = 0; i < custom_object_count; ++i) {
+        const OnLevelObject *object = &custom_level.objects[i];
+        if (object->type == ON_LEVEL_COIN)
+            custom_level_total_coins++;
+        if (object->type == ON_LEVEL_GOAL) {
+            custom_goal_center_x = (object->x + object->w * .5f) * CUSTOM_TILE_W;
+            custom_goal_center_y = (object->y + object->h * .5f) * CUSTOM_TILE_H;
+        }
+    }
+    custom_respawn_x = custom_start_player_x;
+    custom_respawn_y = custom_start_player_y;
     custom_player_reset();
     custom_level_coins = 0;custom_level_won = 0;custom_level_active = 1;
     custom_control_axis = custom_control_vertical = 0;
     custom_jump_request = custom_jump_held = 0;
     custom_trigger_request = custom_trigger_held = 0;
+    custom_dash_request = custom_dash_held = 0;
+    custom_dash_remaining = custom_dash_cooldown = 0;custom_jump_count = 0;
     custom_fire_triggers(ON_TRIGGER_START);
     custom_fall_plane_y = custom_level_fall_plane();
     return 1;
 }
 static void custom_platformer_stop(void) {
     custom_level_active = 0;custom_level_won = 0;custom_object_count = 0;
+    custom_level_attempts = custom_level_total_coins = custom_level_coins = 0;
     custom_checkpoint_id = 0;custom_respawn_x = custom_respawn_y = 0;
+    custom_dash_remaining = custom_dash_cooldown = 0;
+    custom_dash_request = custom_dash_held = custom_jump_count = 0;
     custom_fall_plane_y = 0;
-    custom_player_dead = 0;
     custom_gravity = 1450.0f;custom_elapsed_time = 0;
     custom_group_rotation_count = 0;
     custom_control_axis = custom_control_vertical = 0;
@@ -2736,6 +2831,8 @@ static void custom_apply_trigger_to_object(const OnLevelObject *trigger,
                  ON_TRIGGER_ROTATE : trigger->trigger_action;
     switch (action) {
     case ON_TRIGGER_TOGGLE: target->visible = !target->visible;break;
+    case ON_TRIGGER_ACTIVATE: target->visible = 1;break;
+    case ON_TRIGGER_UNACTIVATE: target->visible = 0;break;
     case ON_TRIGGER_INVISIBLE: custom_hide_object(target);break;
     case ON_TRIGGER_NO_COLLISION: custom_disable_object_collision(target);break;
     case ON_TRIGGER_MOVE:
@@ -2748,8 +2845,10 @@ static void custom_apply_trigger_to_object(const OnLevelObject *trigger,
         break;
     case ON_TRIGGER_RECOLOR:
         if (target->type != ON_LEVEL_TRIGGER &&
-            custom_object_can_manually_recolor(target->type))
+            custom_object_can_manually_recolor(target->type)) {
             target->color = trigger->trigger_color;
+            target->color_default = trigger->trigger_color_default;
+        }
         break;
     case ON_TRIGGER_NUMBER:
         target->number = (int)fmaxf(0, fminf(9999, trigger->trigger_value));break;
@@ -2801,12 +2900,24 @@ static void custom_update_group_rotations(float dt) {
 static void custom_execute_trigger(OnLevelObject *trigger) {
     if (!trigger || trigger->type != ON_LEVEL_TRIGGER) return;
     if (trigger->trigger_kind == ON_TRIGGER_KIND_BACKGROUND) {
-        custom_background_color = trigger->trigger_color & 0xffffffu;
+        custom_background_color = trigger->trigger_color_default ?
+            CUSTOM_BACKGROUND_DEFAULT : trigger->trigger_color & 0xffffffu;
         return;
     }
     if (trigger->trigger_kind == ON_TRIGGER_KIND_GRAVITY) {
         float offset = fmaxf(-100.0f, fminf(100.0f, trigger->trigger_value));
         custom_gravity = 1450.0f + offset * 10.0f;
+        return;
+    }
+    if (trigger->trigger_kind == ON_TRIGGER_KIND_SPAWN) {
+        if (trigger->trigger_has_group) {
+            for (int i = 0; i < custom_object_count; ++i) {
+                OnLevelObject *object = &custom_level.objects[i];
+                if (object != trigger && object->type != ON_LEVEL_TRIGGER &&
+                    object->number == trigger->trigger_group_id)
+                    object->visible = 1;
+            }
+        }
         return;
     }
     if (trigger->trigger_kind == ON_TRIGGER_KIND_FOREVER) {
@@ -2850,28 +2961,94 @@ static void custom_execute_trigger(OnLevelObject *trigger) {
         custom_apply_trigger_to_object(trigger, custom_find_id(trigger->target_id));
     }
 }
+static int custom_trigger_legacy_loop(const OnLevelObject *trigger) {
+    return trigger && trigger->trigger_kind == ON_TRIGGER_KIND_FOREVER &&
+           !trigger->trigger_has_group;
+}
+static void custom_activate_trigger(int index) {
+    if (index < 0 || index >= custom_object_count) return;
+    OnLevelObject *trigger = &custom_level.objects[index];
+    if (!trigger->visible || custom_object_collision_disabled(trigger) ||
+        trigger->type != ON_LEVEL_TRIGGER) return;
+    if (custom_trigger_legacy_loop(trigger)) {
+        if (!custom_trigger_active[index]) {
+            custom_trigger_active[index] = 1;
+            custom_trigger_timers[index] = 0;
+        }
+        return;
+    }
+    if (trigger->trigger_kind == ON_TRIGGER_KIND_COUNT) {
+        if (custom_trigger_fired[index]) return;
+        if (custom_trigger_counts[index] < 999)
+            custom_trigger_counts[index]++;
+        int threshold = trigger->trigger_count;
+        if (threshold < 1) threshold = 3;
+        if (custom_trigger_counts[index] >= threshold) {
+            custom_trigger_fired[index] = 1;
+            custom_execute_trigger(trigger);
+        }
+        return;
+    }
+    if (trigger->trigger_kind == ON_TRIGGER_KIND_TOGGLE) {
+        custom_execute_trigger(trigger);
+        return;
+    }
+    if (custom_trigger_fired[index]) return;
+    custom_trigger_fired[index] = 1;
+    custom_execute_trigger(trigger);
+}
 static void custom_fire_triggers(int event) {
-    float player_x = 0, player_y = 0, player_w = 0, player_h = 0;
-    if (event == ON_TRIGGER_TOUCH)
-        custom_player_visible_hitbox(&player_x, &player_y, &player_w, &player_h);
     for (int i = 0; i < custom_object_count; i++) {
         OnLevelObject *trigger = &custom_level.objects[i];
         if (!trigger->visible || custom_object_collision_disabled(trigger) ||
             trigger->type != ON_LEVEL_TRIGGER ||
             trigger->trigger_event != event) continue;
-        int legacy_loop = trigger->trigger_kind == ON_TRIGGER_KIND_FOREVER &&
-                          !trigger->trigger_has_group;
-        if (legacy_loop ? custom_trigger_active[i] : custom_trigger_fired[i]) continue;
-        if (event == ON_TRIGGER_TOUCH &&
-            !custom_player_object_contact(player_x, player_y, player_w, player_h,
-                trigger, custom_player_vx, custom_player_vy, NULL)) continue;
-        if (legacy_loop) {
-            custom_trigger_active[i] = 1;
-            custom_trigger_timers[i] = 0;
-        } else {
-            custom_trigger_fired[i] = 1;
-            custom_execute_trigger(trigger);
+        custom_activate_trigger(i);
+    }
+}
+static void custom_update_touch_triggers(float dt) {
+    float player_x, player_y, player_w, player_h;
+    custom_player_visible_hitbox(&player_x, &player_y, &player_w, &player_h);
+    for (int i = 0; i < custom_object_count; ++i) {
+        OnLevelObject *trigger = &custom_level.objects[i];
+        if (trigger->type != ON_LEVEL_TRIGGER ||
+            trigger->trigger_event != ON_TRIGGER_TOUCH) {
+            custom_trigger_touch_inside[i] = 0;
+            custom_trigger_touch_timers[i] = 0;
+            continue;
         }
+        if (!trigger->visible || custom_object_collision_disabled(trigger)) {
+            custom_trigger_touch_inside[i] = 0;
+            custom_trigger_touch_timers[i] = 0;
+            continue;
+        }
+        int inside = custom_player_object_contact(player_x, player_y,
+            player_w, player_h, trigger, custom_player_vx, custom_player_vy, NULL);
+        int was_inside = custom_trigger_touch_inside[i];
+        custom_trigger_touch_inside[i] = (uint8_t)!!inside;
+        int mode = trigger->trigger_touch_mode;
+        if (mode < ON_TRIGGER_TOUCH_ENTER || mode > ON_TRIGGER_TOUCH_STAY)
+            mode = ON_TRIGGER_TOUCH_ENTER;
+        int activated = 0;
+        if (mode == ON_TRIGGER_TOUCH_ENTER) {
+            activated = inside && !was_inside;
+        } else if (mode == ON_TRIGGER_TOUCH_EXIT) {
+            activated = !inside && was_inside;
+        } else if (!inside) {
+            custom_trigger_touch_timers[i] = 0;
+        } else if (!was_inside) {
+            /* Stay triggers fire once on contact, then repeat every quarter
+             * second while the player's hitbox remains inside. */
+            activated = 1;
+            custom_trigger_touch_timers[i] = 0;
+        } else {
+            custom_trigger_touch_timers[i] += dt;
+            if (custom_trigger_touch_timers[i] >= .25f) {
+                custom_trigger_touch_timers[i] -= .25f;
+                activated = 1;
+            }
+        }
+        if (activated) custom_activate_trigger(i);
     }
 }
 static void custom_run_forever_triggers(float dt) {
@@ -2908,6 +3085,13 @@ static int custom_resolve_player_solids(void) {
                     custom_player_vy, &contact)) continue;
             custom_player_x += contact.x * contact.depth;
             custom_player_y += contact.y * contact.depth;
+            if (fabsf(contact.x) > .7f) {
+                custom_player_wall_contact = 1;
+                if (custom_dash_remaining > 0) custom_dash_remaining = 0;
+                if ((custom_level.movement_abilities & ON_LEVEL_ABILITY_WALL_SLIDE) &&
+                    custom_player_vy > 0 && custom_player_vy > 140.0f)
+                    custom_player_vy = 140.0f;
+            }
             float inward_velocity = custom_player_vx * contact.x +
                                     custom_player_vy * contact.y;
             if (inward_velocity < 0) {
@@ -2926,24 +3110,47 @@ static void custom_platformer_update(float dt) {
     if (!custom_level_active || custom_level_won) return;
     if (dt < 0) dt = 0;
     if (dt > .05f) dt = .05f;
-    if (custom_player_dead) return;
     custom_elapsed_time += dt;
+    custom_player_wall_contact = 0;
+    custom_dash_cooldown = fmaxf(0.0f, custom_dash_cooldown - dt);
+    if (custom_player_grounded) custom_jump_count = 0;
     custom_player_vx = (float)custom_control_axis * 250.0f;
     if (custom_control_axis < 0) custom_player_facing_left = 1;
     else if (custom_control_axis > 0) custom_player_facing_left = 0;
     float jetpack_velocity = custom_control_vertical ?
         -(float)custom_control_vertical * 250.0f : 0.0f;
+    if (!custom_jetpack_mode && custom_dash_request &&
+        (custom_level.movement_abilities & ON_LEVEL_ABILITY_DASH) &&
+        custom_dash_cooldown <= 0) {
+        custom_dash_direction = custom_control_axis ? custom_control_axis :
+                                custom_player_facing_left ? -1 : 1;
+        custom_dash_remaining = .18f;
+        custom_dash_cooldown = .65f;
+        custom_player_vy = 0;
+    }
+    custom_dash_request = 0;
     if (custom_jetpack_mode) {
         custom_player_vy = jetpack_velocity;
-    } else if (custom_jump_request && !custom_activate_orb() &&
-               custom_player_grounded) {
-        custom_player_vy = -570.0f;custom_player_grounded = 0;
+    } else if (custom_jump_request) {
+        if (!custom_activate_orb()) {
+            if (custom_player_grounded) {
+                custom_player_vy = -570.0f;custom_player_grounded = 0;
+                custom_jump_count = 1;
+            } else if ((custom_level.movement_abilities &
+                        ON_LEVEL_ABILITY_DOUBLE_JUMP) && custom_jump_count < 2) {
+                custom_player_vy = -520.0f;custom_jump_count = 2;
+            }
+        }
     }
     custom_jump_request = 0;
+    if (custom_dash_remaining > 0) {
+        custom_player_vx = custom_dash_direction * 650.0f;
+        custom_player_vy = 0;
+    }
     custom_jetpack_active = custom_jetpack_mode &&
         (custom_control_axis != 0 || custom_control_vertical != 0);
-    float predicted_vy = custom_jetpack_mode ? custom_player_vy :
-        fminf(780.0f, custom_player_vy + custom_gravity * dt);
+    float predicted_vy = (custom_jetpack_mode || custom_dash_remaining > 0) ?
+        custom_player_vy : fminf(780.0f, custom_player_vy + custom_gravity * dt);
     float displacement = fmaxf(fabsf(custom_player_vx * dt),
                                 fabsf(predicted_vy * dt));
     int substeps = (int)ceilf(displacement / 4.0f);
@@ -2951,8 +3158,11 @@ static void custom_platformer_update(float dt) {
     if (substeps > 16) substeps = 16;
     float sub_dt = dt / (float)substeps;
     custom_player_grounded = 0;
+    custom_player_wall_contact = 0;
     for (int step = 0; step < substeps; ++step) {
-        if (custom_jetpack_mode)
+        if (custom_dash_remaining > 0)
+            custom_player_vy = 0;
+        else if (custom_jetpack_mode)
             custom_player_vy = jetpack_velocity;
         else
             custom_player_vy = fminf(780.0f,
@@ -2964,24 +3174,18 @@ static void custom_platformer_update(float dt) {
             custom_player_x = CUSTOM_WORLD_LIMIT * CUSTOM_TILE_W - custom_player_w;
         custom_player_y += custom_player_vy * sub_dt;
         custom_player_grounded = custom_resolve_player_solids();
+        if (custom_dash_remaining > 0)
+            custom_dash_remaining = fmaxf(0.0f, custom_dash_remaining - sub_dt);
     }
+    if (custom_player_grounded) custom_jump_count = 0;
     int player_respawned = 0;
     int fell_below_level = custom_player_y + custom_player_h >
                            custom_fall_plane_y;
     int escaped_world_top = custom_player_y + custom_player_h <
                             -CUSTOM_WORLD_LIMIT * CUSTOM_TILE_H;
-    if (fell_below_level) {
-        /* Falling is a terminal death: no checkpoint or automatic restart. */
-        custom_player_dead = 1;
-        custom_player_vx = custom_player_vy = 0;
-        custom_player_grounded = 0;
-        custom_jetpack_active = 0;
-        custom_control_axis = custom_control_vertical = 0;
-        custom_jump_request = custom_jump_held = 0;
-        custom_trigger_request = custom_trigger_held = 0;
-        return;
-    }
-    if (escaped_world_top) {
+    if (fell_below_level || escaped_world_top) {
+        /* A fall is handled like a spike hit: return to the latest checkpoint,
+         * or to the level start if the player has not reached one yet. */
         custom_player_reset();
         player_respawned = 1;
     }
@@ -3025,7 +3229,7 @@ static void custom_platformer_update(float dt) {
     custom_update_portals(custom_player_collision_enabled && !player_respawned);
     custom_jetpack_active = custom_jetpack_mode &&
         (custom_control_axis != 0 || custom_control_vertical != 0);
-    custom_fire_triggers(ON_TRIGGER_TOUCH);
+    custom_update_touch_triggers(dt);
     if (custom_trigger_request) custom_fire_triggers(ON_TRIGGER_MANUAL);
     custom_trigger_request = 0;
     custom_run_forever_triggers(dt);
@@ -3037,15 +3241,27 @@ static int custom_object_can_manually_recolor(int type) {
            type == ON_LEVEL_SLOPE || type == ON_LEVEL_PARTICLE;
 }
 static void custom_draw_object(const OnLevelObject *o) {
-    if (!o || o->type == ON_LEVEL_TRIGGER || o->type == ON_LEVEL_PARTICLE) return;
-    int x = (int)lrintf(o->x * CUSTOM_TILE_W - custom_camera_x);
-    int y = (int)lrintf(o->y * CUSTOM_TILE_H - custom_camera_y);
-    int w = (int)lrintf(o->w * CUSTOM_TILE_W), h = (int)lrintf(o->h * CUSTOM_TILE_H);
-    if (w < 3 || h < 3) return;
+    if (!o || o->type == ON_LEVEL_TRIGGER || o->type == ON_LEVEL_PARTICLE ||
+        o->type == ON_LEVEL_PLAYER) return;
+    float pulse = o->pulse ? 1.0f + .07f *
+        sinf(fmaxf(0.0f, custom_elapsed_time) * 6.28318530718f * 1.6f) : 1.0f;
+    float shake = o->shake ?
+        sinf(custom_elapsed_time * 37.0f + (o->id % 4093) * .13f) * 2.5f : 0.0f;
+    float base_w = o->w * CUSTOM_TILE_W, base_h = o->h * CUSTOM_TILE_H;
+    int w = (int)lrintf(base_w * pulse), h = (int)lrintf(base_h * pulse);
+    int x = (int)lrintf((o->x * CUSTOM_TILE_W - custom_camera_x) +
+                        (base_w - w) * .5f + shake);
+    int y = (int)lrintf((o->y * CUSTOM_TILE_H - custom_camera_y) +
+                        (base_h - h) * .5f);
+    if (w < 3 || h < 3 || o->alpha <= 0) return;
+    int previous_alpha = sprite_alpha_multiplier;
+    int object_alpha = o->alpha > 100 ? 100 : o->alpha;
+    sprite_alpha_multiplier = (object_alpha * 255 + 50) / 100;
     int rotated = fabsf(o->angle) >= .01f;
     uint32_t tint = COL((o->color >> 16) & 255u,
                         (o->color >> 8) & 255u, o->color & 255u);
-    int tint_opacity = custom_object_can_manually_recolor(o->type) ? 128 : 0;
+    /* Objects flagged as default keep the author's own colours: no tint. */
+    int tint_opacity = (custom_object_can_manually_recolor(o->type) && !o->color_default) ? 128 : 0;
 #define DRAW_LEVEL_ART(id) do { \
         if (tint_opacity > 0 && rotated) \
             sprite_draw_rotated_tinted_flipped((id), x, y, w, h, \
@@ -3117,6 +3333,7 @@ static void custom_draw_object(const OnLevelObject *o) {
         break; /* Trigger textures are editor-only; triggers stay hidden in play. */
     }
 #undef DRAW_LEVEL_ART
+    sprite_alpha_multiplier = previous_alpha;
 }
 static void custom_particle_dot(float x, float y, float radius,
                                 uint32_t color, float opacity) {
@@ -3142,68 +3359,111 @@ static uint32_t custom_particle_color(const OnLevelObject *object) {
     return COL((object->color >> 16) & 255u,
                (object->color >> 8) & 255u, object->color & 255u);
 }
-static void custom_draw_particle_effects(void) {
-    const int orb_particle_count = 5;
-    int particle_budget = 4096;
-    for (int object_index = 0; object_index < custom_object_count; ++object_index) {
-        const OnLevelObject *object = &custom_level.objects[object_index];
-        if (!object->visible ||
-            (object->type != ON_LEVEL_PARTICLE &&
-             object->type != ON_LEVEL_ORB_YELLOW &&
-             object->type != ON_LEVEL_ORB_ORANGE) ||
-            custom_object_is_invisible(object)) continue;
-        float width = object->w * CUSTOM_TILE_W;
-        float height = object->h * CUSTOM_TILE_H;
-        float center_x = (object->x + object->w * .5f) * CUSTOM_TILE_W - custom_camera_x;
-        float center_y = (object->y + object->h * .5f) * CUSTOM_TILE_H - custom_camera_y;
-        float extent = fmaxf(width, height) + 32.0f;
-        if (object->type == ON_LEVEL_PARTICLE) {
-            float life = object->emitter.lifetime;
-            extent += object->emitter.speed * life +
-                (object->emitter.gravity_enabled ?
-                 .5f * object->emitter.gravity * life * life : 0.0f);
-        }
-        if (center_x + extent < 0 || center_x - extent >= GAME_W ||
-            center_y + extent < 102 || center_y - extent >= GAME_H) continue;
-        float radians = object->angle * 0.01745329251994329577f;
-        float c = cosf(radians), s = sinf(radians);
-        uint32_t color = custom_particle_color(object);
-        if (object->type == ON_LEVEL_ORB_YELLOW ||
-            object->type == ON_LEVEL_ORB_ORANGE) {
-            float orbit = fminf(width, height) * .58f;
-            for (int i = 0; i < orb_particle_count; ++i) {
-                float phase = custom_elapsed_time * 2.1f +
-                    i * 6.2831853071795864769f / orb_particle_count +
-                    (object->id % 4093) * .023f;
-                float local_x = cosf(phase) * orbit * (object->flip_x ? -1.0f : 1.0f);
-                float local_y = sinf(phase) * orbit * .7f *
-                                (object->flip_y ? -1.0f : 1.0f);
-                float x = center_x + local_x * c - local_y * s;
-                float y = center_y + local_x * s + local_y * c;
-                float flicker = .5f + .5f * sinf(phase * 1.6f);
-                custom_particle_dot(x, y, 1.2f + flicker * .8f, color,
-                                    .18f + flicker * .62f);
-            }
-        } else {
-            const OnLevelParticle *emitter = &object->emitter;
-            if (particle_budget <= 0 || !emitter->enabled) continue;
-            for (int i = 0; i < ON_LEVEL_PARTICLE_MAX_VISIBLE &&
-                            particle_budget > 0; ++i) {
-                float local_x, local_y, size, opacity;
-                if (!on_level_particle_sample(emitter, object->id,
-                        custom_elapsed_time, i, width, height,
-                        &local_x, &local_y, &size, &opacity)) continue;
-                local_x *= object->flip_x ? -1.0f : 1.0f;
-                local_y *= object->flip_y ? -1.0f : 1.0f;
-                float x = center_x + local_x * c - local_y * s;
-                float y = center_y + local_x * s + local_y * c;
-                if (emitter->glow)
-                    custom_particle_dot(x, y, size * 1.5f, color, opacity * .16f);
-                custom_particle_dot(x, y, fmaxf(.7f, size * .5f), color, opacity);
-                particle_budget--;
-            }
-        }
+static void custom_draw_particle_object(const OnLevelObject *object,
+                                       int *particle_budget) {
+    if (!object || !particle_budget || !object->visible || object->alpha <= 0 ||
+        (object->type != ON_LEVEL_PARTICLE &&
+         object->type != ON_LEVEL_ORB_YELLOW &&
+         object->type != ON_LEVEL_ORB_ORANGE) ||
+        custom_object_is_invisible(object)) return;
+    float effect_alpha = fminf(100.0f, (float)object->alpha) / 100.0f;
+    float pulse = object->pulse ? 1.0f + .07f *
+        sinf(fmaxf(0.0f, custom_elapsed_time) * 6.28318530718f * 1.6f) : 1.0f;
+    float shake = object->shake ?
+        sinf(custom_elapsed_time * 37.0f + (object->id % 4093) * .13f) * 2.5f : 0.0f;
+    float width = object->w * CUSTOM_TILE_W * pulse;
+    float height = object->h * CUSTOM_TILE_H * pulse;
+    float center_x = (object->x + object->w * .5f) * CUSTOM_TILE_W -
+                     custom_camera_x + shake;
+    float center_y = (object->y + object->h * .5f) * CUSTOM_TILE_H - custom_camera_y;
+    float extent = fmaxf(width, height) + 32.0f;
+    if (object->type == ON_LEVEL_PARTICLE) {
+        float life = object->emitter.lifetime;
+        extent += object->emitter.speed * life +
+            (object->emitter.gravity_enabled ?
+             .5f * object->emitter.gravity * life * life : 0.0f);
     }
+    if (center_x + extent < 0 || center_x - extent >= GAME_W ||
+        center_y + extent < 102 || center_y - extent >= GAME_H) return;
+    float radians = object->angle * 0.01745329251994329577f;
+    float c = cosf(radians), s = sinf(radians);
+    uint32_t color = custom_particle_color(object);
+    if (object->type == ON_LEVEL_ORB_YELLOW ||
+        object->type == ON_LEVEL_ORB_ORANGE) {
+        const int count = 5;
+        float orbit = fminf(width, height) * .58f;
+        for (int i = 0; i < count; ++i) {
+            float phase = custom_elapsed_time * 2.1f +
+                i * 6.2831853071795864769f / count +
+                (object->id % 4093) * .023f;
+            float local_x = cosf(phase) * orbit * (object->flip_x ? -1.0f : 1.0f);
+            float local_y = sinf(phase) * orbit * .7f *
+                            (object->flip_y ? -1.0f : 1.0f);
+            float x = center_x + local_x * c - local_y * s;
+            float y = center_y + local_x * s + local_y * c;
+            float flicker = .5f + .5f * sinf(phase * 1.6f);
+            custom_particle_dot(x, y, (1.2f + flicker * .8f) * pulse,
+                                color, (.18f + flicker * .62f) * effect_alpha);
+        }
+        return;
+    }
+    const OnLevelParticle *emitter = &object->emitter;
+    if (*particle_budget <= 0 || !emitter->enabled) return;
+    for (int i = 0; i < ON_LEVEL_PARTICLE_MAX_VISIBLE &&
+                    *particle_budget > 0; ++i) {
+        float local_x, local_y, size, opacity;
+        if (!on_level_particle_sample(emitter, object->id,
+                custom_elapsed_time, i, width, height,
+                &local_x, &local_y, &size, &opacity)) continue;
+        local_x *= object->flip_x ? -1.0f : 1.0f;
+        local_y *= object->flip_y ? -1.0f : 1.0f;
+        float x = center_x + local_x * c - local_y * s;
+        float y = center_y + local_x * s + local_y * c;
+        opacity *= effect_alpha;
+        if (emitter->glow)
+            custom_particle_dot(x, y, size * 1.5f, color, opacity * .16f);
+        custom_particle_dot(x, y, fmaxf(.7f, size * .5f), color, opacity);
+        --*particle_budget;
+    }
+}
+static int custom_draw_order_compare(const void *left, const void *right) {
+    int a = *(const int *)left, b = *(const int *)right;
+    if (!custom_draw_sort_level || a < 0 || b < 0) return a - b;
+    const OnLevelObject *oa = &custom_draw_sort_level->objects[a];
+    const OnLevelObject *ob = &custom_draw_sort_level->objects[b];
+    if (oa->layer != ob->layer) return oa->layer < ob->layer ? -1 : 1;
+    if (oa->layer2 != ob->layer2) return oa->layer2 < ob->layer2 ? -1 : 1;
+    if (oa->z_order != ob->z_order) return oa->z_order < ob->z_order ? -1 : 1;
+    return a - b;
+}
+static void custom_draw_player(void) {
+    if (!custom_level_active || custom_player_index < 0 ||
+        custom_player_index >= custom_object_count) return;
+    const OnLevelObject *player = &custom_level.objects[custom_player_index];
+    if (!player->visible || custom_object_is_invisible(player) || player->alpha <= 0)
+        return;
+    float pulse = player->pulse ? 1.0f + .07f *
+        sinf(fmaxf(0.0f, custom_elapsed_time) * 6.28318530718f * 1.6f) : 1.0f;
+    float shake = player->shake ?
+        sinf(custom_elapsed_time * 37.0f + (player->id % 4093) * .13f) * 2.5f : 0.0f;
+    int w = (int)lrintf(custom_player_w * pulse);
+    int h = (int)lrintf(custom_player_h * pulse);
+    int px = (int)lrintf(custom_player_x - custom_camera_x +
+                         (custom_player_w - w) * .5f + shake);
+    int py = (int)lrintf(custom_player_y - custom_camera_y +
+                         (custom_player_h - h) * .5f);
+    int player_art = !custom_jetpack_mode ? PV_ART_BREAD :
+        custom_jetpack_active ? PV_ART_JETPACK_ACTIVE : PV_ART_JETPACK_INACTIVE;
+    int previous_alpha = sprite_alpha_multiplier;
+    int object_alpha = player->alpha > 100 ? 100 : player->alpha;
+    sprite_alpha_multiplier = (object_alpha * 255 + 50) / 100;
+    if (fabsf(player->angle) >= .01f)
+        sprite_draw_rotated_flipped(player_art, px, py, w, h, player->angle,
+            custom_player_facing_left, player->flip_y);
+    else
+        sprite_draw_flipped(player_art, px, py, w, h,
+            custom_player_facing_left, player->flip_y);
+    sprite_alpha_multiplier = previous_alpha;
 }
 static void custom_platformer_draw(void) {
     custom_camera_x = custom_player_x + custom_player_w * .5f - GAME_W * .40f;
@@ -3214,43 +3474,44 @@ static void custom_platformer_draw(void) {
          COL((rendered_background >> 16) & 255u,
              (rendered_background >> 8) & 255u,
              rendered_background & 255u));
-    /* A flat neutral backdrop keeps background colors from looking like
-     * collision overlays; the level's own artwork remains visible. */
-    for (int i = 0; i < custom_object_count; i++)
-        if (custom_level.objects[i].visible && !custom_object_is_invisible(&custom_level.objects[i]) &&
-            custom_level.objects[i].type != ON_LEVEL_PLAYER &&
-            custom_level.objects[i].type != ON_LEVEL_TRIGGER)
-            custom_draw_object(&custom_level.objects[i]);
-    custom_draw_particle_effects();
-    int player_visible = 1, player_flip_x = 0, player_flip_y = 0;
-    float player_angle = 0;
-    if (custom_player_index >= 0 && custom_player_index < custom_object_count) {
-        const OnLevelObject *player = &custom_level.objects[custom_player_index];
-        player_visible = player->visible && !custom_object_is_invisible(player);
-        player_angle = player->angle;
-        player_flip_x = custom_player_facing_left;
-        player_flip_y = player->flip_y;
-    }
-    if (custom_level_active && player_visible && !custom_player_dead) {
-        int px = (int)lrintf(custom_player_x - custom_camera_x);
-        int py = (int)lrintf(custom_player_y - custom_camera_y);
-        int player_art = !custom_jetpack_mode ? PV_ART_BREAD :
-            custom_jetpack_active ? PV_ART_JETPACK_ACTIVE : PV_ART_JETPACK_INACTIVE;
-        if (fabsf(player_angle) >= .01f)
-            sprite_draw_rotated_flipped(player_art, px, py,
-                (int)custom_player_w, (int)custom_player_h, player_angle,
-                player_flip_x, player_flip_y);
-        else
-            sprite_draw_flipped(player_art, px, py,
-                (int)custom_player_w, (int)custom_player_h,
-                player_flip_x, player_flip_y);
+    /* Render every authored object in the same (L, L2, Z, ID) order as the
+     * browser preview. Particles and the moving player participate too. */
+    int particle_budget = 4096;
+    int render_count = custom_object_count;
+    if (render_count > ON_LEVEL_OBJECT_CAP) render_count = ON_LEVEL_OBJECT_CAP;
+    for (int i = 0; i < render_count; ++i) custom_draw_order[i] = i;
+    custom_draw_sort_level = &custom_level;
+    qsort(custom_draw_order, (size_t)render_count, sizeof custom_draw_order[0],
+          custom_draw_order_compare);
+    for (int order = 0; order < render_count; ++order) {
+        int i = custom_draw_order[order];
+        OnLevelObject *object = &custom_level.objects[i];
+        if (!object->visible || custom_object_is_invisible(object) ||
+            object->type == ON_LEVEL_TRIGGER) continue;
+        if (object->type == ON_LEVEL_PLAYER) custom_draw_player();
+        else {
+            custom_draw_object(object);
+            custom_draw_particle_object(object, &particle_budget);
+        }
     }
     rect(0, 0, GAME_W - 1, 102, COL(220, 232, 239));
     rect(0, 100, GAME_W - 1, 102, COL(36, 59, 82));
-    draw_text(24, 19, 3, COL(36, 59, 82), custom_level.title);
-    char label_text[48];
-    snprintf(label_text, sizeof label_text, "МОНЕТЫ %d", custom_level_coins);
-    draw_text(26, 64, 2, COL(83, 106, 128), label_text);
+    draw_text(24, 16, 3, COL(36, 59, 82), custom_level.title);
+    GameCustomHudSnapshot hud;game_custom_hud_snapshot(&hud);
+    char label_text[64];
+    snprintf(label_text, sizeof label_text, "Прогресс %d%%", hud.progress_percent);
+    draw_text(24, 60, 1, COL(83, 106, 128), label_text);
+    snprintf(label_text, sizeof label_text, "Попытка %d", hud.attempts);
+    draw_text(226, 60, 1, COL(83, 106, 128), label_text);
+    int elapsed = (int)hud.elapsed_seconds;
+    snprintf(label_text, sizeof label_text, "Время %d:%02d", elapsed / 60, elapsed % 60);
+    draw_text(388, 60, 1, COL(83, 106, 128), label_text);
+    snprintf(label_text, sizeof label_text, "Монеты %d/%d",
+             hud.coins, hud.total_coins);
+    draw_text(570, 60, 1, COL(83, 106, 128), label_text);
+    rect(24, 87, 284, 93, COL(183, 197, 207));
+    if (hud.progress_percent > 0)
+        rect(24, 87, 24 + 260 * hud.progress_percent / 100, 93, COL(247, 200, 91));
     if (custom_level_won) {
         rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(32, 53, 75), 170);
         rect(358, 264, 922, 447, COL(36, 59, 82));
@@ -3830,6 +4091,16 @@ float game_debug_custom_player_vx(void) {return custom_player_vx;}
 float game_debug_custom_player_vy(void) {return custom_player_vy;}
 int game_debug_custom_player_grounded(void) {return custom_player_grounded;}
 int game_debug_custom_player_facing_left(void) {return custom_player_facing_left;}
+int game_debug_custom_jump_count(void) {return custom_jump_count;}
+int game_debug_custom_dash_active(void) {return custom_dash_remaining > 0.0f;}
+int game_debug_custom_trigger_count(int id) {
+    int index = custom_id_lookup(id);
+    return index >= 0 ? custom_trigger_counts[index] : 0;
+}
+int game_debug_custom_trigger_inside(int id) {
+    int index = custom_id_lookup(id);
+    return index >= 0 ? custom_trigger_touch_inside[index] : 0;
+}
 float game_debug_custom_gravity(void) {return custom_gravity;}
 uint32_t game_debug_custom_background_color(void) {return custom_background_color;}
 int game_debug_custom_checkpoint_id(void) {return custom_checkpoint_id;}
