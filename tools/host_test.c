@@ -244,16 +244,16 @@ int main(void) {
     game_init();
     game_tick(0.016f, fb);
     assert(game_phase() == GAME_MENU);
-    /* The menu sky is a soft blue, and the Queen's robot stays on level 5. */
-    assert(fb[365 * GAME_W + 1165] == 0xFFECE0C6u);
-    assert(fb[50 * GAME_W + 100] == 0xFFF8FDFFu); /* player-level tile restored */
-    assert(fb[50 * GAME_W + 480] == 0xFFF8FDFFu); /* campaign uses warm white */
-    assert(fb[70 * GAME_W + 900] == 0xFFF8FDFFu); /* no Zen Garden picture */
+    /* The menu uses raised warm-paper cards; the Queen's robot stays on level 5. */
+    assert(fb[365 * GAME_W + 1165] == 0xFFF8FDFFu); /* hero card */
+    assert(fb[50 * GAME_W + 100] == 0xFFF8FDFFu); /* player-level action */
+    assert(fb[90 * GAME_W + 530] == 0xFFF8FDFFu); /* campaign action */
+    assert(fb[70 * GAME_W + 900] == 0xFFF8FDFFu); /* garden action */
     assert(fb[580 * GAME_W + 105] == 0xFFF8FDFFu); /* book uses warm white */
     assert(fb[560 * GAME_W + 450] == 0xFF708EE6u); /* start uses coral */
     assert(fb[580 * GAME_W + 900] == 0xFFF8FDFFu); /* online uses warm white */
-    assert(fb[538 * GAME_W + 1058] == 0xffb5d3e0u); /* no level-count caption */
-    assert(fb[689 * GAME_W + 640] == 0xffb5d3e0u); /* no autosave footer */
+    assert(fb[538 * GAME_W + 1058] == 0xFFE6F0F4u); /* breathing room */
+    assert(fb[689 * GAME_W + 640] == 0xFFF8FDFFu); /* action dock */
     test_campaign_background_preference();
     game_tick(0.016f, fb);
     write_bmp("shots/menu.bmp", GAME_W, GAME_H, fb);
@@ -328,7 +328,7 @@ int main(void) {
     game_input_press(640, 600);             /* first level */
     game_tick(0, fb);
     assert(game_phase() == GAME_PLAY);
-    assert(fb[35 * GAME_W + 930] == 0xFFF8FDFFu); /* shop's book button uses warm white */
+    assert(fb[40 * GAME_W + 950] == 0xFFF8FDFFu); /* book button uses warm white */
     /* The first playable row starts immediately below the top HUD. */
     assert(fb[125 * GAME_W + 960] != fb[90 * GAME_W + 960]);
     write_bmp("shots/level1.bmp", GAME_W, GAME_H, fb);

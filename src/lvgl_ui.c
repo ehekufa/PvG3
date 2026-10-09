@@ -259,7 +259,6 @@ static void read_pointer(lv_indev_t *in, lv_indev_data_t *data) {
 
 static lv_obj_t *box(lv_obj_t *parent, int x, int y, int w, int h, int radius,
                      lv_color_t color, int shadow) {
-    (void)shadow; /* flat interface: no drop shadows or glossy highlights */
     lv_obj_t *o = lv_obj_create(parent);
     lv_obj_remove_style_all(o);
     lv_obj_set_pos(o, x, y);
@@ -268,11 +267,15 @@ static lv_obj_t *box(lv_obj_t *parent, int x, int y, int w, int h, int radius,
     lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(o, radius, 0);
     if (w >= 22 && h >= 22) {
-        lv_obj_set_style_border_width(o, 2, 0);
-        lv_obj_set_style_border_color(o, BUTTON_BLACK, 0);
+        lv_obj_set_style_border_width(o, 1, 0);
+        lv_obj_set_style_border_color(o, C(D3DDE2), 0);
         lv_obj_set_style_border_opa(o, LV_OPA_COVER, 0);
     }
-    lv_obj_set_style_shadow_width(o, 0, 0);
+    lv_obj_set_style_shadow_width(o, shadow ? 12 : 0, 0);
+    lv_obj_set_style_shadow_color(o, INK, 0);
+    lv_obj_set_style_shadow_opa(o, shadow ? LV_OPA_20 : LV_OPA_TRANSP, 0);
+    lv_obj_set_style_shadow_offset_x(o, 0, 0);
+    lv_obj_set_style_shadow_offset_y(o, shadow ? 5 : 0, 0);
     lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     return o;
 }
@@ -339,7 +342,8 @@ static void button_palette(int action, lv_color_t *face, lv_color_t *text) {
 
 static void button_fill(lv_obj_t *o, lv_color_t color) {
     lv_obj_set_style_bg_color(o, color, 0);
-    lv_obj_set_style_bg_color(o, color, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(o, lv_color_darken(color, LV_OPA_20),
+                              LV_STATE_PRESSED);
 }
 
 static lv_obj_t *button(lv_obj_t *parent, int x, int y, int w, int h,
@@ -353,12 +357,21 @@ static lv_obj_t *button(lv_obj_t *parent, int x, int y, int w, int h,
     button_palette(action, &button_face, &button_text);
     lv_obj_set_style_bg_color(o, button_face, 0);
     lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(o, 5, 0);
-    lv_obj_set_style_border_width(o, 3, 0);
+    lv_obj_set_style_radius(o, h < 40 ? 9 : h < 68 ? 12 : 16, 0);
+    lv_obj_set_style_border_width(o, 2, 0);
     lv_obj_set_style_border_color(o, BUTTON_BLACK, 0);
     lv_obj_set_style_border_opa(o, LV_OPA_COVER, 0);
-    lv_obj_set_style_shadow_width(o, 0, 0);
-    lv_obj_set_style_bg_color(o, button_face, LV_STATE_PRESSED);
+    lv_obj_set_style_shadow_width(o, w >= 70 && h >= 46 ? 8 : 3, 0);
+    lv_obj_set_style_shadow_color(o, INK, 0);
+    lv_obj_set_style_shadow_opa(o, LV_OPA_20, 0);
+    lv_obj_set_style_shadow_offset_x(o, 0, 0);
+    lv_obj_set_style_shadow_offset_y(o, h >= 46 ? 3 : 2, 0);
+    lv_obj_set_style_bg_color(o, lv_color_darken(button_face, LV_OPA_20),
+                              LV_STATE_PRESSED);
+    lv_obj_set_style_translate_y(o, 2, LV_STATE_PRESSED);
+    lv_obj_set_style_shadow_width(o, 2, LV_STATE_PRESSED);
+    lv_obj_set_style_shadow_offset_y(o, 1, LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(o, WS_CYAN, LV_STATE_FOCUSED);
     lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLLABLE);
     if (name && name[0])
         label(o, 7, (h - font_sizes[size] - 3) / 2, w - 14, font_sizes[size] + 6,
@@ -431,31 +444,34 @@ static void duck_art(lv_obj_t *parent, int cx, int cy, int size, int variant) {
 
 static void header(lv_obj_t *root, const char *title, const char *back,
                    int action) {
-    /* One large heading instead of three stacked lines of tiny explanations. */
-    box(root, 0, 0, GAME_W, 148, 0, back ? BUTTON_GRAY : DARK, 0);
-    box(root, 0, 145, GAME_W, 4, 0, back ? BUTTON_BLACK : LIGHT_GRAY, 0);
-    label(root, 70, 46, back ? 940 : 1120, 71, title, 4,
+    /* A compact floating title bar gives every secondary screen one anchor. */
+    box(root, 32, 18, 1216, 112, 22, back ? PAPER : DARK, 1);
+    label(root, 66, 39, back ? 930 : 1120, 64, title, 4,
           back ? INK : WHITE, LV_TEXT_ALIGN_LEFT);
-    if (back) button(root, 1065, 48, 175, 62, back, 2, action);
+    if (back) button(root, 1054, 42, 174, 64, back, 2, action);
 }
 
 static void menu_screen(lv_obj_t *root) {
-    box(root, 0, 0, GAME_W, 148, 0, DARK, 0);
-    box(root, 0, 145, GAME_W, 4, 0, LIGHT_GRAY, 0);
+    box(root, 0, 0, GAME_W, GAME_H, 0, C(E9EFF1), 0);
+    box(root, 32, 20, 1216, 110, 22, DARK, 1);
     label(root, 48, 48, 470, 60, "Растения против гусей 3", 2,
           WHITE, LV_TEXT_ALIGN_LEFT);
     button(root, 520, 51, 200, 64, "Кампания", 2, U_MENU_LEVELS);
     button(root, 735, 51, 195, 64, "Сад Дзен", 2, U_MENU_GARDEN);
     button(root, 945, 51, 285, 64, "Уровни игроков", 1,
            U_CUSTOM_CATALOG);
-    /* The characters stand together on the lawn, not in three square frames. */
-    box(root, 55, 176, 1170, 355, 34, C(F1EFE8), 0);
-    art(root, PV_ART_BREAD, 250, 322, 228);
-    art(root, PV_ART_DIMA, 640, 324, 230);
-    art(root, PV_ART_KIRILL, 1029, 322, 225);
-    label(root, 93, 448, 310, 55, "Хлебушек", 2, INK, LV_TEXT_ALIGN_CENTER);
-    label(root, 482, 448, 310, 55, "Дима в маске", 2, INK, LV_TEXT_ALIGN_CENTER);
-    label(root, 871, 448, 310, 55, "Кирилл", 2, INK, LV_TEXT_ALIGN_CENTER);
+    /* Soft backplates lift the full-colour author's characters without tinting them. */
+    box(root, 55, 153, 1170, 387, 28, PAPER, 1);
+    box(root, 158, 207, 184, 184, 92, C(D9EDF2), 0);
+    box(root, 548, 207, 184, 184, 92, C(F8E0D6), 0);
+    box(root, 937, 207, 184, 184, 92, C(F1E8D1), 0);
+    art(root, PV_ART_BREAD, 250, 315, 215);
+    art(root, PV_ART_DIMA, 640, 317, 218);
+    art(root, PV_ART_KIRILL, 1029, 315, 211);
+    label(root, 93, 436, 310, 55, "Хлебушек", 2, INK, LV_TEXT_ALIGN_CENTER);
+    label(root, 482, 436, 310, 55, "Дима в маске", 2, INK, LV_TEXT_ALIGN_CENTER);
+    label(root, 871, 436, 310, 55, "Кирилл", 2, INK, LV_TEXT_ALIGN_CENTER);
+    box(root, 55, 548, 1170, 164, 24, PAPER, 1);
     button(root, 90, 563, 280, 94, "Умная книга", 2, U_MENU_BOOK);
     button(root, 410, 548, 445, 125, "Начать игру", 3, U_MENU_PLAY);
     button(root, 895, 563, 295, 94, "Играть вдвоём", 2, U_MENU_ONLINE);
@@ -488,9 +504,11 @@ static void levels_screen(lv_obj_t *root) {
 static void garden_screen(lv_obj_t *root) {
     GameOfflineUIState state;
     game_offline_ui_snapshot(&state);
-    box(root, 0, 0, 1280, 121, 0, BUTTON_GRAY, 0);
-    box(root, 0, 118, 1280, 3, 0, C(8195A4), 0);
-    label(root, 12, 3, 232, 36, "Сад Дзен", 2, INK, LV_TEXT_ALIGN_LEFT);
+    /* Three quiet toolbar cards keep the controls clear of the living map. */
+    box(root, 8, 8, 244, 108, 18, PAPER, 1);
+    box(root, 258, 8, 663, 108, 18, PAPER, 1);
+    box(root, 926, 8, 343, 108, 18, PAPER, 1);
+    label(root, 22, 12, 218, 29, "Сад Дзен", 2, INK, LV_TEXT_ALIGN_LEFT);
     lv_obj_t *plants = button(root, 6, 42, 112, 31, "Растения", 0, U_GARDEN_PLANTS);
     lv_obj_t *geese = button(root, 128, 42, 112, 31, "Гуси", 0, U_GARDEN_GEESE);
     lv_obj_t *lawn = button(root, 6, 78, 112, 31, "Газон", 0, U_GARDEN_LAWN);

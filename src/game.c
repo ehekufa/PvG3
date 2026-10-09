@@ -1358,20 +1358,20 @@ void game_input_press(int x, int y) {
         return;
     }
     if (phase == PH_MENU) {
-        if (inside(x, y, 83, 25, 389, 171)) {
+        if (inside(x, y, 52, 31, 421, 124)) {
             game_custom_levels_open();
-        } else if (inside(x, y, 440, 548, 840, 680)) {
+        } else if (inside(x, y, 440, 548, 840, 674)) {
             if (saved_battle) phase = PH_PLAY;
             else if (completed_mask == 0 && resume_level == 1) {
                 start_intro(0);
             } else start_level(resume_level);
-        } else if (inside(x, y, 475, 38, 785, 132)) {
+        } else if (inside(x, y, 475, 38, 785, 127)) {
             phase = PH_SELECT;
         } else if (inside(x, y, 850, 38, 1240, 132)) {
             garden_selected = -1;
             phase = PH_GARDEN;
-        } else if (inside(x, y, 98, 568, 392, 670)) open_book();
-        else if (inside(x, y, 887, 563, 1229, 667)) {
+        } else if (inside(x, y, 98, 568, 392, 665)) open_book();
+        else if (inside(x, y, 893, 569, 1223, 661)) {
             online_code[0] = 0;online_page = online_search = 0;
             online_has_match = 0;online_selected = -1;
             on_net_open();phase = PH_ONLINE_ROOMS;
@@ -1656,6 +1656,23 @@ void game_offline_ui_snapshot(GameOfflineUIState *out) {
 
 /* Calm blue/ivory controls with a warm accent for the main action. */
 enum { BUTTON_TONE_GRAY, BUTTON_TONE_WHITE, BUTTON_TONE_BLACK, BUTTON_TONE_ACCENT };
+
+/* Rounded software-rendered surfaces keep the fallback UI in step with LVGL. */
+static void round_rect(int x0, int y0, int x1, int y1, int radius, uint32_t color) {
+    if (x0 > x1) { int t = x0; x0 = x1; x1 = t; }
+    if (y0 > y1) { int t = y0; y0 = y1; y1 = t; }
+    int width = x1 - x0 + 1, height = y1 - y0 + 1;
+    int max_radius = (width < height ? width : height) / 2;
+    if (radius > max_radius) radius = max_radius;
+    if (radius < 1) { rect(x0, y0, x1, y1, color); return; }
+    rect(x0 + radius, y0, x1 - radius, y1, color);
+    rect(x0, y0 + radius, x1, y1 - radius, color);
+    disc(x0 + radius, y0 + radius, radius, color);
+    disc(x1 - radius, y0 + radius, radius, color);
+    disc(x0 + radius, y1 - radius, radius, color);
+    disc(x1 - radius, y1 - radius, radius, color);
+}
+
 static void draw_button_tone(int x0, int y0, int x1, int y1,
                              const char *label, int size, int active, int tone);
 static void draw_button(int x0, int y0, int x1, int y1, const char *label, int size);
@@ -1733,6 +1750,10 @@ static void draw_seed_bar(void) {
 static void draw_button_tone(int x0, int y0, int x1, int y1,
                              const char *label, int size, int active, int tone) {
     int inset = active ? 5 : 3;
+    int height = y1 - y0 + 1;
+    int radius = height / 4;
+    if (radius > 18) radius = 18;
+    if (radius < 7) radius = 7;
     int black = tone == BUTTON_TONE_BLACK;
     /* The «black» tone is a true black: navy read as bluish on phones. */
     uint32_t frame = black ? COL(0, 0, 0) : COL(36, 59, 82);
@@ -1742,8 +1763,10 @@ static void draw_button_tone(int x0, int y0, int x1, int y1,
                                                  COL(220, 232, 239);
     uint32_t text = black ? COL(255, 253, 248) : COL(36, 59, 82);
     if (active && !black) face = COL(241, 197, 110);
-    rect(x0, y0, x1, y1, frame);
-    rect(x0 + inset, y0 + inset, x1 - inset, y1 - inset, face);
+    round_rect(x0 + 1, y0 + 5, x1 - 1, y1 + 5, radius, COL(190, 201, 207));
+    round_rect(x0, y0, x1, y1, radius, frame);
+    round_rect(x0 + inset, y0 + inset, x1 - inset, y1 - inset,
+               radius > inset ? radius - inset : 1, face);
     while (size > 1 && text_w(size, label) > x1 - x0 - 22) size--;
     draw_text_c((x0 + x1) / 2, (y0 + y1 - size * 7) / 2,
                 size, text, label);
@@ -1793,39 +1816,37 @@ static void draw_menu_hero(int image, int cx, int feet_y, int size,
                            const char *name) {
     ellipse(cx, feet_y - 2, size / 2 - 20, 13, COL(124, 145, 159));
     sprite_draw(image, cx - size / 2, feet_y - size, size, size, 0);
-    draw_text_c(cx, feet_y + 8, 3, COL(36, 59, 82), name);
+    draw_text_c(cx, feet_y + 26, 3, COL(36, 59, 82), name);
 }
 
 static void draw_menu(void) {
-    /* Use a soft sky-and-sand palette with the three author's heroes. The
-     * Queen's robot is revealed in the FINAL level, not on this screen. */
-    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(198, 224, 236));
-    rect(0, 508, GAME_W - 1, GAME_H - 1, COL(224, 211, 181));
-    rect(0, 508, GAME_W - 1, 511, COL(179, 161, 126));
-    draw_button_white(83, 25, 389, 171, "УРОВНИ ИГРОКОВ", 4);
+    /* Full-colour character drawings sit on calm, raised interface surfaces. */
+    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(233, 239, 241));
+    rect(0, 510, GAME_W - 1, GAME_H - 1, COL(244, 240, 230));
+    round_rect(30, 18, 1250, 151, 22, COL(32, 53, 75));
+    draw_button_white(52, 31, 421, 124, "Уровни игроков", 3);
     draw_button_white(475, 38, 785, 127, "УРОВНИ 1-10", 4);
-    rect(846, 34, 1244, 137, COL(36, 59, 82));
-    rect(849, 37, 1241, 134, COL(255, 253, 248));
-    draw_text_c(1045, 65, 5, COL(36, 59, 82), "САД ДЗЕН");
+    draw_button_white(850, 38, 1240, 132, "Сад Дзен", 4);
 
-    draw_text_c(640, 177, 6, COL(36, 59, 82), "РАСТЕНИЯ ПРОТИВ ГУСЕЙ");
-    draw_text_c(640, 231, 3, COL(83, 106, 128), "ИСТОРИЯ ХЛЕБУШКА");
-    draw_menu_hero(SPR_KHLEBUSHEK, 256, 491, 212, "ХЛЕБУШЕК");
-    draw_menu_hero(SPR_MASK, 640, 491, 235, "ДИМА");
-    draw_menu_hero(SPR_KIRILL, 1012, 491, 225, "КИРИЛЛ");
+    round_rect(44, 160, 1236, 536, 26, COL(255, 253, 248));
+    draw_text_c(640, 176, 5, COL(36, 59, 82), "Растения против гусей 3");
+    ellipse(256, 359, 119, 107, COL(217, 237, 242));
+    ellipse(640, 359, 119, 107, COL(249, 229, 219));
+    ellipse(1024, 359, 119, 107, COL(244, 236, 214));
+    draw_menu_hero(SPR_KHLEBUSHEK, 256, 461, 190, "Хлебушек");
+    draw_menu_hero(SPR_MASK, 640, 461, 205, "Дима в маске");
+    draw_menu_hero(SPR_KIRILL, 1024, 461, 190, "Кирилл");
 
+    round_rect(44, 545, 1236, 695, 24, COL(255, 253, 248));
     draw_button_white(98, 568, 392, 665, "КНИГА", 5);
     draw_button_tone(440, 548, 840, 674, "СТАРТ", 8, 0, BUTTON_TONE_ACCENT);
     draw_button_white(893, 569, 1223, 661, "ОНЛАЙН", 6);
-    rect(926, 609, 946, 614, COL(36, 59, 82));
-    rect(933, 602, 939, 621, COL(36, 59, 82));
 }
 
 /* Level 0 replays the story; any wave can be replayed. */
 static void draw_level_select(void) {
-    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(245, 242, 232));
-    rect(0, 0, GAME_W - 1, 101, COL(220, 232, 239));
-    rect(0, 99, GAME_W - 1, 102, COL(36, 59, 82));
+    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(233, 239, 241));
+    round_rect(32, 18, 1248, 118, 22, COL(255, 253, 248));
     draw_text_c(630, 32, 6, COL(36, 59, 82), "ВЫБОР УРОВНЯ");
     draw_button_black(1045, 18, 1265, 85, "НАЗАД", 4);
     for (int n = 1; n <= MAX_LEVEL; n++) {
@@ -1833,9 +1854,9 @@ static void draw_level_select(void) {
         int x = 100 + col * 220, y = 155 + row * 190;
         int active = resume_level == n;
         int inset = active ? 5 : 3;
-        rect(x, y, x + 180, y + 130, COL(36, 59, 82));
-        rect(x + inset, y + inset, x + 180 - inset, y + 130 - inset,
-             active ? COL(241, 197, 110) : COL(255, 253, 248));
+        round_rect(x, y, x + 180, y + 130, 15, COL(36, 59, 82));
+        round_rect(x + inset, y + inset, x + 180 - inset, y + 130 - inset,
+                   12, active ? COL(241, 197, 110) : COL(255, 253, 248));
         int water_art = !preferences_neutral_background_enabled() &&
                         n == WATER_LEVEL && sprite_pixels[SPR_WATER_MAP];
         if (water_art) {
