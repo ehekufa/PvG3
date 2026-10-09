@@ -19,17 +19,19 @@ export const MAX_OBJECT_WIDTH = LEVEL_WIDTH * 4;
 export const MAX_OBJECT_HEIGHT = LEVEL_HEIGHT * 4;
 export const TRIGGER_KINDS = Object.freeze([
   'move', 'rotate', 'forever', 'invisibility', 'no-collision', 'gravity',
-  'recolor', 'background',
+  'recolor', 'background', 'count', 'toggle', 'spawn',
 ]);
 export const TRIGGER_LABELS = Object.freeze({
   move: 'Движение', rotate: 'Разворот', forever: 'Вечно',
   invisibility: 'Невидимость', 'no-collision': 'Нет столкновения',
   gravity: 'Гравитация', recolor: 'Перекраска', background: 'Фон',
+  count: 'Счётчик', toggle: 'Переключатель', spawn: 'Появление группы',
 });
 const TRIGGER_ACTIONS = Object.freeze({
   move: 'move', rotate: 'rotate', forever: 'activate',
   invisibility: 'invisible', 'no-collision': 'no-collision', gravity: 'set-gravity',
   recolor: 'recolor', background: 'set-background',
+  count: 'toggle', toggle: 'toggle', spawn: 'activate',
 });
 export const LEVEL_TYPES = Object.freeze([
   'block', 'ground', 'hazard', 'coin', 'enemy', 'player', 'goal', 'trigger', 'slope',
@@ -109,6 +111,9 @@ const FULL_ART_BOUNDS = Object.freeze([0, 0, 1, 1]);
 const SLOPE_VERTICES = Object.freeze([[0, 1], [1, 0], [1, 1]]);
 const SPIKE_VERTICES = Object.freeze([[.5, .03], [1, 1], [0, 1]]);
 const EVENTS = new Set(['touch', 'coin', 'manual', 'start']);
+const TOUCH_MODES = new Set(['enter', 'exit', 'stay']);
+export const DIFFICULTIES = Object.freeze(['easy', 'normal', 'hard', 'expert']);
+const DEFAULT_MOVEMENT = Object.freeze({doubleJump: false, dash: false, wallSlide: false});
 const LEGACY_TRIGGER_ACTIONS = new Set(['toggle', 'move', 'recolor', 'number', 'rotate']);
 const FOREVER_ACTIONS = new Set(['activate', 'unactivate']);
 const GROUP_ID_MAX = 9999;
@@ -169,7 +174,7 @@ function rgb(value) {
 function defaultObject(id, type, x, y, width, height, color, number = 0) {
   return {id, type, name: TYPE_LABELS[type], x, y, w: width, h: height,
     angle: 0, flipX: false, flipY: false, color, number, visible: true,
-    layer: 0, layer2: 0, zOrder: 0};
+    layer: 0, layer2: 0, zOrder: 0, alpha: 100, pulse: false, shake: false};
 }
 
 export function setTriggerKind(level, id, kind) {
@@ -180,6 +185,7 @@ export function setTriggerKind(level, id, kind) {
   const previousKind = trigger.kind || 'move';
   const wasGlobal = previousKind === 'gravity' || previousKind === 'background';
   const isGlobal = kind === 'gravity' || kind === 'background';
+  const groupKind = ['recolor', 'count', 'toggle', 'spawn'].includes(kind);
   if (!isGlobal && wasGlobal) {
     const target = kind === 'recolor' ?
       level.objects.find(item => item.id !== object.id && item.type !== 'trigger' &&
@@ -192,20 +198,23 @@ export function setTriggerKind(level, id, kind) {
   }
   trigger.kind = kind;
   trigger.action = TRIGGER_ACTIONS[kind];
+  trigger.touchMode = TOUCH_MODES.has(trigger.touchMode) ? trigger.touchMode : 'enter';
   if (isGlobal) {
     delete trigger.targetId;delete trigger.groupId;
-  } else if (kind === 'recolor') {
-    const hasRecolorableTarget = Number.isInteger(trigger.groupId) &&
-      level.objects.some(item => item.id !== object.id && item.type !== 'trigger' &&
-        item.number === trigger.groupId && canManuallyRecolorType(item.type));
-    if (!hasRecolorableTarget) {
-      const target = level.objects.find(item => item.id !== object.id && item.type !== 'trigger' &&
-        canManuallyRecolorType(item.type)) ||
+  } else if (groupKind) {
+    const target = level.objects.find(item => item.id !== object.id &&
+      item.type !== 'trigger' && item.number === trigger.groupId);
+    if (!Number.isInteger(trigger.groupId) || (!target && kind !== 'spawn')) {
+      const fallback = level.objects.find(item => item.type === 'goal') ||
         level.objects.find(item => item.id !== object.id && item.type !== 'trigger');
-      trigger.groupId = Number.isInteger(target?.number) ? target.number : 0;
+      trigger.groupId = Number.isInteger(fallback?.number) ? fallback.number : 0;
     }
     delete trigger.targetId;
   }
+  if (kind === 'count') {
+    if (!Number.isInteger(trigger.count) || trigger.count < 1 || trigger.count > 999)
+      trigger.count = 3;
+  } else delete trigger.count;
   if (kind === 'move' && previousKind !== 'move') {
     trigger.valueX = 1;trigger.valueY = 0;
   }
@@ -230,7 +239,7 @@ export function setTriggerKind(level, id, kind) {
 export function newDraft(id = localId()) {
   return {
     localId: id, title: 'Новый уровень', description: '', width: LEVEL_WIDTH,
-    height: LEVEL_HEIGHT, objects: [
+    height: LEVEL_HEIGHT, difficulty: 'normal', tags: [], movement: {...DEFAULT_MOVEMENT}, objects: [
       defaultObject(1, 'player', 1, 7, .65, .85, DEFAULT_COLORS.player, 1),
       defaultObject(2, 'goal', 14, 6, 1, 2, DEFAULT_COLORS.goal, 2),
       defaultObject(3, 'ground', 0, 8, 16, 2, DEFAULT_COLORS.ground, 3),
@@ -259,10 +268,12 @@ export function addObject(level, type, x, y, triggerKind = 'move') {
       level.objects.find(object => object.type === 'goal') || level.objects[0];
     const targetGroup = Number.isInteger(target?.number) ? target.number : 0;
     const action = TRIGGER_ACTIONS[kind];
-    object.trigger = {kind, event: 'touch', action,
+    object.trigger = {kind, event: 'touch', touchMode: 'enter', action,
       ...(['gravity', 'background'].includes(kind) ? {} :
-        kind === 'recolor' ? {groupId: targetGroup} :
+        ['recolor', 'count', 'toggle', 'spawn'].includes(kind) ?
+          {groupId: targetGroup} :
           {targetId: target?.id || 0, groupId: targetGroup}),
+      ...(kind === 'count' ? {count: 3} : {}),
       valueX: kind === 'move' ? 1 : 0, valueY: 0,
       duration: kind === 'rotate' ? 3 : 0,
       value: kind === 'move' ? 1 : 0,
@@ -420,6 +431,20 @@ export function validateDraft(level) {
     return fail('Укажи название длиной от 1 до 80 символов.');
   if (typeof level.description !== 'string' || level.description.length > 160)
     return fail('Описание должно быть не длиннее 160 символов.');
+  const difficulty = level.difficulty ?? 'normal';
+  if (!DIFFICULTIES.includes(difficulty)) return fail('Выбери сложность уровня.');
+  const tags = level.tags ?? [];
+  if (!Array.isArray(tags) || tags.length > 8 || tags.some(tag =>
+      typeof tag !== 'string' || !tag.trim() || tag.trim().length > 16 ||
+      /[\n\r,]/.test(tag))) return fail('Теги: не больше 8, до 16 символов каждый.');
+  const normalizedTags = tags.map(tag => tag.trim().toLocaleLowerCase('ru'));
+  if (new Set(normalizedTags).size !== normalizedTags.length)
+    return fail('Теги не должны повторяться.');
+  const movement = level.movement ?? DEFAULT_MOVEMENT;
+  if (!movement || typeof movement !== 'object' || Array.isArray(movement) ||
+      ['doubleJump', 'dash', 'wallSlide'].some(key =>
+        movement[key] !== undefined && typeof movement[key] !== 'boolean'))
+    return fail('Проверь настройки способностей игрока.');
   if (level.width !== LEVEL_WIDTH || level.height !== LEVEL_HEIGHT ||
       !Array.isArray(level.objects) || level.objects.length < 1 ||
       level.objects.length > MAX_LEVEL_OBJECTS)
@@ -444,7 +469,13 @@ export function validateDraft(level) {
         (object.defaultColor !== undefined && typeof object.defaultColor !== 'boolean') ||
         !rgb(object.color) ||
         !Number.isInteger(object.number) || object.number < 0 || object.number > 9999 ||
-        typeof object.visible !== 'boolean')
+        typeof object.visible !== 'boolean' ||
+        (object.layer !== undefined && (!Number.isInteger(object.layer) || object.layer < 0 || object.layer > 9)) ||
+        (object.layer2 !== undefined && (!Number.isInteger(object.layer2) || object.layer2 < 0 || object.layer2 > 9)) ||
+        (object.zOrder !== undefined && (!Number.isInteger(object.zOrder) || object.zOrder < -99 || object.zOrder > 99)) ||
+        (object.alpha !== undefined && (!Number.isInteger(object.alpha) || object.alpha < 0 || object.alpha > 100)) ||
+        (object.pulse !== undefined && typeof object.pulse !== 'boolean') ||
+        (object.shake !== undefined && typeof object.shake !== 'boolean'))
       return fail(`Проверь размеры, цвет и положение объекта «${TYPE_LABELS[object.type]}».`);
     hasPlayer ||= object.type === 'player';
     hasGoal ||= object.type === 'goal';
@@ -471,11 +502,16 @@ export function validateDraft(level) {
       const gravityKind = kind === 'gravity';
       const recolorKind = kind === 'recolor';
       const backgroundKind = kind === 'background';
+      const countKind = kind === 'count';
+      const toggleKind = kind === 'toggle';
+      const spawnKind = kind === 'spawn';
       const fixedAction = kind === 'invisibility' ? 'invisible' : 'no-collision';
       const validAction = gravityKind ? t?.action === 'set-gravity' :
         recolorKind ? t?.action === 'recolor' :
         backgroundKind ? t?.action === 'set-background' :
         specialKind ? t?.action === fixedAction :
+        countKind || toggleKind ? t?.action === 'toggle' :
+        spawnKind ? t?.action === 'activate' :
         foreverConfigured ? FOREVER_ACTIONS.has(t.action) : LEGACY_TRIGGER_ACTIONS.has(t?.action);
       const validValues = kind === 'move' ? finite(moveX) && moveX >= -9999 && moveX <= 9999 &&
           finite(moveY) && moveY >= -9999 && moveY <= 9999 :
@@ -483,13 +519,18 @@ export function validateDraft(level) {
         kind === 'forever' ? foreverConfigured ||
           (validTarget && finite(t?.value) && t.value >= -100 && t.value <= 100) :
         gravityKind ? Number.isInteger(t?.value) && t.value >= -100 && t.value <= 100 :
-        recolorKind || backgroundKind || specialKind;
+        countKind ? Number.isInteger(t?.count ?? 3) && (t.count ?? 3) >= 1 &&
+          (t.count ?? 3) <= 999 :
+        recolorKind || backgroundKind || specialKind || toggleKind || spawnKind;
+      const groupLogicKind = countKind || toggleKind || spawnKind;
       if (!t || !TRIGGER_KINDS.includes(kind) || !EVENTS.has(t.event) ||
+          (t.touchMode !== undefined && !TOUCH_MODES.has(t.touchMode)) ||
           !validAction || (!gravityKind && !backgroundKind && kind !== 'forever' &&
-                           !targetConfigured) ||
+                           !groupLogicKind && !targetConfigured) ||
           (kind === 'forever' && !foreverConfigured && !validTarget) ||
           (specialKind && !validGroup && !directTargetConfigured) ||
           (recolorKind && !validGroup) ||
+          (groupLogicKind && !validGroup) ||
           (t.groupId !== undefined && !validGroup) || !validValues || !rgb(t.color) ||
           (t.defaultColor !== undefined && typeof t.defaultColor !== 'boolean'))
         return fail('Настрой триггер: событие, группу, действие и параметры.');
@@ -507,7 +548,10 @@ function recordObject(object) {
     color: canManuallyRecolorType(object.type) ?
       object.color : FIXED_SPRITE_FALLBACK_COLOR,
     number: object.number || 0, visible: object.visible !== false,
-    layer: object.layer || 0, layer2: object.layer2 || 0, zOrder: object.zOrder || 0,
+    layer: object.layer || 0, layer2: object.layer2 || 0,
+    zOrder: object.zOrder || 0,
+    alpha: object.alpha ?? 100, pulse: object.pulse === true,
+    shake: object.shake === true,
   };
   if (usesDefaultArtwork(object)) result.defaultColor = true;
   if (object.type === 'particle')
@@ -515,14 +559,17 @@ function recordObject(object) {
   if (object.type === 'trigger') {
     const t = object.trigger || {};
     const kind = TRIGGER_KINDS.includes(t.kind) ? t.kind : 'move';
-    const trigger = {kind, event: t.event || 'touch', action: t.action || 'move',
-      color: t.color || '#ffc54e'};
+    const trigger = {kind, event: t.event || 'touch',
+      action: t.action || 'move', color: t.color || '#ffc54e'};
+    if (TOUCH_MODES.has(t.touchMode) && t.touchMode !== 'enter')
+      trigger.touchMode = t.touchMode;
     if ((kind === 'recolor' || kind === 'background') && object.defaultColor === true)
       trigger.defaultColor = true;
-    if (!['gravity', 'background', 'recolor'].includes(kind))
+    if (!['gravity', 'background', 'recolor', 'count', 'toggle', 'spawn'].includes(kind))
       trigger.targetId = Number.isInteger(t.targetId) ? t.targetId : 0;
     if (!['gravity', 'background'].includes(kind) && Number.isInteger(t.groupId))
       trigger.groupId = t.groupId;
+    if (kind === 'count') trigger.count = t.count ?? 3;
     if (kind === 'gravity') {
       trigger.value = t.value ?? 0;
     } else if (kind === 'move') {
@@ -547,9 +594,13 @@ export function publishedRecord(id, level) {
   const check = validateDraft(level);
   if (!check.ok) throw new Error(check.message);
   if (!/^[1-9][0-9]{0,5}$/.test(id)) throw new Error('Некорректный ID публикации.');
+  const movement = {...DEFAULT_MOVEMENT, ...(level.movement || {})};
   return {
     format: 'PVG3-PUBLISHED-LEVEL', version: 1, id,
     title: level.title.trim(), description: level.description,
+    difficulty: level.difficulty || 'normal',
+    tags: (level.tags || []).map(tag => tag.trim()),
+    movement,
     project: {format: 'PVG3-MAKER', version: 1,
       width: LEVEL_WIDTH, height: LEVEL_HEIGHT,
       objects: level.objects.map(recordObject)},
@@ -579,9 +630,20 @@ export function draftFromPublished(record) {
       layer: Number.isInteger(object.layer) ? object.layer : 0,
       layer2: Number.isInteger(object.layer2) ? object.layer2 : 0,
       zOrder: Number.isInteger(object.zOrder) ? object.zOrder : 0,
+      alpha: Number.isInteger(object.alpha) ? object.alpha : 100,
+      pulse: object.pulse === true, shake: object.shake === true,
+      ...(object.type === 'trigger' ? {trigger: {
+        ...trigger,
+        touchMode: TOUCH_MODES.has(trigger?.touchMode) ? trigger.touchMode : 'enter',
+        ...(trigger?.kind === 'count' ? {count: trigger.count ?? 3} : {}),
+      }} : {}),
     };
   });
   return {localId: localId(), title: record.title, description: record.description || '',
+    difficulty: DIFFICULTIES.includes(record.difficulty) ? record.difficulty : 'normal',
+    tags: Array.isArray(record.tags) ? record.tags.filter(tag => typeof tag === 'string').slice(0, 8) : [],
+    movement: {...DEFAULT_MOVEMENT,
+      ...(record.movement && typeof record.movement === 'object' ? record.movement : {})},
     width: LEVEL_WIDTH, height: LEVEL_HEIGHT, objects};
 }
 
@@ -591,6 +653,9 @@ export function isPublishedRecord(record, expectedId = record?.id) {
       typeof record.title !== 'string' || !record.project ||
       record.project.format !== 'PVG3-MAKER' || record.project.version !== 1) return false;
   const draft = {title: record.title, description: record.description || '',
+    difficulty: record.difficulty || 'normal',
+    tags: Array.isArray(record.tags) ? record.tags : [],
+    movement: record.movement ?? DEFAULT_MOVEMENT,
     width: record.project.width, height: record.project.height,
     objects: record.project.objects};
   return validateDraft(draft).ok;
@@ -638,9 +703,16 @@ export function createPreviewState(level) {
   const fallPlaneY = Math.min(lowestObjectBottom + 3, WORLD_LIMIT) * TILE_H;
   const state = {objects, x: player.x * TILE_W, y: player.y * TILE_H,
     vx: 0, vy: 0, gravity: 1450, backgroundColor: PREVIEW_BACKGROUND_COLOR,
-    fallPlaneY, grounded: false, time: 0, coins: 0, won: false,
+    fallPlaneY, grounded: false, time: 0, coins: 0,
+    totalCoins: objects.filter(object => object.type === 'coin').length,
+    attempts: 1, won: false,
+    abilities: {...DEFAULT_MOVEMENT, ...(level.movement || {})},
     collected: [], triggerFired: [], triggerActive: [], triggerTimers: Object.create(null),
+    triggerCounts: Object.create(null), triggerTouchInside: new Set(),
+    triggerTouchTimers: Object.create(null),
     invisible: [], noCollision: [], groupRotations: [], jumpHeld: false,
+    triggerHeld: false, dashHeld: false, jumpCount: 0,
+    dashRemaining: 0, dashCooldown: 0, dashDirection: 0,
     orbActivated: false, checkpointId: 0,
     jetpack: false, jetpackActive: false, facingLeft: objectFlipX(player),
     portalInside: new Set(),
@@ -784,6 +856,8 @@ function activatePreviewCheckpoint(state, player, checkpoint) {
 function resetPreviewPlayer(state) {
   state.x = state.spawn.x;state.y = state.spawn.y;
   state.vx = state.vy = 0;state.grounded = false;
+  state.attempts = (state.attempts || 1) + 1;
+  state.jumpCount = 0;state.dashRemaining = 0;state.dashCooldown = 0;
   const player = state.objects.find(object => object.type === 'player');
   state.facingLeft = player ? objectFlipX(player) : false;
   state.jumpHeld = false;state.orbActivated = false;state.jetpackActive = false;
@@ -800,6 +874,10 @@ function resolvePreviewPlayer(state, player, solids) {
       if (!contact) continue;
       state.x += contact.x * contact.depth;
       state.y += contact.y * contact.depth;
+      const wallContact = Math.abs(contact.x) > .7;
+      if (wallContact && state.dashRemaining > 0) state.dashRemaining = 0;
+      if (wallContact && state.abilities.wallSlide && state.vy > 0)
+        state.vy = Math.min(state.vy, 140);
       const inwardVelocity = state.vx * contact.x + state.vy * contact.y;
       if (inwardVelocity < 0) {
         state.vx -= inwardVelocity * contact.x;
@@ -992,28 +1070,49 @@ export function stepPreview(state, input = {}, dt = 1 / 60) {
   const vertical = clamp(Number(input.vertical) || 0, -1, 1);
   const jetpackVelocity = vertical === 0 ? 0 : -vertical * 250;
   const jumpPressed = !!input.jump && !state.jumpHeld;
-  state.jumpHeld = !!input.jump;
+  const dashPressed = !!input.dash && !state.dashHeld;
+  state.jumpHeld = !!input.jump;state.dashHeld = !!input.dash;
+  state.dashCooldown = Math.max(0, state.dashCooldown - dt);
+  if (state.grounded) state.jumpCount = 0;
+  if (state.abilities.dash && dashPressed && state.dashCooldown <= 0) {
+    state.dashDirection = horizontal || (state.facingLeft ? -1 : 1);
+    state.dashRemaining = .18;state.dashCooldown = .65;
+    state.vy = 0;
+  }
   if (state.jetpack) {
     state.vy = jetpackVelocity;
-  } else if (jumpPressed && !activatePreviewOrb(state, player) && state.grounded) {
-    state.vy = -570;state.grounded = false;
+  } else if (jumpPressed) {
+    const orb = activatePreviewOrb(state, player);
+    if (orb) state.jumpCount = 1;
+    else if (state.grounded) {
+      state.vy = -570;state.grounded = false;state.jumpCount = 1;
+    } else if (state.abilities.doubleJump && state.jumpCount < 2) {
+      state.vy = -520;state.jumpCount = 2;
+    }
+  }
+  if (state.dashRemaining > 0) {
+    state.vx = state.dashDirection * 650;state.vy = 0;
   }
   state.jetpackActive = state.jetpack &&
     (state.vx !== 0 || vertical !== 0);
   const gravity = Number.isFinite(state.gravity) ? state.gravity : 1450;
-  const predictedVy = state.jetpack ? state.vy : Math.min(780, state.vy + gravity * dt);
+  const predictedVy = state.jetpack || state.dashRemaining > 0 ? state.vy :
+    Math.min(780, state.vy + gravity * dt);
   const displacement = Math.max(Math.abs(state.vx * dt), Math.abs(predictedVy * dt));
   const substeps = clamp(Math.ceil(displacement / 4), 1, 16);
   const subDt = dt / substeps;
   state.grounded = false;
   for (let step = 0; step < substeps; step++) {
-    if (state.jetpack) state.vy = jetpackVelocity;
+    if (state.dashRemaining > 0) state.vy = 0;
+    else if (state.jetpack) state.vy = jetpackVelocity;
     else state.vy = Math.min(780, state.vy + gravity * subDt);
     state.x = clamp(state.x + state.vx * subDt,
       -WORLD_LIMIT * TILE_W, WORLD_LIMIT * TILE_W - pw);
     state.y += state.vy * subDt;
     if (playerCollisionEnabled) resolvePreviewPlayer(state, player, solids);
+    state.dashRemaining = Math.max(0, state.dashRemaining - subDt);
   }
+  if (state.grounded) state.jumpCount = 0;
   let playerRespawned = false;
   const playerBottom = state.y + player.h * TILE_H;
   const fellBelowLevel = playerBottom > state.fallPlaneY;

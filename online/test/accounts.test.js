@@ -122,8 +122,8 @@ function withFake(options, body) {
 test('the shipped rules file covers every branch the clients use', () => {
   const rules = JSON.parse(readFileSync(new URL('../../firebase/database.rules.json',
     import.meta.url), 'utf8')).rules;
-  for (const branch of ['rooms', 'levels', 'levels-index', 'comments', 'accounts',
-    'tokens', 'admins', 'bans'])
+  for (const branch of ['rooms', 'levels', 'levels-index', 'level-stats',
+    'comments', 'accounts', 'tokens', 'admins', 'bans'])
     assert.ok(rules[branch], `rules describe /${branch}`);
   assert.equal(rules.admins['.write'], false, 'admins are seeded, never client-written');
   assert.equal(rules.accounts['.read'], false, 'password hashes stay private');
@@ -136,6 +136,12 @@ test('the shipped rules file covers every branch the clients use', () => {
     'a published level must prove a live account session');
   assert.ok(rules['levels-index'].$id['.write'].includes("root.child('tokens')"),
     'the catalog index also requires an authenticated level author');
+  assert.equal(rules['level-stats']['.read'], true,
+    'catalog statistics are public');
+  assert.ok(rules['level-stats'].$levelId.likes.$clientId['.write'].includes('data.exists()'),
+    'likes can be created once or removed to toggle');
+  assert.ok(rules['level-stats'].$levelId.downloads.$clientId['.write'].includes('!data.exists()'),
+    'downloads are unique per installation');
   assert.ok(rules.comments.$level.$cid['.write'].includes('300'), 'comments are bounded');
   assert.ok(rules.tokens.$login['.write'].includes('bans'),
     'a banned nick cannot even take a session token');

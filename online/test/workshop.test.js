@@ -286,7 +286,7 @@ test('world placement is scrollable across large positive and negative coordinat
     assert.equal(addObject(level, 'trigger', kind === 'rotate' ? 8 : 7, 5, kind).trigger.kind, kind);
   assert.deepEqual(TRIGGER_KINDS,
     ['move', 'rotate', 'forever', 'invisibility', 'no-collision', 'gravity',
-      'recolor', 'background']);
+      'recolor', 'background', 'count', 'toggle', 'spawn']);
   assert.equal(validateDraft(level).ok, true);
 });
 

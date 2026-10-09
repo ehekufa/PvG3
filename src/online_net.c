@@ -33,16 +33,18 @@
 
 #define RESPONSE_BASE_CAP (1024u * 1024u + 1u)
 #define RESPONSE_CAP ON_LEVEL_JSON_CAP
+#define RESPONSE_STATS_CAP RESPONSE_CAP
 
 enum { A_NONE, A_CREATE, A_JOIN, A_ROLE, A_LEAVE, A_REFRESH };
 enum { T_IDLE, T_CREATE, T_JOIN, T_ROLE, T_LEAVE, T_REFRESH,
        T_LIST, T_POLL, T_HEARTBEAT, T_COMMAND, T_PUBLISH,
-       T_LEVEL_LIST, T_LEVEL_GET, T_LEVEL_PUBLISH,
+       T_LEVEL_LIST, T_LEVEL_GET, T_LEVEL_PUBLISH, T_LEVEL_STAT_WRITE,
        T_SIGN_IN, T_CREATE_ACCOUNT, T_TOKEN_ROTATE,
        T_COMMENTS, T_COMMENT_POST, T_COMMENT_HIDE, T_BAN, T_OFFICIAL };
 /* Account work queued for the worker thread. */
 enum { ACCOUNT_NONE, ACCOUNT_SIGN_IN, ACCOUNT_CREATE, ACCOUNT_ROTATE };
 
+typedef struct {char id[ON_LEVEL_ID_SIZE]; int kind, value;} LevelStatJob;
 typedef struct {
     OnNetView view;
     pthread_t worker;
@@ -51,6 +53,7 @@ typedef struct {
     int action, action_map, action_role, leave_slot;
     char action_id[ON_ROOM_ID_SIZE], leave_id[ON_ROOM_ID_SIZE];
     char player_id[ON_PLAYER_ID_SIZE];
+    char catalog_client_id[ON_PLAYER_ID_SIZE];
     int queued_command;
     OnCommand command;
     OnMatch published;
@@ -58,6 +61,10 @@ typedef struct {
     int next_seq;
     int64_t next_list, next_room, next_ping, next_publish;
     int level_list_requested, level_fetch_requested;
+    LevelStatJob level_stat_queue[ON_LEVEL_LIST_CAP * 2];
+    int level_stat_count;
+    LevelStatJob level_stat_inflight;
+    int level_stat_inflight_valid;
     unsigned level_generation;
     char level_fetch_id[ON_LEVEL_ID_SIZE];
     OnPublishedLevel loaded_level;
@@ -187,7 +194,10 @@ static int request(const char *path, const char *method, const char *body,
     if (!net.response) return -1;
     int large_level = path && !strncmp(path, "levels/", 7);
     int large_level_get = large_level && method && !strcmp(method, "GET");
-    size_t needed = large_level_get ? RESPONSE_CAP : RESPONSE_BASE_CAP;
+    int large_stats_get = path && !strcmp(path, "level-stats.json") &&
+                          method && !strcmp(method, "GET");
+    size_t needed = large_level_get ? RESPONSE_CAP :
+                    large_stats_get ? RESPONSE_STATS_CAP : RESPONSE_BASE_CAP;
     if (net.response_cap < needed) {
         char *larger = (char *)realloc(net.response, needed);
         if (!larger) return -1;
@@ -197,7 +207,8 @@ static int request(const char *path, const char *method, const char *body,
     int code = on_http_request(path, method, body, if_match, net.response,
                                net.response_cap);
     /* PUT responses are only status-checked; don't retain their echoed level. */
-    if (large_level && method && strcmp(method, "GET")) compact_response();
+    if ((large_level && method && strcmp(method, "GET")) || large_stats_get)
+        compact_response();
     return code;
 }
 #ifndef ON_NET_MANUAL
@@ -236,6 +247,13 @@ static void load_saved_account_locked(void) {
 static int ensure_transport_locked(void) {
     load_saved_account_locked();
     if (!net.player_id[0]) make_id(net.player_id);
+    if (!net.catalog_client_id[0]) {
+        if (!preferences_catalog_client_id(net.catalog_client_id,
+                                          sizeof net.catalog_client_id)) {
+            make_id(net.catalog_client_id);
+            preferences_set_catalog_client_id(net.catalog_client_id);
+        }
+    }
     if (!net.response) {
         net.response = (char *)malloc(RESPONSE_BASE_CAP);
         if (net.response) net.response_cap = RESPONSE_BASE_CAP;
@@ -299,6 +317,8 @@ void on_net_shutdown(void) {
     net.action = A_NONE;
     net.level_publish_requested = 0;
     net.view.level_publish_busy = 0;
+    net.level_stat_count = 0;
+    net.level_stat_inflight_valid = 0;
     net.generation++;
     free(net.response);net.response = NULL;net.response_cap = 0;
     pthread_mutex_unlock(&mu);
@@ -345,6 +365,54 @@ void on_net_level_fetch(const char *id) {
     net.view.levels_busy = 1;
     net.view.level_loaded = 0;
     net.view.levels_notice[0] = 0;
+    pthread_mutex_unlock(&mu);
+}
+static int level_stat_already_recorded_locked(const char *id, int kind) {
+    for (int i = 0; i < net.view.level_count; ++i)
+        if (!strcmp(net.view.levels[i].id, id))
+            return kind == 1 ? net.view.levels[i].liked :
+                   net.view.levels[i].downloaded;
+    return 0;
+}
+static int level_stat_value_locked(const char *id, int kind) {
+    int value = level_stat_already_recorded_locked(id, kind);
+    if (net.level_stat_inflight_valid && net.level_stat_inflight.kind == kind &&
+        !strcmp(net.level_stat_inflight.id, id))
+        value = net.level_stat_inflight.value;
+    for (int i = 0; i < net.level_stat_count; ++i) {
+        const LevelStatJob *job = &net.level_stat_queue[i];
+        if (job->kind == kind && !strcmp(job->id, id)) value = job->value;
+    }
+    return value;
+}
+static int queue_level_stat_locked(const char *id, int kind, int value) {
+    for (int i = 0; i < net.level_stat_count; ++i) {
+        LevelStatJob *job = &net.level_stat_queue[i];
+        if (job->kind == kind && !strcmp(job->id, id)) {
+            job->value = !!value;
+            return 1;
+        }
+    }
+    if (net.level_stat_count >= ON_LEVEL_LIST_CAP * 2) return 0;
+    LevelStatJob *job = &net.level_stat_queue[net.level_stat_count++];
+    snprintf(job->id, sizeof job->id, "%s", id);
+    job->kind = kind;job->value = !!value;
+    return 1;
+}
+void on_net_level_like(const char *id) {
+    if (!on_protocol_valid_level_id(id)) return;
+    pthread_mutex_lock(&mu);
+    if (!ensure_transport_locked()) {pthread_mutex_unlock(&mu);return;}
+    (void)queue_level_stat_locked(id, 1, !level_stat_value_locked(id, 1));
+    pthread_mutex_unlock(&mu);
+}
+void on_net_level_download(const char *id) {
+    if (!on_protocol_valid_level_id(id)) return;
+    pthread_mutex_lock(&mu);
+    if (level_stat_value_locked(id, 2) || !ensure_transport_locked()) {
+        pthread_mutex_unlock(&mu);return;
+    }
+    (void)queue_level_stat_locked(id, 2, 1);
     pthread_mutex_unlock(&mu);
 }
 int on_net_level_publish(const OnPublishedLevel *level) {
@@ -1033,8 +1101,10 @@ done:
 void on_net_pump_once(void) {
     int task = T_IDLE, map = 1, role = 0, slot = 0;
     int ban_value = 0, official_value = 0;
+    LevelStatJob stat_job = {0};
     unsigned gen, level_gen, publish_gen, account_gen;
     char id[ON_ROOM_ID_SIZE] = {0}, player[ON_PLAYER_ID_SIZE] = {0};
+    char client_id[ON_PLAYER_ID_SIZE] = {0};
     char level_id[ON_LEVEL_ID_SIZE] = {0};
     char text[ON_COMMENT_TEXT_SIZE] = {0};
     char comment_id[ON_COMMENT_ID_SIZE] = {0};
@@ -1047,7 +1117,7 @@ void on_net_pump_once(void) {
     if (net.stopping || !net.response ||
         (net.view.mode == ON_NET_CLOSED && net.action != A_LEAVE &&
          !net.level_publish_requested && !net.level_fetch_requested &&
-         !net.level_list_requested && !net.account_job &&
+         !net.level_list_requested && !net.level_stat_count && !net.account_job &&
          !net.comments_requested && !net.comment_post_requested &&
          !net.comment_hide_requested && !net.ban_requested &&
          !net.official_requested)) {
@@ -1057,6 +1127,7 @@ void on_net_pump_once(void) {
     publish_gen = net.level_publish_generation;
     account_gen = net.account_generation;
     memcpy(player, net.player_id, sizeof(player));
+    memcpy(client_id, net.catalog_client_id, sizeof(client_id));
     if (net.account_job) {
         task = net.account_job == ACCOUNT_SIGN_IN ? T_SIGN_IN :
                net.account_job == ACCOUNT_CREATE ? T_CREATE_ACCOUNT : T_TOKEN_ROTATE;
@@ -1090,6 +1161,16 @@ void on_net_pump_once(void) {
         task = T_LEVEL_GET;
         memcpy(level_id, net.level_fetch_id, sizeof(level_id));
         net.level_fetch_requested = 0;
+    } else if (net.level_stat_count) {
+        task = T_LEVEL_STAT_WRITE;
+        stat_job = net.level_stat_queue[0];
+        net.level_stat_count--;
+        if (net.level_stat_count)
+            memmove(net.level_stat_queue, net.level_stat_queue + 1,
+                    (size_t)net.level_stat_count * sizeof net.level_stat_queue[0]);
+        net.level_stat_inflight = stat_job;
+        net.level_stat_inflight_valid = 1;
+        memcpy(level_id, stat_job.id, sizeof(level_id));
     } else if (net.level_list_requested) {
         task = T_LEVEL_LIST;
         net.level_list_requested = 0;
@@ -1141,9 +1222,47 @@ void on_net_pump_once(void) {
     if (task == T_COMMENT_HIDE) {comment_hide(account_gen, level_id, comment_id);return;}
     if (task == T_BAN) {account_ban(account_gen, comment_id, reason, ban_value);return;}
     if (task == T_OFFICIAL) {level_set_official(account_gen, level_id, official_value);return;}
-
     char path[96], body[256];
     int code;
+    if (task == T_LEVEL_STAT_WRITE) {
+        const char *kind = stat_job.kind == 1 ? "likes" : "downloads";
+        snprintf(path, sizeof path, "level-stats/%s/%s/%s.json",
+                 level_id, kind, client_id);
+        code = stat_job.value ? request(path, "PUT", "true", "null_etag") :
+                                request(path, "DELETE", NULL, NULL);
+        if (code == 412 && stat_job.kind == 2) code = 200;
+        pthread_mutex_lock(&mu);
+        if (net.level_stat_inflight_valid &&
+            net.level_stat_inflight.kind == stat_job.kind &&
+            !strcmp(net.level_stat_inflight.id, stat_job.id))
+            net.level_stat_inflight_valid = 0;
+        if (code == 200) {
+            for (int i = 0; i < net.view.level_count; ++i) {
+                OnPublishedLevelSummary *summary = &net.view.levels[i];
+                if (strcmp(summary->id, stat_job.id)) continue;
+                if (stat_job.kind == 1) {
+                    if (summary->liked != stat_job.value) {
+                        if (stat_job.value && summary->likes < UINT_MAX) ++summary->likes;
+                        else if (!stat_job.value && summary->likes) --summary->likes;
+                    }
+                    summary->liked = stat_job.value;
+                } else if (stat_job.value && !summary->downloaded) {
+                    if (summary->downloads < UINT_MAX) ++summary->downloads;
+                    summary->downloaded = 1;
+                }
+                break;
+            }
+        } else {
+            snprintf(net.view.levels_notice, sizeof net.view.levels_notice,
+                     "Не удалось обновить статистику уровня.");
+        }
+        net.level_list_requested = 1;
+        net.view.levels_busy = 1;
+        net.level_generation++;
+        pthread_mutex_unlock(&mu);
+        return;
+    }
+
     if (task == T_LEVEL_LIST) {
         code = request("levels-index.json", "GET", NULL, NULL);
         if (code != 200) {
@@ -1159,6 +1278,11 @@ void on_net_pump_once(void) {
         }
         OnPublishedLevelSummary levels[ON_LEVEL_LIST_CAP];
         int count = on_protocol_level_index(net.response, levels, ON_LEVEL_LIST_CAP);
+        if (count >= 0) {
+            int stats_code = request("level-stats.json", "GET", NULL, NULL);
+            if (stats_code == 200)
+                (void)on_protocol_level_stats(net.response, levels, count, client_id);
+        }
         pthread_mutex_lock(&mu);
         if (level_gen == net.level_generation) {
             net.view.levels_busy = 0;
@@ -1198,7 +1322,9 @@ void on_net_pump_once(void) {
                     "Не удалось загрузить уровень. Проверь интернет.");
             }
         }
-        pthread_mutex_unlock(&mu);compact_response();return;
+        pthread_mutex_unlock(&mu);compact_response();
+        if (valid) on_net_level_download(level_id);
+        return;
     }
     if (task == T_REFRESH) {on_net_refresh();return;}
     if (task == T_LIST) {

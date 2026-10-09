@@ -38,7 +38,7 @@ static const wchar_t *firebase_host(void) {
 
 static int safe_path(const char *path) {
     static const char *const roots[] = {"rooms", "levels", "levels-index",
-        "accounts", "tokens", "admins", "bans", "comments"};
+        "level-stats", "accounts", "tokens", "admins", "bans", "comments"};
     if (!path) return 0;
     int allowed = 0;
     for (size_t i = 0; i < sizeof roots / sizeof roots[0]; ++i) {

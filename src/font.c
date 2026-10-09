@@ -234,6 +234,8 @@ static const FontTranslation translations[] = {
      "Message not found. Refresh the list."},
     {"База не приняла аккаунт. Проверь правила Firebase.",
      "The database refused the account. Check the Firebase rules."},
+    {"Не удалось обновить статистику уровня.",
+     "Couldn't update the level statistics."},
     {"База не приняла сообщение. Возможно, ник забанен.",
      "The database refused the message. The nickname may be banned."},
     {"Скрыть сообщение может только его автор или модератор.",

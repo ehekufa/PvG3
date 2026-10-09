@@ -102,7 +102,7 @@ static void test_legacy_preferences_migration(void) {
     file = fopen(path, "rb");assert(file);
     char saved[96] = {0};
     assert(fgets(saved, sizeof saved, file));
-    assert(strcmp(saved, "PVG3-PREFERENCES 3\n") == 0);
+    assert(strcmp(saved, "PVG3-PREFERENCES 4\n") == 0);
     assert(fclose(file) == 0);
     preferences_set_path(NULL);
     assert(remove(path) == 0);

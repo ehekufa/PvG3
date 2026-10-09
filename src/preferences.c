@@ -5,8 +5,9 @@
 #include <string.h>
 
 #define PREFERENCES_PATH_CAP 4096
-#define PREFERENCES_VERSION 3
+#define PREFERENCES_VERSION 4
 #define PREFERENCES_LOGIN_CAP 25
+#define PREFERENCES_CLIENT_ID_CAP 33
 #define PREFERENCES_SECRET_CAP 65
 
 /* The options file is written from the UI thread and, since accounts arrived,
@@ -21,6 +22,7 @@ static char preferences_path[PREFERENCES_PATH_CAP];
 static char account_login[PREFERENCES_LOGIN_CAP];
 static char account_token[PREFERENCES_SECRET_CAP];
 static char account_hash[PREFERENCES_SECRET_CAP];
+static char catalog_client_id[PREFERENCES_CLIENT_ID_CAP];
 static int account_admin;
 
 static int is_hex64(const char *value) {
@@ -41,6 +43,13 @@ static int is_login(const char *value) {
     }
     return 1;
 }
+static int is_client_id(const char *value) {
+    if (!value || strlen(value) != 32) return 0;
+    for (int i = 0; i < 32; ++i)
+        if (!((value[i] >= '0' && value[i] <= '9') ||
+              (value[i] >= 'a' && value[i] <= 'f'))) return 0;
+    return 1;
+}
 
 static void save_preferences(void) {
     char temporary[PREFERENCES_PATH_CAP + 8];
@@ -59,10 +68,11 @@ static void save_preferences(void) {
     }
     int ok = fprintf(file,
         "PVG3-PREFERENCES %d\nmusic=%d\nneutral_background=%d\ntutorial_hints=%d\n"
-        "account_login=%s\naccount_token=%s\naccount_hash=%s\naccount_admin=%d\n",
+        "account_login=%s\naccount_token=%s\naccount_hash=%s\naccount_admin=%d\n"
+        "catalog_client_id=%s\n",
         PREFERENCES_VERSION, music_enabled, neutral_background_enabled,
         tutorial_hints_enabled, account_login, account_token, account_hash,
-        account_admin ? 1 : 0) > 0;
+        account_admin ? 1 : 0, catalog_client_id) > 0;
     if (fclose(file) != 0) ok = 0;
     if (ok) {
         remove(preferences_path);
@@ -102,6 +112,7 @@ void preferences_set_path(const char *path) {
     neutral_background_enabled = 0;
     tutorial_hints_enabled = 0;
     account_login[0] = account_token[0] = account_hash[0] = 0;
+    catalog_client_id[0] = 0;
     account_admin = 0;
     pthread_mutex_unlock(&preferences_lock);
     FILE *file = fopen(preferences_path, "rb");
@@ -116,6 +127,7 @@ void preferences_set_path(const char *path) {
     }
     char login[PREFERENCES_LOGIN_CAP] = {0}, token[PREFERENCES_SECRET_CAP] = {0};
     char hash[PREFERENCES_SECRET_CAP] = {0};
+    char client_id[PREFERENCES_CLIENT_ID_CAP] = {0};
     int admin = 0;
     while (fgets(line, sizeof line, file)) {
         if (!strncmp(line, "music=", 6) &&
@@ -134,6 +146,9 @@ void preferences_set_path(const char *path) {
             if (!strncmp(line, "account_admin=", 14) &&
                 (line[14] == '0' || line[14] == '1'))
                 admin = line[14] == '1';
+            if (version >= 4)
+                (void)read_value(line, "catalog_client_id=", client_id,
+                                 sizeof client_id);
         }
     }
     fclose(file);
@@ -148,6 +163,10 @@ void preferences_set_path(const char *path) {
         account_login[0] = account_token[0] = account_hash[0] = 0;
         account_admin = 0;
     }
+    if (is_client_id(client_id))
+        memcpy(catalog_client_id, client_id, sizeof catalog_client_id);
+    else
+        catalog_client_id[0] = 0;
     pthread_mutex_unlock(&preferences_lock);
 
     /* Version 1 defaulted to the plain background. Switch that old default to
@@ -224,6 +243,20 @@ int preferences_account_admin(void) {
     result = account_admin;
     pthread_mutex_unlock(&preferences_lock);
     return result;
+}
+int preferences_catalog_client_id(char *out, size_t cap) {
+    int result;
+    pthread_mutex_lock(&preferences_lock);
+    result = copy_out(out, cap, catalog_client_id);
+    pthread_mutex_unlock(&preferences_lock);
+    return result;
+}
+void preferences_set_catalog_client_id(const char *client_id) {
+    if (!is_client_id(client_id)) return;
+    pthread_mutex_lock(&preferences_lock);
+    memcpy(catalog_client_id, client_id, strlen(client_id) + 1);
+    pthread_mutex_unlock(&preferences_lock);
+    save_preferences();
 }
 void preferences_set_account(const char *login, const char *token,
                              const char *hash, int admin) {

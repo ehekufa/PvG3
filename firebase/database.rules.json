@@ -19,6 +19,23 @@
         ".write": "$id.matches(/^[1-9][0-9]{0,5}$/) && newData.exists() && (\n  newData.child('id').val() === $id &&\n  newData.child('title').isString() &&\n  newData.child('title').val().length > 0 &&\n  newData.child('title').val().length <= 80 &&\n  (!newData.child('description').exists() || (newData.child('description').isString() && newData.child('description').val().length <= 160)) &&\n  (!newData.child('updatedAt').exists() || newData.child('updatedAt').isNumber()) &&\n  newData.child('author').isString() &&\n  newData.child('author').val().matches(/^[a-z0-9_]{3,24}$/) &&\n  newData.child('author').val() === root.child('levels').child($id).child('author/login').val() &&\n  root.child('tokens').child(newData.child('author').val()).child('token').val() === root.child('levels').child($id).child('author/tok').val() &&\n  ((!newData.child('official').exists() && !root.child('levels').child($id).child('official').exists()) ||\n   (newData.child('official').exists() && newData.child('official').val() === root.child('levels').child($id).child('official').val()) ||\n   root.child('admins').child(newData.child('author').val()).val() === true)\n)"
       }
     },
+    "level-stats": {
+      ".read": true,
+      "$levelId": {
+        "likes": {
+          "$clientId": {
+            ".write": "$levelId.matches(/^[1-9][0-9]{0,5}$/) && $clientId.matches(/^[a-f0-9]{32}$/) && root.child('levels').child($levelId).exists() && ((data.exists() && !newData.exists()) || (!data.exists() && newData.val() === true))",
+            ".validate": "newData.isBoolean() && newData.val() === true"
+          }
+        },
+        "downloads": {
+          "$clientId": {
+            ".write": "$levelId.matches(/^[1-9][0-9]{0,5}$/) && $clientId.matches(/^[a-f0-9]{32}$/) && root.child('levels').child($levelId).exists() && !data.exists() && newData.val() === true",
+            ".validate": "newData.isBoolean() && newData.val() === true"
+          }
+        }
+      }
+    },
     "comments": {
       ".read": true,
       "$level": {

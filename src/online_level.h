@@ -21,7 +21,15 @@ static inline int on_level_is_official(const char *id, int flagged) {
 }
 #define ON_LEVEL_DESCRIPTION_SIZE 481 /* 160 UTF-16 code units, worst-case UTF-8 */
 #define ON_LEVEL_OBJECT_NAME_SIZE 145 /* 48 UTF-16 code units, worst-case UTF-8 */
-#define ON_LEVEL_LIST_CAP 24
+#define ON_LEVEL_TAG_CAP 8
+#define ON_LEVEL_TAG_SIZE 49 /* 16 UTF-16 code units, worst-case UTF-8 */
+#define ON_LEVEL_LIST_CAP 80
+
+enum { ON_LEVEL_DIFFICULTY_UNSPECIFIED, ON_LEVEL_DIFFICULTY_EASY,
+       ON_LEVEL_DIFFICULTY_NORMAL, ON_LEVEL_DIFFICULTY_HARD,
+       ON_LEVEL_DIFFICULTY_EXPERT };
+enum { ON_LEVEL_ABILITY_DOUBLE_JUMP = 1u, ON_LEVEL_ABILITY_DASH = 2u,
+       ON_LEVEL_ABILITY_WALL_SLIDE = 4u };
 /* This is a total-per-level ceiling across every object type, not a per-type
  * allowance. Keep the wire and both workshops aligned with this value. */
 #define ON_LEVEL_OBJECT_CAP 20000
@@ -46,7 +54,9 @@ enum { ON_TRIGGER_TOGGLE, ON_TRIGGER_MOVE, ON_TRIGGER_RECOLOR,
 enum { ON_TRIGGER_KIND_MOVE, ON_TRIGGER_KIND_ROTATE, ON_TRIGGER_KIND_FOREVER,
        ON_TRIGGER_KIND_INVISIBILITY, ON_TRIGGER_KIND_NO_COLLISION,
        ON_TRIGGER_KIND_GRAVITY, ON_TRIGGER_KIND_RECOLOR,
-       ON_TRIGGER_KIND_BACKGROUND };
+       ON_TRIGGER_KIND_BACKGROUND, ON_TRIGGER_KIND_COUNT,
+       ON_TRIGGER_KIND_TOGGLE, ON_TRIGGER_KIND_SPAWN };
+enum { ON_TRIGGER_TOUCH_ENTER, ON_TRIGGER_TOUCH_EXIT, ON_TRIGGER_TOUCH_STAY };
 
 typedef struct {
     char id[ON_LEVEL_ID_SIZE];
@@ -56,6 +66,11 @@ typedef struct {
     int official;
     /* Login of the account that published the level, empty for older levels. */
     char author[ON_LOGIN_SIZE];
+    int difficulty; /* ON_LEVEL_DIFFICULTY_*, 0 for unrated legacy entries */
+    int tag_count;
+    char tags[ON_LEVEL_TAG_CAP][ON_LEVEL_TAG_SIZE];
+    unsigned likes, downloads;
+    int liked, downloaded; /* this installation's votes */
 } OnPublishedLevelSummary;
 
 typedef struct {
@@ -95,12 +110,16 @@ typedef struct {
     char name[ON_LEVEL_OBJECT_NAME_SIZE];
     float x, y, w, h, angle;
     int flip_x, flip_y;
+    int layer, layer2, z_order;
+    int alpha; /* 0..100 */
+    int pulse, shake;
     uint32_t color;
     /* Objects flagged as default keep the colours of their own artwork:
      * no tint is mixed into the author's picture. */
     int color_default;
     int number, visible;
     int trigger_kind, trigger_event, trigger_action, target_id;
+    int trigger_touch_mode, trigger_count;
     float trigger_value, trigger_value_y;
     uint32_t trigger_color;
     /* A recolor/background trigger flagged as default restores the normal
@@ -122,11 +141,18 @@ typedef struct {
      * outbound write, then rotated; readers keep the public login only. */
     char author[ON_LOGIN_SIZE];
     char author_token[ON_TOKEN_SIZE];
+    int difficulty; /* ON_LEVEL_DIFFICULTY_* */
+    int tag_count;
+    char tags[ON_LEVEL_TAG_CAP][ON_LEVEL_TAG_SIZE];
+    unsigned movement_abilities; /* ON_LEVEL_ABILITY_* bitset */
     OnLevelObject objects[ON_LEVEL_OBJECT_CAP];
 } OnPublishedLevel;
 
 int on_protocol_valid_level_id(const char *id);
 int on_protocol_level_index(const char *json, OnPublishedLevelSummary *out, int cap);
+/* Merge sparse RTDB like/download child maps into already-parsed summaries. */
+int on_protocol_level_stats(const char *json, OnPublishedLevelSummary *levels,
+                            int count, const char *client_id);
 int on_protocol_published_level(const char *json, const char *expected_id,
                                 OnPublishedLevel *out);
 

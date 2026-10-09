@@ -4,20 +4,22 @@
 #define _POSIX_C_SOURCE 200809L
 #include "game.h"
 #include "online_net.h"
+#include "preferences.h"
 #ifdef PVG3_LVGL_TEST
 #include "lvgl_ui.h"
 #include "game_view.h"
 #include "font.h"
-#include "preferences.h"
 #endif
 
 #include <assert.h>
 #include <math.h>
 #include <inttypes.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #ifdef PVG3_LVGL_TEST
 #undef assert
@@ -39,6 +41,8 @@ static struct {
 } db;
 static char uploaded_level_id[ON_LEVEL_ID_SIZE];
 static char uploaded_level_body[ON_LEVEL_JSON_CAP];
+typedef struct {char level[ON_LEVEL_ID_SIZE], kind[16], client[ON_PLAYER_ID_SIZE]; int active;} FakeLevelStat;
+static FakeLevelStat level_stats[256];
 static OnPublishedLevel fake_level_record;
 static char uploaded_index_body[1024];
 static const char *FAKE_GUEST = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -152,6 +156,94 @@ static int level_child_id(const char *path, const char *root,
     memcpy(id, path + n, id_length);id[id_length] = 0;
     return on_protocol_valid_level_id(id);
 }
+static int level_stat_path(const char *path, char level[ON_LEVEL_ID_SIZE],
+                           char kind[16], char client[ON_PLAYER_ID_SIZE]) {
+    if (!path || strncmp(path, "level-stats/", 12)) return 0;
+    const char *first = path + 12, *slash = strchr(first, '/');
+    if (!slash || (size_t)(slash - first) >= ON_LEVEL_ID_SIZE) return 0;
+    memcpy(level, first, (size_t)(slash - first));
+    level[slash - first] = 0;
+    const char *second = slash + 1, *slash2 = strchr(second, '/');
+    if (!slash2 || (size_t)(slash2 - second) >= 16) return 0;
+    memcpy(kind, second, (size_t)(slash2 - second));
+    kind[slash2 - second] = 0;
+    const char *client_start = slash2 + 1;
+    size_t length = strlen(client_start);
+    if (length < 6 || strcmp(client_start + length - 5, ".json") ||
+        length - 5 >= ON_PLAYER_ID_SIZE) return 0;
+    memcpy(client, client_start, length - 5);client[length - 5] = 0;
+    return on_protocol_valid_level_id(level) &&
+        (!strcmp(kind, "likes") || !strcmp(kind, "downloads")) &&
+        on_protocol_valid_player_id(client);
+}
+static FakeLevelStat *find_level_stat(const char *level, const char *kind,
+                                      const char *client, int create) {
+    FakeLevelStat *empty = NULL;
+    for (size_t i = 0; i < sizeof level_stats / sizeof level_stats[0]; ++i) {
+        FakeLevelStat *item = &level_stats[i];
+        if (item->level[0] && !strcmp(item->level, level) &&
+            !strcmp(item->kind, kind) && !strcmp(item->client, client)) return item;
+        if (!item->level[0] && !empty) empty = item;
+    }
+    if (!create || !empty) return NULL;
+    snprintf(empty->level, sizeof empty->level, "%s", level);
+    snprintf(empty->kind, sizeof empty->kind, "%s", kind);
+    snprintf(empty->client, sizeof empty->client, "%s", client);
+    return empty;
+}
+static int stats_append(char *out, size_t cap, size_t *at,
+                        const char *format, ...) {
+    va_list args;va_start(args, format);
+    int n = vsnprintf(out + *at, cap - *at, format, args);
+    va_end(args);
+    if (n < 0 || (size_t)n >= cap - *at) return 0;
+    *at += (size_t)n;
+    return 1;
+}
+static int build_level_stats(char *out, size_t cap) {
+    static const char *const kinds[] = {"likes", "downloads"};
+    size_t at = 0;
+    int levels_written = 0;
+    if (!cap) return -1;
+    out[0] = 0;
+    if (!stats_append(out, cap, &at, "{")) return -1;
+    for (size_t i = 0; i < sizeof level_stats / sizeof level_stats[0]; ++i) {
+        const FakeLevelStat *item = &level_stats[i];
+        if (!item->active) continue;
+        int earlier_level = 0;
+        for (size_t j = 0; j < i; ++j)
+            if (level_stats[j].active && !strcmp(level_stats[j].level, item->level))
+                earlier_level = 1;
+        if (earlier_level) continue;
+        if (!stats_append(out, cap, &at,
+                          levels_written++ ? ",\"%s\":{" : "\"%s\":{",
+                          item->level)) return -1;
+        int kinds_written = 0;
+        for (size_t k = 0; k < sizeof kinds / sizeof kinds[0]; ++k) {
+            int has_kind = 0;
+            for (size_t j = 0; j < sizeof level_stats / sizeof level_stats[0]; ++j)
+                if (level_stats[j].active && !strcmp(level_stats[j].level, item->level) &&
+                    !strcmp(level_stats[j].kind, kinds[k])) has_kind = 1;
+            if (!has_kind) continue;
+            if (!stats_append(out, cap, &at,
+                              kinds_written++ ? ",\"%s\":{" : "\"%s\":{",
+                              kinds[k])) return -1;
+            int votes_written = 0;
+            for (size_t j = 0; j < sizeof level_stats / sizeof level_stats[0]; ++j) {
+                const FakeLevelStat *vote = &level_stats[j];
+                if (!vote->active || strcmp(vote->level, item->level) ||
+                    strcmp(vote->kind, kinds[k])) continue;
+                if (!stats_append(out, cap, &at,
+                                  votes_written++ ? ",\"%s\":true" : "\"%s\":true",
+                                  vote->client)) return -1;
+            }
+            if (!stats_append(out, cap, &at, "}")) return -1;
+        }
+        if (!stats_append(out, cap, &at, "}")) return -1;
+    }
+    if (!stats_append(out, cap, &at, "}")) return -1;
+    return (int)at;
+}
 /* Splits "<branch>/<key>.json" or "<branch>/<key>/<sub>.json". */
 static int branch_key(const char *path, char branch[32], char key[ON_LOGIN_SIZE],
                       char sub[ON_COMMENT_ID_SIZE + 8]) {
@@ -215,6 +307,31 @@ static int inject_field(const char *json, const char *id, const char *field,
 
 int on_http_request(const char *path, const char *method, const char *body,
                     const char *if_match, char *response, size_t cap) {
+    if (!strcmp(path, "level-stats.json") && !strcmp(method, "GET")) {
+        int any = 0;
+        for (size_t i = 0; i < sizeof level_stats / sizeof level_stats[0]; ++i)
+            any |= level_stats[i].active;
+        if (!any) return answer(response, cap, "null", 200);
+        char json[32768];
+        int length = build_level_stats(json, sizeof json);
+        return length > 0 ? answer(response, cap, json, 200) : -2;
+    }
+    char stat_level[ON_LEVEL_ID_SIZE], stat_kind[16], stat_client[ON_PLAYER_ID_SIZE];
+    if (level_stat_path(path, stat_level, stat_kind, stat_client)) {
+        FakeLevelStat *item = find_level_stat(stat_level, stat_kind, stat_client,
+                                               !strcmp(method, "PUT"));
+        if (!strcmp(method, "PUT")) {
+            if (!item) return answer(response, cap, "null", 507);
+            if (if_match && !strcmp(if_match, "null_etag") && item->active)
+                return answer(response, cap, "null", 412);
+            item->active = body && !strcmp(body, "true");
+            return answer(response, cap, "true", 200);
+        }
+        if (!strcmp(method, "DELETE")) {
+            if (item) item->active = 0;
+            return answer(response, cap, "null", 200);
+        }
+    }
     if (!strcmp(path, "levels-index.json") && !strcmp(method, "GET")) {
         char index_body[4096];
         if (!uploaded_index_body[0])
@@ -499,6 +616,61 @@ static void sample_level(OnPublishedLevel *level) {
     level->objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
         .x=14,.y=6,.w=1,.h=2,.color=0xffffffu,.visible=1};
     snprintf(level->objects[2].name, sizeof level->objects[2].name, "%s", "Финиш");
+}
+static void stable_catalog_client_id_preferences(void) {
+    char path[] = "/tmp/pvg3-catalog-preferences-XXXXXX";
+    int fd = mkstemp(path);assert(fd >= 0);close(fd);
+    const char *expected = "0123456789abcdef0123456789abcdef";
+    char id[ON_PLAYER_ID_SIZE] = {0};
+    preferences_set_path(path);
+    preferences_set_catalog_client_id(expected);
+    assert(preferences_catalog_client_id(id, sizeof id) && !strcmp(id, expected));
+    preferences_set_path(path);
+    memset(id, 0, sizeof id);
+    assert(preferences_catalog_client_id(id, sizeof id) && !strcmp(id, expected));
+    preferences_set_path(NULL);
+    unlink(path);
+}
+static OnPublishedLevelSummary *catalog_level(OnNetView *snapshot, const char *id) {
+    for (int i = 0; i < snapshot->level_count; ++i)
+        if (!strcmp(snapshot->levels[i].id, id)) return &snapshot->levels[i];
+    return NULL;
+}
+static void catalog_stats_round_trip(void) {
+    on_net_open();
+    on_net_levels_refresh();tick_pump(1);
+    OnNetView snapshot = view();
+    assert(snapshot.level_count >= 2 && !snapshot.levels_busy);
+    OnPublishedLevelSummary *summary = catalog_level(&snapshot, "104");
+    assert(summary && summary->likes == 0 && summary->downloads == 0 &&
+           !summary->liked && !summary->downloaded);
+    on_net_level_like("104");on_net_level_like("104");
+    tick_pump(1);on_net_levels_refresh();tick_pump(1);
+    snapshot = view();summary = catalog_level(&snapshot, "104");
+    assert(summary && summary->likes == 0 && !summary->liked);
+
+    on_net_level_fetch("104");tick_pump(1);
+    snapshot = view();
+    assert(snapshot.level_loaded && !strcmp(snapshot.loaded_level_id, "104"));
+    tick_pump(1); /* successful fetch queues an installation-unique download */
+    on_net_levels_refresh();tick_pump(1);
+    snapshot = view();summary = catalog_level(&snapshot, "104");
+    assert(summary && summary->downloads == 1 && summary->downloaded);
+
+    on_net_level_download("104");tick_pump(1); /* repeat is idempotent */
+    on_net_levels_refresh();tick_pump(1);
+    snapshot = view();summary = catalog_level(&snapshot, "104");
+    assert(summary && summary->downloads == 1 && summary->downloaded);
+
+    on_net_level_like("104");tick_pump(1);
+    on_net_levels_refresh();tick_pump(1);
+    snapshot = view();summary = catalog_level(&snapshot, "104");
+    assert(summary && summary->likes == 1 && summary->liked);
+    on_net_level_like("104");tick_pump(1);
+    on_net_levels_refresh();tick_pump(1);
+    snapshot = view();summary = catalog_level(&snapshot, "104");
+    assert(summary && summary->likes == 0 && !summary->liked);
+    on_net_close();
 }
 static void large_level_transport_round_trip(void) {
     static OnPublishedLevel source, loaded;
@@ -2431,8 +2603,10 @@ int main(void) {
                        v.state.coin_count == 0);
     game_input_press(1151, 49);tick_pump(2);
     game_input_press(1140, 50);isolate_saves(before, after, size);
+    stable_catalog_client_id_preferences();
+    catalog_stats_round_trip();
     large_level_transport_round_trip();
     on_net_shutdown();
-    puts("Native Firebase REST host/guest, both roles, coins, ACK and offline saves passed");
+    puts("Native Firebase REST host/guest, catalog statistics, both roles, coins, ACK and offline saves passed");
     return 0;
 }

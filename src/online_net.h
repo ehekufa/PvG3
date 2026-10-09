@@ -52,6 +52,9 @@ void on_net_view(OnNetView *out);
 void on_net_refresh(void);
 void on_net_levels_refresh(void);
 void on_net_level_fetch(const char *id);
+/* A catalog like is toggleable; a unique install records one download. */
+void on_net_level_like(const char *id);
+void on_net_level_download(const char *id);
 /* Explicit native-workshop action: creates a new public level and index entry. */
 int on_net_level_publish(const OnPublishedLevel *level);
 void on_net_level_cancel(void);
