@@ -53,8 +53,15 @@ void game_custom_control(int horizontal, int jump, int trigger);
 /* Jetpack-only held axis: +1 ascends, -1 descends, 0 hovers in place. */
 void game_custom_vertical_control(int vertical);
 int game_custom_jetpack_mode(void);
-/* A fall is terminal for the current level; leave it through the level-list button. */
-int game_custom_player_dead(void);
+/* Dash is a press-edge action, separate from the trigger/action button. */
+void game_custom_dash_control(int dash);
+typedef struct {
+    int active, progress_percent, attempts, coins, total_coins, won;
+    unsigned movement_abilities; /* ON_LEVEL_ABILITY_* bitset */
+    float elapsed_seconds;
+} GameCustomHudSnapshot;
+/* Thread-safe-style value snapshot for native HUDs/tests; out may be NULL. */
+void game_custom_hud_snapshot(GameCustomHudSnapshot *out);
 
 /* The native platformer workshop is a separate editor from the public catalog. */
 void game_workshop_open(void);
@@ -117,6 +124,10 @@ float game_debug_custom_player_y(void);
 float game_debug_custom_player_vx(void);
 float game_debug_custom_player_vy(void);
 int game_debug_custom_player_grounded(void);
+int game_debug_custom_jump_count(void);
+int game_debug_custom_dash_active(void);
+int game_debug_custom_trigger_count(int id);
+int game_debug_custom_trigger_inside(int id);
 int game_debug_custom_player_facing_left(void);
 float game_debug_custom_gravity(void);
 uint32_t game_debug_custom_background_color(void);

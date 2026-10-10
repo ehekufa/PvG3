@@ -51,6 +51,205 @@ static void workshop_navigation_and_preview(void) {
     game_custom_level_exit();assert(game_phase() == GAME_MENU);
 }
 
+static void custom_test_base_level(OnPublishedLevel *level) {
+    memset(level, 0, sizeof *level);
+    snprintf(level->id, sizeof level->id, "%s", "900001");
+    snprintf(level->title, sizeof level->title, "%s", "Custom runtime regression");
+    level->width = 16;level->height = 10;level->object_count = 3;
+    level->objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+        .x=0,.y=8,.w=16,.h=2,.visible=1,.number=3};
+    level->objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
+        .x=1,.y=7.15f,.w=.65f,.h=.85f,.visible=1,.number=1};
+    level->objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
+}
+
+static void custom_manual_action_press(void) {
+    game_custom_control(0, 0, 1);
+    game_tick(.01f, NULL);
+    game_custom_control(0, 0, 0);
+    game_tick(.01f, NULL);
+}
+
+static void custom_runtime_debug_and_abilities(void) {
+    static OnPublishedLevel level;
+    OnLevelObject target;
+    game_init();
+    game_workshop_open();game_workshop_open_details();game_workshop_open_editor();
+
+    /* Count increments once per action edge and runs its group action at the
+     * configured threshold, then remains latched. */
+    custom_test_base_level(&level);
+    level.object_count = 5;
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_BLOCK,
+        .x=6,.y=6,.w=1,.h=1,.visible=0,.number=42};
+    level.objects[4] = (OnLevelObject){.id=50,.type=ON_LEVEL_TRIGGER,
+        .x=100,.y=100,.w=1,.h=1,.visible=1,
+        .trigger_kind=ON_TRIGGER_KIND_COUNT,.trigger_event=ON_TRIGGER_MANUAL,
+        .trigger_action=ON_TRIGGER_TOGGLE,.trigger_group_id=42,
+        .trigger_has_group=1,.trigger_count=3};
+    assert(game_workshop_preview(&level));
+    assert(game_debug_custom_trigger_count(50) == 0 &&
+           game_debug_custom_trigger_inside(50) == 0 &&
+           game_debug_custom_trigger_count(999) == 0 &&
+           game_debug_custom_trigger_inside(999) == 0);
+    custom_manual_action_press();
+    assert(game_debug_custom_trigger_count(50) == 1 &&
+           game_debug_custom_object(4, &target) && !target.visible);
+    custom_manual_action_press();
+    assert(game_debug_custom_trigger_count(50) == 2 &&
+           game_debug_custom_object(4, &target) && !target.visible);
+    custom_manual_action_press();
+    assert(game_debug_custom_trigger_count(50) == 3 &&
+           game_debug_custom_object(4, &target) && target.visible);
+    custom_manual_action_press();
+    assert(game_debug_custom_trigger_count(50) == 3 &&
+           game_debug_custom_object(4, &target) && target.visible);
+    game_custom_level_exit();
+    assert(game_debug_custom_trigger_count(50) == 0 &&
+           game_debug_custom_trigger_inside(50) == 0);
+
+    /* Toggle and Spawn operate on grouped objects in the native runtime. */
+    custom_test_base_level(&level);
+    level.object_count = 5;
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_BLOCK,
+        .x=6,.y=6,.w=1,.h=1,.visible=1,.number=42};
+    level.objects[4] = (OnLevelObject){.id=51,.type=ON_LEVEL_TRIGGER,
+        .x=100,.y=100,.w=1,.h=1,.visible=1,
+        .trigger_kind=ON_TRIGGER_KIND_TOGGLE,.trigger_event=ON_TRIGGER_MANUAL,
+        .trigger_action=ON_TRIGGER_TOGGLE,.trigger_group_id=42,
+        .trigger_has_group=1};
+    assert(game_workshop_preview(&level));
+    custom_manual_action_press();
+    assert(game_debug_custom_object(4, &target) && !target.visible);
+    custom_manual_action_press();
+    assert(game_debug_custom_object(4, &target) && target.visible);
+    game_custom_level_exit();
+
+    level.objects[3].visible = 0;
+    level.objects[4].id = 52;
+    level.objects[4].trigger_kind = ON_TRIGGER_KIND_SPAWN;
+    assert(game_workshop_preview(&level));
+    custom_manual_action_press();
+    assert(game_debug_custom_object(4, &target) && target.visible);
+    game_custom_level_exit();
+
+    /* Touch-inside reports the live contact state and clears after leaving. */
+    level.objects[4].id = 53;
+    level.objects[4].x = 1;level.objects[4].y = 7.15f;
+    level.objects[4].trigger_event = ON_TRIGGER_TOUCH;
+    level.objects[4].trigger_touch_mode = ON_TRIGGER_TOUCH_ENTER;
+    assert(game_workshop_preview(&level));
+    game_tick(.02f, NULL);
+    assert(game_debug_custom_trigger_inside(53) == 1 &&
+           game_debug_custom_trigger_inside(999) == 0);
+    game_custom_control(1, 0, 0);
+    for (int i = 0; i < 12; ++i) game_tick(.05f, NULL);
+    game_custom_control(0, 0, 0);
+    assert(game_debug_custom_trigger_inside(53) == 0);
+    game_custom_level_exit();
+
+    /* The native debug hooks expose both jumps, edge-triggered dash lifetime,
+     * and clean state after leaving the preview. */
+    custom_test_base_level(&level);
+    level.movement_abilities = ON_LEVEL_ABILITY_DOUBLE_JUMP |
+                               ON_LEVEL_ABILITY_DASH;
+    assert(game_workshop_preview(&level));
+    game_tick(.05f, NULL);
+    assert(game_debug_custom_player_grounded());
+    assert(game_debug_custom_jump_count() == 0 &&
+           game_debug_custom_dash_active() == 0);
+    game_custom_control(0, 1, 0);game_tick(.01f, NULL);
+    assert(game_debug_custom_jump_count() == 1);
+    game_custom_control(0, 0, 0);game_tick(.01f, NULL);
+    game_custom_control(0, 1, 0);game_tick(.01f, NULL);
+    assert(game_debug_custom_jump_count() == 2);
+    game_custom_control(0, 0, 0);game_tick(.01f, NULL);
+    game_custom_control(0, 1, 0);game_tick(.01f, NULL);
+    assert(game_debug_custom_jump_count() == 2);
+    game_custom_control(0, 0, 0);
+    game_custom_dash_control(1);game_tick(.01f, NULL);
+    assert(game_debug_custom_dash_active());
+    game_custom_dash_control(0);game_tick(.05f, NULL);
+    assert(game_debug_custom_dash_active());
+    game_custom_level_exit();
+    assert(game_debug_custom_jump_count() == 0 &&
+           game_debug_custom_dash_active() == 0);
+
+    /* Wall-slide limits downward speed only while a wall is held. */
+    custom_test_base_level(&level);
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+        .x=0,.y=20,.w=16,.h=1,.visible=1,.number=3};
+    level.objects[1].x = 2.25f;level.objects[1].y = 1;
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_BLOCK,
+        .x=3,.y=0,.w=1,.h=15,.visible=1,.number=42};
+    level.object_count = 4;
+    level.movement_abilities = ON_LEVEL_ABILITY_WALL_SLIDE;
+    assert(game_workshop_preview(&level));
+    game_custom_control(1, 0, 0);
+    for (int i = 0; i < 10; ++i) game_tick(.05f, NULL);
+    assert(game_debug_custom_player_vy() > 0 &&
+           game_debug_custom_player_vy() <= 140.01f);
+    game_custom_control(0, 0, 0);game_custom_level_exit();
+    level.movement_abilities = 0;
+    assert(game_workshop_preview(&level));
+    game_custom_control(1, 0, 0);
+    for (int i = 0; i < 10; ++i) game_tick(.05f, NULL);
+    assert(game_debug_custom_player_vy() > 140.0f);
+    game_custom_control(0, 0, 0);game_custom_level_exit();
+}
+
+static void custom_hud_snapshot_runtime(void) {
+    static OnPublishedLevel level;
+    GameCustomHudSnapshot hud;
+    game_workshop_open();game_workshop_open_details();game_workshop_open_editor();
+    custom_test_base_level(&level);
+    level.movement_abilities = ON_LEVEL_ABILITY_DOUBLE_JUMP |
+                               ON_LEVEL_ABILITY_DASH;
+    level.object_count = 4;
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_COIN,
+        .x=3,.y=7.2f,.w=.45f,.h=.5f,.visible=1};
+    assert(game_workshop_preview(&level));
+    game_custom_hud_snapshot(NULL);
+    game_custom_hud_snapshot(&hud);
+    assert(hud.active && hud.attempts == 1 && hud.coins == 0 &&
+           hud.total_coins == 1 && !hud.won && hud.progress_percent == 0 &&
+           hud.elapsed_seconds == 0.0f &&
+           hud.movement_abilities == level.movement_abilities);
+
+    game_custom_control(1, 0, 0);
+    for (int i = 0; i < 45; ++i) game_tick(.05f, NULL);
+    game_custom_hud_snapshot(&hud);
+    assert(hud.active && hud.attempts == 1 && hud.coins == 1 &&
+           hud.total_coins == 1 && hud.progress_percent > 0 &&
+           hud.elapsed_seconds >= 2.0f && hud.elapsed_seconds <= 2.25f);
+    for (int i = 0; i < 300 && !hud.won; ++i) {
+        game_tick(.05f, NULL);
+        game_custom_hud_snapshot(&hud);
+    }
+    assert(hud.won && hud.progress_percent == 100 && hud.attempts == 1 &&
+           hud.coins == 1 && hud.total_coins == 1);
+    game_custom_level_exit();
+    game_custom_hud_snapshot(&hud);
+    assert(!hud.active && !hud.progress_percent && !hud.attempts &&
+           !hud.coins && !hud.total_coins && !hud.won &&
+           hud.elapsed_seconds == 0.0f && !hud.movement_abilities);
+
+    /* A fall is a new attempt, not a new level or a reset of elapsed time. */
+    level.objects[0].visible = 0;
+    assert(game_workshop_preview(&level));
+    game_custom_hud_snapshot(&hud);
+    assert(hud.active && hud.attempts == 1 && hud.total_coins == 1);
+    for (int i = 0; i < 40; ++i) {
+        game_tick(.05f, NULL);
+        game_custom_hud_snapshot(&hud);
+        if (hud.attempts > 1) break;
+    }
+    assert(hud.active && hud.attempts == 2 && hud.elapsed_seconds > .5f &&
+           hud.coins == 0 && hud.total_coins == 1 && !hud.won);
+    game_custom_level_exit();
+}
+
 static void custom_level_runtime(void) {
     fake_online_set_levels_enabled(1);
     game_init();
@@ -717,6 +916,8 @@ int main(void) {
     assert(game_phase() == GAME_PLAY && game_level() == 1);
 
     workshop_navigation_and_preview();
+    custom_runtime_debug_and_abilities();
+    custom_hud_snapshot_runtime();
     custom_level_runtime();
     puts("OK: campaign, workshop preview, native level catalog/runtime, touch movement, saves and Cyrillic font");
     return 0;

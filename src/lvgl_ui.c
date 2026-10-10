@@ -27,8 +27,9 @@
 #define MUTED C(5D7287)
 #define BUTTON_WHITE C(FFFDF8)
 #define BUTTON_GRAY C(DCE8EF)
-#define BUTTON_BLACK C(243B52)
-#define BUTTON_TEXT C(243B52)
+/* Buttons are true black: the old navy read as «bluish-black» on phones. */
+#define BUTTON_BLACK C(000000)
+#define BUTTON_TEXT C(000000)
 #define BUTTON_LIGHT_TEXT C(FFFDF8)
 #define WS_BACKGROUND C(172C40)
 #define WS_GRID C(344B60)
@@ -74,16 +75,32 @@ enum {
     U_WORKSHOP_TRIGGER_EVENT_PREV, U_WORKSHOP_TRIGGER_EVENT_NEXT,
     U_WORKSHOP_TRIGGER_GROUP_EDIT, U_WORKSHOP_TRIGGER_X_EDIT,
     U_WORKSHOP_TRIGGER_Y_EDIT, U_WORKSHOP_TRIGGER_DURATION_EDIT,
+    U_WORKSHOP_TRIGGER_COUNT_EDIT, U_WORKSHOP_TRIGGER_TOUCH_MODE,
+    U_WORKSHOP_ALPHA_DEC, U_WORKSHOP_ALPHA_INC,
+    U_WORKSHOP_PULSE_TOGGLE, U_WORKSHOP_SHAKE_TOGGLE,
+    U_CATALOG_SEARCH, U_CATALOG_DIFFICULTY, U_CATALOG_TAG, U_CATALOG_SORT,
+    U_CUSTOM_LIKE,
     U_WORKSHOP_TRIGGER_ACTION,
     U_WORKSHOP_PARTICLE_PANEL,
+    U_WORKSHOP_COLOR_DEFAULT,
     U_LEVEL_BASE = 100, U_ROOM_BASE = 200, U_KEY_BASE = 300,
     U_BOOK_ENTRY_BASE = 700, U_CUSTOM_LEVEL_BASE = 900,
+    U_COMMENT_HIDE_BASE = 940, U_COMMENT_BAN_BASE = 960,
+    /* Accounts, comments and moderation in the level catalog. They live on
+     * their own base so the shared workshop codes keep their values. */
+    U_CATALOG_BASE = 1600, U_CUSTOM_SELECT, U_CUSTOM_PLAY,
+    U_CUSTOM_DESELECT, U_CUSTOM_OFFICIAL, U_CATALOG_SEARCH_CLEAR,
+    U_ACCOUNT_OPEN, U_ACCOUNT_CLOSE, U_ACCOUNT_SIGN_IN, U_ACCOUNT_CREATE,
+    U_ACCOUNT_SIGN_OUT, U_ACCOUNT_LOGIN_FIELD, U_ACCOUNT_PASSWORD_FIELD,
+    U_ACCOUNT_BAN_NICK, U_ACCOUNT_BAN, U_ACCOUNT_UNBAN,
+    U_COMMENTS_OPEN, U_COMMENT_CLOSE, U_COMMENT_WRITE, U_COMMENT_SEND,
+    U_COMMENT_BAN_AUTHOR,
     U_WORKSHOP_CELL_BASE = 1200,
     U_WORKSHOP_PALETTE_BASE = 1400, U_WORKSHOP_COLOR_BASE = 1420,
     U_WORKSHOP_LAYER_BASE = 1450, U_WORKSHOP_LOCK_X_BASE = 1460,
     U_WORKSHOP_LOCK_Y_BASE = 1470, U_WORKSHOP_COLOR_SET_BASE = 1480,
     U_WORKSHOP_BLOCK_VARIANT_BASE = 1490,
-    U_WORKSHOP_TRIGGER_BASE = 1500, U_WORKSHOP_PAN_BASE = 1510,
+    U_WORKSHOP_TRIGGER_BASE = 1500, U_WORKSHOP_PAN_BASE = 1512,
     U_WORKSHOP_NUDGE_BASE = 1520, U_WORKSHOP_SCALE_BASE = 1530,
     U_WORKSHOP_ROTATE_BASE = 1540, U_WORKSHOP_FLIP_BASE = 1550,
     U_WORKSHOP_ORB_VARIANT_BASE = 1560,
@@ -92,7 +109,7 @@ enum {
     U_WORKSHOP_PORTAL_VARIANT_BASE = 1590,
     U_SETTINGS_OPEN = 1700, U_SETTINGS_CLOSE, U_SETTINGS_LANG_RU,
     U_SETTINGS_LANG_EN, U_SETTINGS_MUSIC_TOGGLE,
-    U_SETTINGS_BG_NEUTRAL, U_SETTINGS_BG_ART
+    U_SETTINGS_BG_NEUTRAL, U_SETTINGS_BG_ART, U_TUTORIAL_TOGGLE
 };
 
 static lv_display_t *display;
@@ -109,7 +126,7 @@ static int settings_open;
 static int custom_level_page;
 static int pointer_down, captured, touch_x, touch_y, dirty;
 #define CUSTOM_TOUCH_MAX 10
-typedef struct {int id, active, axis, jump, up, down, trigger;} CustomTouch;
+typedef struct {int id, active, axis, jump, up, down, trigger, dash;} CustomTouch;
 static CustomTouch custom_touches[CUSTOM_TOUCH_MAX];
 /* A packet is dragged over the author's board. LVGL draws the packet and its
  * ghost; game.c still validates the drop, so invalid water/occupied cells and
@@ -122,13 +139,22 @@ static uint32_t view_sig;
 static char search_code[ON_ROOM_ID_SIZE], local_notice[110];
 static char visible_ids[8][ON_ROOM_ID_SIZE];
 static char visible_level_ids[8][ON_LEVEL_ID_SIZE];
+static int visible_level_indices[8];
+static char catalog_search[65];
+static int catalog_filter_difficulty = ON_LEVEL_DIFFICULTY_UNSPECIFIED;
+static int catalog_filter_tag = -1, catalog_sort_mode;
 
 enum { WS_TOOL_BUILD, WS_TOOL_EDIT, WS_TOOL_MULTI, WS_TOOL_DELETE };
 enum { WS_DIALOG_NONE, WS_DIALOG_MOVE, WS_DIALOG_GROUP, WS_DIALOG_COLOR,
        WS_DIALOG_TRIGGER, WS_DIALOG_TRANSFORM, WS_DIALOG_PARTICLE };
+/* The account and comment fields borrow the workshop keyboard, so they sit
+ * before the numeric kinds: everything from WS_INPUT_TRIGGER_GROUP on is
+ * parsed as a number. */
 enum { WS_INPUT_NONE, WS_INPUT_TITLE, WS_INPUT_DESCRIPTION,
+       WS_INPUT_ACCOUNT_LOGIN, WS_INPUT_ACCOUNT_PASSWORD,
+       WS_INPUT_ACCOUNT_BAN_NICK, WS_INPUT_COMMENT, WS_INPUT_CATALOG_SEARCH,
        WS_INPUT_TRIGGER_GROUP, WS_INPUT_TRIGGER_X, WS_INPUT_TRIGGER_Y,
-       WS_INPUT_TRIGGER_DURATION, WS_INPUT_OBJECT_WIDTH,
+       WS_INPUT_TRIGGER_DURATION, WS_INPUT_TRIGGER_COUNT, WS_INPUT_OBJECT_WIDTH,
        WS_INPUT_OBJECT_HEIGHT, WS_INPUT_OBJECT_ANGLE };
 enum { WS_GRID_COLS = 16, WS_GRID_ROWS = 10,
        WS_GRID_ORIGIN_X = 44, WS_GRID_ORIGIN_Y = 132, WS_GRID_CELL_SIZE = 42,
@@ -138,13 +164,18 @@ enum { WS_SLIDER_MOVE_X, WS_SLIDER_MOVE_Y, WS_SLIDER_MOVE_TIME,
        WS_SLIDER_PARTICLE_LIFETIME, WS_SLIDER_PARTICLE_SPEED,
        WS_SLIDER_PARTICLE_SPREAD, WS_SLIDER_PARTICLE_SIZE,
        WS_SLIDER_PARTICLE_DIRECTION, WS_SLIDER_PARTICLE_GRAVITY };
+typedef struct {int index, sort_id, layer, layer2, z_order;} WorkshopDrawItem;
+static WorkshopDrawItem workshop_draw_items[WS_OBJECT_CAP + 3];
 typedef struct {
     int type;
     float x, y, w, h, angle;
     int flip_x, flip_y;
     int group_id, layer, layer2, z_order;
-    int color_set, color_index, trigger_kind;
+    int alpha, pulse, shake;
+    /* color_default keeps the author's own picture: no tint is mixed in. */
+    int color_set, color_index, color_default, trigger_kind;
     int trigger_event, trigger_action, trigger_group_id;
+    int trigger_touch_mode, trigger_count;
     int trigger_x, trigger_y, trigger_duration, trigger_gravity;
     OnLevelParticle emitter;
 } WorkshopObject;
@@ -158,6 +189,7 @@ static uint8_t workshop_selected_flags[WS_OBJECT_CAP];
 static lv_obj_t *workshop_particle_preview_dots[ON_LEVEL_PARTICLE_MAX_VISIBLE];
 static lv_obj_t *workshop_particle_preview_glows[ON_LEVEL_PARTICLE_MAX_VISIBLE];
 static float workshop_particle_preview_time;
+static float workshop_effect_preview_time;
 /* Shared scratch avoids a multi-megabyte OnPublishedLevel on the UI stack. */
 static OnPublishedLevel workshop_preview_level;
 static int workshop_object_count, workshop_selected = -1;
@@ -177,21 +209,44 @@ static float workshop_player_x = 1, workshop_player_y = 7,
              workshop_player_w = .65f, workshop_player_h = .85f,
              workshop_player_angle;
 static int workshop_player_flip_x, workshop_player_flip_y;
+static int workshop_player_group_id = 1, workshop_player_layer,
+           workshop_player_layer2, workshop_player_z_order;
+static int workshop_player_alpha = 100, workshop_player_pulse, workshop_player_shake;
 static float workshop_goal_x = 14, workshop_goal_y = 6,
              workshop_goal_w = 1, workshop_goal_h = 2, workshop_goal_angle;
 static int workshop_goal_flip_x, workshop_goal_flip_y;
+static int workshop_goal_group_id = 2, workshop_goal_layer,
+           workshop_goal_layer2, workshop_goal_z_order;
+static int workshop_goal_alpha = 100, workshop_goal_pulse, workshop_goal_shake;
+static int workshop_ground_group_id = 3, workshop_ground_layer,
+           workshop_ground_layer2, workshop_ground_z_order;
+static int workshop_ground_alpha = 100, workshop_ground_pulse, workshop_ground_shake;
 static char workshop_notice[110];
 static int workshop_dialog, workshop_draft_exists;
 static int workshop_move_x, workshop_move_y, workshop_move_time = 1;
 static int workshop_easing, workshop_group_id, workshop_next_group_id = 3;
 static int workshop_layer;
 static int workshop_layer2, workshop_z_order;
+static int workshop_alpha = 100, workshop_pulse, workshop_shake;
 static int workshop_lock_x, workshop_lock_y, workshop_touch = 1;
 static int workshop_spawn, workshop_silent, workshop_target_group;
 static int workshop_ground_color_set, workshop_ground_color_index = 1;
 static int workshop_ground_color_custom;
+static int workshop_ground_color_default;
 static int workshop_color_set, workshop_color_index;
+/* Shared by the color dialog: when set, objects keep their own artwork. */
+static int workshop_color_default;
 static int workshop_keyboard_active, workshop_input_kind;
+/* Accounts, comments and moderation in the level catalog. The catalog dialog
+ * is 0 = none, 1 = account, 2 = comments. */
+static int catalog_dialog;
+static int workshop_publish_after_signin, account_dialog_submitted;
+static char account_token_before_submit[ON_TOKEN_SIZE];
+static char catalog_selected[ON_LEVEL_ID_SIZE];
+static char account_login_input[ON_LOGIN_SIZE];
+static char account_password_input[ON_PASSWORD_SIZE];
+static char account_ban_input[ON_LOGIN_SIZE];
+static char comment_input[ON_COMMENT_TEXT_SIZE];
 static int workshop_input_return_dialog, workshop_text_language, workshop_text_upper;
 static lv_obj_t *workshop_active_textarea;
 static char workshop_name[ON_LEVEL_TITLE_SIZE] = "Новый уровень";
@@ -228,7 +283,6 @@ static void read_pointer(lv_indev_t *in, lv_indev_data_t *data) {
 
 static lv_obj_t *box(lv_obj_t *parent, int x, int y, int w, int h, int radius,
                      lv_color_t color, int shadow) {
-    (void)shadow; /* flat interface: no drop shadows or glossy highlights */
     lv_obj_t *o = lv_obj_create(parent);
     lv_obj_remove_style_all(o);
     lv_obj_set_pos(o, x, y);
@@ -237,11 +291,15 @@ static lv_obj_t *box(lv_obj_t *parent, int x, int y, int w, int h, int radius,
     lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(o, radius, 0);
     if (w >= 22 && h >= 22) {
-        lv_obj_set_style_border_width(o, 2, 0);
-        lv_obj_set_style_border_color(o, C(243B52), 0);
+        lv_obj_set_style_border_width(o, 1, 0);
+        lv_obj_set_style_border_color(o, C(D3DDE2), 0);
         lv_obj_set_style_border_opa(o, LV_OPA_COVER, 0);
     }
-    lv_obj_set_style_shadow_width(o, 0, 0);
+    lv_obj_set_style_shadow_width(o, shadow ? 12 : 0, 0);
+    lv_obj_set_style_shadow_color(o, INK, 0);
+    lv_obj_set_style_shadow_opa(o, shadow ? LV_OPA_20 : LV_OPA_TRANSP, 0);
+    lv_obj_set_style_shadow_offset_x(o, 0, 0);
+    lv_obj_set_style_shadow_offset_y(o, shadow ? 5 : 0, 0);
     lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     return o;
 }
@@ -282,7 +340,7 @@ static void button_palette(int action, lv_color_t *face, lv_color_t *text) {
     case U_MENU_BACK: case U_SEARCH_CLOSE: case U_ROOMS_BACK:
     case U_LOBBY_EXIT: case U_MATCH_EXIT: case U_MATCH_RETURN:
     case U_GARDEN_EXIT:
-    case U_BOOK_BACK: case U_INTRO_SKIP:
+    case U_BOOK_BACK: case U_INTRO_SKIP: case U_CUSTOM_LIKE:
     case U_RESULT_MENU: case U_CUSTOM_BACK: case U_WORKSHOP_BACK:
         *face = BUTTON_BLACK;
         *text = BUTTON_LIGHT_TEXT;
@@ -308,7 +366,8 @@ static void button_palette(int action, lv_color_t *face, lv_color_t *text) {
 
 static void button_fill(lv_obj_t *o, lv_color_t color) {
     lv_obj_set_style_bg_color(o, color, 0);
-    lv_obj_set_style_bg_color(o, color, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(o, lv_color_darken(color, LV_OPA_20),
+                              LV_STATE_PRESSED);
 }
 
 static lv_obj_t *button(lv_obj_t *parent, int x, int y, int w, int h,
@@ -322,12 +381,21 @@ static lv_obj_t *button(lv_obj_t *parent, int x, int y, int w, int h,
     button_palette(action, &button_face, &button_text);
     lv_obj_set_style_bg_color(o, button_face, 0);
     lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(o, 5, 0);
-    lv_obj_set_style_border_width(o, 3, 0);
-    lv_obj_set_style_border_color(o, C(243B52), 0);
+    lv_obj_set_style_radius(o, h < 40 ? 9 : h < 68 ? 12 : 16, 0);
+    lv_obj_set_style_border_width(o, 2, 0);
+    lv_obj_set_style_border_color(o, BUTTON_BLACK, 0);
     lv_obj_set_style_border_opa(o, LV_OPA_COVER, 0);
-    lv_obj_set_style_shadow_width(o, 0, 0);
-    lv_obj_set_style_bg_color(o, button_face, LV_STATE_PRESSED);
+    lv_obj_set_style_shadow_width(o, w >= 70 && h >= 46 ? 8 : 3, 0);
+    lv_obj_set_style_shadow_color(o, INK, 0);
+    lv_obj_set_style_shadow_opa(o, LV_OPA_20, 0);
+    lv_obj_set_style_shadow_offset_x(o, 0, 0);
+    lv_obj_set_style_shadow_offset_y(o, h >= 46 ? 3 : 2, 0);
+    lv_obj_set_style_bg_color(o, lv_color_darken(button_face, LV_OPA_20),
+                              LV_STATE_PRESSED);
+    lv_obj_set_style_translate_y(o, 2, LV_STATE_PRESSED);
+    lv_obj_set_style_shadow_width(o, 2, LV_STATE_PRESSED);
+    lv_obj_set_style_shadow_offset_y(o, 1, LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(o, WS_CYAN, LV_STATE_FOCUSED);
     lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLLABLE);
     if (name && name[0])
         label(o, 7, (h - font_sizes[size] - 3) / 2, w - 14, font_sizes[size] + 6,
@@ -400,31 +468,34 @@ static void duck_art(lv_obj_t *parent, int cx, int cy, int size, int variant) {
 
 static void header(lv_obj_t *root, const char *title, const char *back,
                    int action) {
-    /* One large heading instead of three stacked lines of tiny explanations. */
-    box(root, 0, 0, GAME_W, 148, 0, back ? BUTTON_GRAY : DARK, 0);
-    box(root, 0, 145, GAME_W, 4, 0, back ? BUTTON_BLACK : LIGHT_GRAY, 0);
-    label(root, 70, 46, back ? 940 : 1120, 71, title, 4,
+    /* A compact floating title bar gives every secondary screen one anchor. */
+    box(root, 32, 18, 1216, 112, 22, back ? PAPER : DARK, 1);
+    label(root, 66, 39, back ? 930 : 1120, 64, title, 4,
           back ? INK : WHITE, LV_TEXT_ALIGN_LEFT);
-    if (back) button(root, 1065, 48, 175, 62, back, 2, action);
+    if (back) button(root, 1054, 42, 174, 64, back, 2, action);
 }
 
 static void menu_screen(lv_obj_t *root) {
-    box(root, 0, 0, GAME_W, 148, 0, DARK, 0);
-    box(root, 0, 145, GAME_W, 4, 0, LIGHT_GRAY, 0);
+    box(root, 0, 0, GAME_W, GAME_H, 0, C(E9EFF1), 0);
+    box(root, 32, 20, 1216, 110, 22, DARK, 1);
     label(root, 48, 48, 470, 60, "Растения против гусей 3", 2,
           WHITE, LV_TEXT_ALIGN_LEFT);
     button(root, 520, 51, 200, 64, "Кампания", 2, U_MENU_LEVELS);
     button(root, 735, 51, 195, 64, "Сад Дзен", 2, U_MENU_GARDEN);
     button(root, 945, 51, 285, 64, "Уровни игроков", 1,
            U_CUSTOM_CATALOG);
-    /* The characters stand together on the lawn, not in three square frames. */
-    box(root, 55, 176, 1170, 355, 34, C(F1EFE8), 0);
-    art(root, PV_ART_BREAD, 250, 322, 228);
-    art(root, PV_ART_DIMA, 640, 324, 230);
-    art(root, PV_ART_KIRILL, 1029, 322, 225);
-    label(root, 93, 448, 310, 55, "Хлебушек", 2, INK, LV_TEXT_ALIGN_CENTER);
-    label(root, 482, 448, 310, 55, "Дима в маске", 2, INK, LV_TEXT_ALIGN_CENTER);
-    label(root, 871, 448, 310, 55, "Кирилл", 2, INK, LV_TEXT_ALIGN_CENTER);
+    /* Soft backplates lift the full-colour author's characters without tinting them. */
+    box(root, 55, 153, 1170, 387, 28, PAPER, 1);
+    box(root, 158, 207, 184, 184, 92, C(D9EDF2), 0);
+    box(root, 548, 207, 184, 184, 92, C(F8E0D6), 0);
+    box(root, 937, 207, 184, 184, 92, C(F1E8D1), 0);
+    art(root, PV_ART_BREAD, 250, 315, 215);
+    art(root, PV_ART_DIMA, 640, 317, 218);
+    art(root, PV_ART_KIRILL, 1029, 315, 211);
+    label(root, 93, 436, 310, 55, "Хлебушек", 2, INK, LV_TEXT_ALIGN_CENTER);
+    label(root, 482, 436, 310, 55, "Дима в маске", 2, INK, LV_TEXT_ALIGN_CENTER);
+    label(root, 871, 436, 310, 55, "Кирилл", 2, INK, LV_TEXT_ALIGN_CENTER);
+    box(root, 55, 548, 1170, 164, 24, PAPER, 1);
     button(root, 90, 563, 280, 94, "Умная книга", 2, U_MENU_BOOK);
     button(root, 410, 548, 445, 125, "Начать игру", 3, U_MENU_PLAY);
     button(root, 895, 563, 295, 94, "Играть вдвоём", 2, U_MENU_ONLINE);
@@ -457,9 +528,11 @@ static void levels_screen(lv_obj_t *root) {
 static void garden_screen(lv_obj_t *root) {
     GameOfflineUIState state;
     game_offline_ui_snapshot(&state);
-    box(root, 0, 0, 1280, 121, 0, BUTTON_GRAY, 0);
-    box(root, 0, 118, 1280, 3, 0, C(8195A4), 0);
-    label(root, 12, 3, 232, 36, "Сад Дзен", 2, INK, LV_TEXT_ALIGN_LEFT);
+    /* Three quiet toolbar cards keep the controls clear of the living map. */
+    box(root, 8, 8, 244, 108, 18, PAPER, 1);
+    box(root, 258, 8, 663, 108, 18, PAPER, 1);
+    box(root, 926, 8, 343, 108, 18, PAPER, 1);
+    label(root, 22, 12, 218, 29, "Сад Дзен", 2, INK, LV_TEXT_ALIGN_LEFT);
     lv_obj_t *plants = button(root, 6, 42, 112, 31, "Растения", 0, U_GARDEN_PLANTS);
     lv_obj_t *geese = button(root, 128, 42, 112, 31, "Гуси", 0, U_GARDEN_GEESE);
     lv_obj_t *lawn = button(root, 6, 78, 112, 31, "Газон", 0, U_GARDEN_LAWN);
@@ -635,7 +708,7 @@ static void rooms_screen(lv_obj_t *root, const OnNetView *v) {
     button_fill(water, chosen_map == 5 ? BUTTON_GRAY : BUTTON_WHITE);
     lv_obj_set_style_border_width(chosen_map == 1 ? lawn : water, 5, 0);
     lv_obj_set_style_border_color(chosen_map == 1 ? lawn : water,
-                                  C(243B52), 0);
+                                  BUTTON_BLACK, 0);
     button(root, 650, 179, 187, 62, "Поиск", 2, U_SEARCH);
     button(root, 856, 179, 208, 62, "+ Создать", 2, U_CREATE);
     button(root, 1070, 179, 149, 62, "Мастерская", 1, U_MENU_WORKSHOP);
@@ -715,74 +788,446 @@ static void rooms_screen(lv_obj_t *root, const OnNetView *v) {
     if (len != 6) button_fill(join, BUTTON_GRAY);
 }
 
-static void custom_levels_screen(lv_obj_t *root, const OnNetView *v) {
-    header(root, "Каталог уровней", "Назад", U_CUSTOM_BACK);
-    box(root, 43, 165, 1195, 94, 20, PAPER, 1);
-    label(root, 68, 179, 770, 34, "ПУБЛИЧНЫЙ КАТАЛОГ УРОВНЕЙ",
-          1, MUTED, LV_TEXT_ALIGN_LEFT);
-    if (v->levels_notice[0])
-        label(root, 68, 213, 830, 33, v->levels_notice, 2,
-              MUTED, LV_TEXT_ALIGN_LEFT);
-    button(root, 824, 185, 177, 54, "Мастерская", 2,
-           U_CUSTOM_WORKSHOP);
-    lv_obj_t *refresh = button(root, 1015, 185, 193, 54, "", 2,
-                                U_CUSTOM_REFRESH);
-    art(refresh, PV_ART_WORKSHOP_ROTATE, 27, 27, 26);
-    label(refresh, 48, 4, 140, 46, "Обновить", 1, BUTTON_TEXT,
-          LV_TEXT_ALIGN_CENTER);
-    memset(visible_level_ids, 0, sizeof visible_level_ids);
-    int pages = (v->level_count + 7) / 8;
-    if (custom_level_page >= pages) custom_level_page = pages > 0 ? pages - 1 : 0;
-    if (v->level_count > 0) {
-        for (int i = 0; i < 8 && custom_level_page * 8 + i < v->level_count; i++) {
-            int index = custom_level_page * 8 + i;
-            int x = 65 + (i % 2) * 579;
-            int y = 280 + (i / 2) * 91;
-            snprintf(visible_level_ids[i], sizeof visible_level_ids[i], "%s",
-                     v->levels[index].id);
-            lv_obj_t *card = button(root, x, y, 548, 78, "", 1,
-                                    U_CUSTOM_LEVEL_BASE + i);
-            lv_obj_set_style_border_width(card, 3, 0);
-            lv_obj_set_style_border_color(card, C(243B52), 0);
-            box(card, 13, 15, 90, 47, 10, BUTTON_GRAY, 0);
-            lv_obj_t *id_label = label(card, 15, 17, 86, 43,
-                  v->levels[index].id, 1, BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
-            lv_label_set_long_mode(id_label, LV_LABEL_LONG_MODE_CLIP);
-            int official = on_level_id_is_official(v->levels[index].id);
-            lv_obj_t *title_label = label(card, 119, 7, official ? 249 : 410,
-                  32, v->levels[index].title, 2, BUTTON_TEXT, LV_TEXT_ALIGN_LEFT);
-            lv_label_set_long_mode(title_label, LV_LABEL_LONG_MODE_DOTS);
-            if (official) {
-                box(card, 378, 10, 160, 25, 12, C(FFF1C7), 0);
-                lv_obj_t *official_label = label(card, 380, 10, 156, 25,
-                      "ОФИЦИАЛЬНЫЙ", 0, C(654600), LV_TEXT_ALIGN_CENTER);
-                lv_label_set_long_mode(official_label, LV_LABEL_LONG_MODE_CLIP);
+/* ------------------------------------- accounts, comments and moderation */
+
+/* The catalog borrows the workshop's on-screen keyboard for its own fields. */
+static void workshop_draw_keyboard_dialog(lv_obj_t *root);
+
+static void catalog_shade(lv_obj_t *root) {
+    lv_obj_t *shade = box(root, 0, 0, GAME_W, GAME_H, 0, C(20354B), 0);
+    lv_obj_set_style_bg_opa(shade, LV_OPA_80, 0);
+    lv_obj_set_style_border_width(shade, 0, 0);
+    lv_obj_add_flag(shade, LV_OBJ_FLAG_CLICKABLE);
+}
+/* A value the player types with the shared on-screen keyboard: the catalog has
+ * no permanent text widget, so the row is a button that opens one. */
+static void catalog_field_button(lv_obj_t *root, int x, int y, int w, int h,
+                                 const char *value, const char *placeholder,
+                                 int secret, int action) {
+    char shown[ON_COMMENT_TEXT_SIZE];
+    if (value && value[0]) {
+        if (secret) {
+            size_t length = strlen(value);
+            if (length > 20) length = 20;
+            memset(shown, '*', length);
+            shown[length] = 0;
+        } else snprintf(shown, sizeof shown, "%s", value);
+    } else snprintf(shown, sizeof shown, "%s", placeholder);
+    button(root, x, y, w, h, shown, 1, action);
+}
+
+static void catalog_draw_account_dialog(lv_obj_t *root, const OnNetView *v) {
+    char state[ON_LOGIN_SIZE + 40], moderator[64];
+    catalog_shade(root);
+    box(root, 92, 34, 1096, 652, 17, WS_BROWN, 0);
+    box(root, 103, 45, 1074, 76, 12, WS_BROWN_DARK, 0);
+    label(root, 120, 58, 1040, 49, font_translate("Аккаунт"), 3,
+          WS_CREAM, LV_TEXT_ALIGN_CENTER);
+    if (v->account.signed_in) {
+        snprintf(state, sizeof state, "%s %s", font_translate("Ник"),
+                 v->account.login);
+    } else snprintf(state, sizeof state, "%s", font_translate("Вы не в аккаунте."));
+    label(root, 120, 134, 640, 40, state, 2, WS_CREAM, LV_TEXT_ALIGN_LEFT);
+    if (v->account.signed_in) {
+        snprintf(moderator, sizeof moderator, "%s",
+                 v->account.admin ? font_translate("Модератор") : "");
+        label(root, 950, 134, 300, 40, moderator, 2, WS_CREAM, LV_TEXT_ALIGN_RIGHT);
+    }
+    label(root, 120, 196, 200, 40, font_translate("Ник"), 1,
+          WS_CREAM, LV_TEXT_ALIGN_LEFT);
+    catalog_field_button(root, 340, 186, 540, 56, account_login_input,
+                         font_translate("a-z, 0-9 и _"), 0,
+                         U_ACCOUNT_LOGIN_FIELD);
+    label(root, 120, 268, 200, 40, font_translate("Пароль"), 1,
+          WS_CREAM, LV_TEXT_ALIGN_LEFT);
+    catalog_field_button(root, 340, 258, 540, 56, account_password_input,
+                         font_translate("от 6 знаков"), 1,
+                         U_ACCOUNT_PASSWORD_FIELD);
+    button(root, 900, 186, 260, 56, font_translate("Войти"), 2,
+           U_ACCOUNT_SIGN_IN);
+    button(root, 900, 258, 260, 56, font_translate("Создать аккаунт"), 1,
+           U_ACCOUNT_CREATE);
+    if (v->account.admin) {
+        label(root, 120, 340, 220, 40, font_translate("Ник игрока"), 1,
+              WS_CREAM, LV_TEXT_ALIGN_LEFT);
+        catalog_field_button(root, 340, 330, 320, 56, account_ban_input,
+                             font_translate("ник"), 0, U_ACCOUNT_BAN_NICK);
+        button(root, 680, 330, 200, 56, font_translate("Забанить"), 1,
+               U_ACCOUNT_BAN);
+        button(root, 900, 330, 260, 56, font_translate("Разбанить"), 1,
+               U_ACCOUNT_UNBAN);
+    }
+    if (v->account_notice[0])
+        label(root, 120, 404, 1040, 48, v->account_notice, 1, WS_ACCENT,
+              LV_TEXT_ALIGN_LEFT);
+    if (workshop_publish_after_signin)
+        label(root, 120, 454, 1040, 38,
+              font_translate("Войди или создай аккаунт — уровень опубликуется сразу."),
+              1, WS_YELLOW, LV_TEXT_ALIGN_LEFT);
+    label(root, 120, 498, 1040, 78,
+          font_translate("Пароль не хранится и не уходит в базу: игра считает хэш PBKDF2 и "
+                         "обменивает его на токен сессии."),
+          1, WS_CREAM, LV_TEXT_ALIGN_LEFT);
+    button(root, 250, 604, 320, 60, font_translate("Закрыть"), 2,
+           U_ACCOUNT_CLOSE);
+    if (v->account.signed_in)
+        button(root, 710, 604, 320, 60, font_translate("Выйти"), 1,
+               U_ACCOUNT_SIGN_OUT);
+}
+
+static void catalog_draw_comments_dialog(lv_obj_t *root, const OnNetView *v) {
+    char title[ON_LEVEL_ID_SIZE + 40], author[ON_LOGIN_SIZE + 24] = {0};
+    catalog_shade(root);
+    box(root, 92, 34, 1096, 652, 17, WS_BROWN, 0);
+    box(root, 103, 45, 1074, 76, 12, WS_BROWN_DARK, 0);
+    snprintf(title, sizeof title, "%s %s", font_translate("Сообщения · ID"),
+             catalog_selected);
+    label(root, 120, 58, 1040, 49, title, 3, WS_CREAM, LV_TEXT_ALIGN_CENTER);
+    for (int i = 0; i < v->level_count; i++)
+        if (!strcmp(v->levels[i].id, catalog_selected) && v->levels[i].author[0])
+            snprintf(author, sizeof author, "%s: %s",
+                     font_translate("Автор"), v->levels[i].author);
+    if (author[0]) {
+        lv_obj_t *author_label = label(root, 320, 112, 740, 34, author, 1,
+                                       WS_CREAM, LV_TEXT_ALIGN_RIGHT);
+        lv_label_set_long_mode(author_label, LV_LABEL_LONG_MODE_DOTS);
+    }
+    /* A moderator bans the level itself — an impossible level is a reason
+     * even when its author never wrote a single message. */
+    if (v->account.admin && v->account.signed_in)
+        button(root, 860, 52, 300, 60, "Забанить автора", 1,
+               U_COMMENT_BAN_AUTHOR);
+    if (v->comments_busy && !v->comment_count)
+        label(root, 120, 150, 1040, 44, "Загружаю сообщения…", 1, WS_CREAM,
+              LV_TEXT_ALIGN_LEFT);
+    else if (!v->comment_count)
+        label(root, 120, 150, 1040, 44, "Сообщений пока нет.", 1, WS_CREAM,
+              LV_TEXT_ALIGN_LEFT);
+    for (int i = 0; i < v->comment_count && i < 4; i++) {
+        const OnComment *c = &v->comments[i];
+        int y = 140 + i * 100;
+        box(root, 112, y, 1056, 92, 10, WS_BROWN_DARK, 0);
+        label(root, 128, y + 8, 300, 34, c->login, 1, WS_CREAM,
+              LV_TEXT_ALIGN_LEFT);
+        lv_obj_t *text = label(root, 128, y + 42, 600, 44,
+                               c->hidden ? "Сообщение скрыто." : c->text, 1,
+                               c->hidden ? MUTED : WS_CREAM,
+                               LV_TEXT_ALIGN_LEFT);
+        lv_label_set_long_mode(text, LV_LABEL_LONG_MODE_DOTS);
+        if (!c->hidden &&
+            (v->account.admin || (v->account.signed_in &&
+                                  !strcmp(v->account.login, c->login))))
+            button(root, 750, y + 20, 170, 52, "Скрыть", 1,
+                   U_COMMENT_HIDE_BASE + i);
+        if (v->account.admin)
+            button(root, 940, y + 20, 190, 52, "Забанить", 1,
+                   U_COMMENT_BAN_BASE + i);
+    }
+    catalog_field_button(root, 120, 548, 700, 64, comment_input,
+                         "Написать сообщение…", 0, U_COMMENT_WRITE);
+    button(root, 840, 548, 300, 64, "Отправить", 2, U_COMMENT_SEND);
+    if (v->account_notice[0])
+        label(root, 120, 624, 700, 44, v->account_notice, 1, WS_ACCENT,
+              LV_TEXT_ALIGN_LEFT);
+    button(root, 840, 624, 300, 44, "Закрыть", 1, U_COMMENT_CLOSE);
+}
+
+static void catalog_lower_utf8(const char *source, char *out, size_t cap) {
+    size_t at = 0;
+    if (!cap) return;
+    if (!source) source = "";
+    for (size_t i = 0; source[i] && at + 1 < cap;) {
+        unsigned char c = (unsigned char)source[i];
+        if (c >= 'A' && c <= 'Z') {
+            out[at++] = (char)(c + ('a' - 'A'));i++;continue;
+        }
+        if (c == 0xd0 && source[i + 1]) {
+            unsigned char next = (unsigned char)source[i + 1];
+            if (next == 0x81) { /* Ё -> ё */
+                if (at + 2 >= cap) break;
+                out[at++] = (char)0xd1;out[at++] = (char)0x91;i += 2;continue;
             }
-            if (v->levels[index].description[0]) {
-                lv_obj_t *description_label = label(card, 121, 39, 410, 33,
-                      v->levels[index].description, 1, BUTTON_TEXT,
-                      LV_TEXT_ALIGN_LEFT);
-                lv_label_set_long_mode(description_label, LV_LABEL_LONG_MODE_DOTS);
+            if (next >= 0x90 && next <= 0x9f) {
+                if (at + 2 >= cap) break;
+                out[at++] = (char)0xd0;out[at++] = (char)(next + 0x20);i += 2;continue;
+            }
+            if (next >= 0xa0 && next <= 0xaf) {
+                if (at + 2 >= cap) break;
+                out[at++] = (char)0xd1;out[at++] = (char)(next - 0x20);i += 2;continue;
             }
         }
-    } else if (!v->levels_busy) {
-        box(root, 220, 322, 840, 190, 25, WHITE, 1);
-        art(root, PV_ART_KIRILL, 312, 413, 104);
-        label(root, 420, 365, 600, 74, "Уровней пока нет", 3, INK,
-              LV_TEXT_ALIGN_LEFT);
-        label(root, 422, 432, 576, 58,
-              "Опубликованные уровни появятся здесь.",
-              1, MUTED, LV_TEXT_ALIGN_LEFT);
+        size_t width = c < 0x80 ? 1 : (c & 0xe0) == 0xc0 ? 2 :
+                       (c & 0xf0) == 0xe0 ? 3 : (c & 0xf8) == 0xf0 ? 4 : 1;
+        if (at + width >= cap) break;
+        while (width-- && source[i]) out[at++] = source[i++];
     }
-    if (pages > 1) {
+    out[at] = 0;
+}
+static int catalog_contains(const char *text, const char *query) {
+    if (!query || !query[0]) return 1;
+    char lower_text[ON_LEVEL_DESCRIPTION_SIZE + ON_LEVEL_TITLE_SIZE];
+    char lower_query[sizeof catalog_search * 2];
+    catalog_lower_utf8(text, lower_text, sizeof lower_text);
+    catalog_lower_utf8(query, lower_query, sizeof lower_query);
+    return strstr(lower_text, lower_query) != NULL;
+}
+static int catalog_same_tag(const char *a, const char *b) {
+    char left[ON_LEVEL_TAG_SIZE * 2], right[ON_LEVEL_TAG_SIZE * 2];
+    catalog_lower_utf8(a, left, sizeof left);
+    catalog_lower_utf8(b, right, sizeof right);
+    return !strcmp(left, right);
+}
+static int catalog_tag_seen_before(const OnNetView *view, int level, int tag) {
+    const char *candidate = view->levels[level].tags[tag];
+    for (int i = 0; i <= level; ++i) {
+        int limit = i == level ? tag : view->levels[i].tag_count;
+        for (int j = 0; j < limit; ++j)
+            if (catalog_same_tag(candidate, view->levels[i].tags[j])) return 1;
+    }
+    return 0;
+}
+static int catalog_tag_count(const OnNetView *view) {
+    int count = 0;
+    if (!view) return 0;
+    for (int i = 0; i < view->level_count; ++i)
+        for (int tag = 0; tag < view->levels[i].tag_count; ++tag)
+            if (!catalog_tag_seen_before(view, i, tag)) count++;
+    return count;
+}
+static const char *catalog_tag_at(const OnNetView *view, int wanted) {
+    if (!view || wanted < 0) return NULL;
+    int count = 0;
+    for (int i = 0; i < view->level_count; ++i)
+        for (int tag = 0; tag < view->levels[i].tag_count; ++tag)
+            if (!catalog_tag_seen_before(view, i, tag)) {
+                if (count++ == wanted) return view->levels[i].tags[tag];
+            }
+    return NULL;
+}
+static int catalog_level_matches(const OnPublishedLevelSummary *level,
+                                 const char *tag) {
+    if (catalog_filter_difficulty != ON_LEVEL_DIFFICULTY_UNSPECIFIED &&
+        level->difficulty != catalog_filter_difficulty) return 0;
+    if (tag && tag[0]) {
+        int found = 0;
+        for (int i = 0; i < level->tag_count; ++i)
+            if (catalog_same_tag(tag, level->tags[i])) {found = 1;break;}
+        if (!found) return 0;
+    }
+    if (!catalog_search[0]) return 1;
+    if (catalog_contains(level->title, catalog_search) ||
+        catalog_contains(level->description, catalog_search) ||
+        catalog_contains(level->id, catalog_search) ||
+        catalog_contains(level->author, catalog_search)) return 1;
+    for (int i = 0; i < level->tag_count; ++i)
+        if (catalog_contains(level->tags[i], catalog_search)) return 1;
+    return 0;
+}
+static int catalog_precedes(const OnPublishedLevelSummary *a,
+                            const OnPublishedLevelSummary *b) {
+    if (catalog_sort_mode == 1 && a->likes != b->likes)
+        return a->likes > b->likes;
+    if (catalog_sort_mode == 2 && a->downloads != b->downloads)
+        return a->downloads > b->downloads;
+    if (a->updated_at != b->updated_at) return a->updated_at > b->updated_at;
+    if (catalog_sort_mode != 1 && a->likes != b->likes)
+        return a->likes > b->likes;
+    if (catalog_sort_mode != 2 && a->downloads != b->downloads)
+        return a->downloads > b->downloads;
+    return strcmp(a->id, b->id) > 0;
+}
+static const OnPublishedLevelSummary *catalog_find_selected(const OnNetView *view) {
+    if (!view || !catalog_selected[0]) return NULL;
+    for (int i = 0; i < view->level_count; ++i)
+        if (!strcmp(catalog_selected, view->levels[i].id))
+            return &view->levels[i];
+    return NULL;
+}
+static void custom_levels_screen(lv_obj_t *root, const OnNetView *v) {
+    header(root, "Каталог уровней", "Назад", U_CUSTOM_BACK);
+    button(root, 855, 48, 190, 62, "Аккаунт", 1, U_ACCOUNT_OPEN);
+    box(root, 43, 145, 1195, 116, 20, PAPER, 1);
+    char search_label[100];
+    snprintf(search_label, sizeof search_label, "Поиск: %s",
+             catalog_search[0] ? catalog_search : "Все уровни");
+    lv_obj_t *search = button(root, 60, 157, 326, 44, search_label, 1,
+                              U_CATALOG_SEARCH);
+    lv_obj_t *search_text = lv_obj_get_child(search, 0);
+    if (search_text) lv_label_set_long_mode(search_text, LV_LABEL_LONG_MODE_DOTS);
+    button(root, 391, 157, 46, 44, "×", 2, U_CATALOG_SEARCH_CLEAR);
+    const char *difficulty_names[] = {"Любая сложность", "Лёгкая", "Обычная",
+                                      "Сложная", "Экспертная"};
+    int diff = catalog_filter_difficulty;
+    if (diff < ON_LEVEL_DIFFICULTY_UNSPECIFIED || diff > ON_LEVEL_DIFFICULTY_EXPERT)
+        diff = ON_LEVEL_DIFFICULTY_UNSPECIFIED;
+    char filter_label[72];
+    snprintf(filter_label, sizeof filter_label, "Сложность: %s",
+             font_translate(difficulty_names[diff]));
+    lv_obj_t *difficulty = button(root, 446, 157, 190, 44, filter_label, 0,
+                                  U_CATALOG_DIFFICULTY);
+    if (lv_obj_get_child(difficulty, 0))
+        lv_label_set_long_mode(lv_obj_get_child(difficulty, 0), LV_LABEL_LONG_MODE_DOTS);
+    int tag_count = catalog_tag_count(v);
+    if (catalog_filter_tag >= tag_count) catalog_filter_tag = -1;
+    const char *tag = catalog_tag_at(v, catalog_filter_tag);
+    snprintf(filter_label, sizeof filter_label, "Тег: %s",
+             tag ? tag : "Все");
+    lv_obj_t *tag_button = button(root, 645, 157, 178, 44, filter_label, 0,
+                                  U_CATALOG_TAG);
+    if (lv_obj_get_child(tag_button, 0))
+        lv_label_set_long_mode(lv_obj_get_child(tag_button, 0), LV_LABEL_LONG_MODE_DOTS);
+    const char *sort_names[] = {"Новые", "Лайки", "Скачивания"};
+    snprintf(filter_label, sizeof filter_label, "Сортировка: %s",
+             font_translate(sort_names[catalog_sort_mode % 3]));
+    lv_obj_t *sort = button(root, 832, 157, 218, 44, filter_label, 0,
+                            U_CATALOG_SORT);
+    if (lv_obj_get_child(sort, 0))
+        lv_label_set_long_mode(lv_obj_get_child(sort, 0), LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_t *refresh = button(root, 1060, 157, 158, 44, "", 2,
+                                U_CUSTOM_REFRESH);
+    art(refresh, PV_ART_WORKSHOP_ROTATE, 27, 27, 26);
+    label(refresh, 47, 2, 108, 39, "Обновить", 0, BUTTON_TEXT,
+          LV_TEXT_ALIGN_CENTER);
+    int matching[ON_LEVEL_LIST_CAP];
+    int matching_count = 0;
+    const char *selected_tag = catalog_tag_at(v, catalog_filter_tag);
+    for (int i = 0; i < v->level_count && i < ON_LEVEL_LIST_CAP; ++i) {
+        if (!catalog_level_matches(&v->levels[i], selected_tag)) continue;
+        int where = matching_count;
+        while (where > 0 && catalog_precedes(&v->levels[i],
+                                             &v->levels[matching[where - 1]]))
+            --where;
+        if (matching_count < ON_LEVEL_LIST_CAP) ++matching_count;
+        memmove(&matching[where + 1], &matching[where],
+                (size_t)(matching_count - where - 1) * sizeof matching[0]);
+        matching[where] = i;
+    }
+    char status[96];
+    snprintf(status, sizeof status, "Найдено: %d", matching_count);
+    label(root, 61, 211, 238, 34, status, 0, MUTED, LV_TEXT_ALIGN_LEFT);
+    if (v->levels_notice[0])
+        label(root, 301, 211, 485, 34, v->levels_notice, 0,
+              MUTED, LV_TEXT_ALIGN_LEFT);
+    button(root, 833, 207, 172, 42, "Мастерская", 1, U_CUSTOM_WORKSHOP);
+    int pages = (matching_count + 7) / 8;
+    if (custom_level_page >= pages) custom_level_page = pages > 0 ? pages - 1 : 0;
+    memset(visible_level_ids, 0, sizeof visible_level_ids);
+    memset(visible_level_indices, 0xff, sizeof visible_level_indices);
+    for (int slot = 0; slot < 8 && custom_level_page * 8 + slot < matching_count; ++slot) {
+        int index = matching[custom_level_page * 8 + slot];
+        const OnPublishedLevelSummary *level = &v->levels[index];
+        int x = 65 + (slot % 2) * 579;
+        int y = 280 + (slot / 2) * 91;
+        snprintf(visible_level_ids[slot], sizeof visible_level_ids[slot], "%s",
+                 level->id);
+        visible_level_indices[slot] = index;
+        lv_obj_t *card = button(root, x, y, 548, 82, "", 1,
+                                U_CUSTOM_LEVEL_BASE + slot);
+        lv_obj_set_style_border_width(card, 3, 0);
+        lv_obj_set_style_border_color(card,
+            !strcmp(catalog_selected, level->id) ? WS_ACCENT : BUTTON_BLACK, 0);
+        box(card, 12, 11, 92, 60, 10, BUTTON_GRAY, 0);
+        lv_obj_t *id_label = label(card, 15, 13, 86, 27,
+              level->id, 1, BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
+        lv_label_set_long_mode(id_label, LV_LABEL_LONG_MODE_CLIP);
+        char stats[40];
+        snprintf(stats, sizeof stats, "♡ %u  ↓ %u", level->likes,
+                 level->downloads);
+        label(card, 13, 40, 90, 23, stats, 0, MUTED, LV_TEXT_ALIGN_CENTER);
+        int official = on_level_is_official(level->id, level->official);
+        lv_obj_t *title_label = label(card, 117, 5, official ? 250 : 415,
+              27, level->title, 1, BUTTON_TEXT, LV_TEXT_ALIGN_LEFT);
+        lv_label_set_long_mode(title_label, LV_LABEL_LONG_MODE_DOTS);
+        if (official) {
+            box(card, 376, 6, 162, 23, 11, C(FFF1C7), 0);
+            lv_obj_t *official_label = label(card, 378, 6, 158, 23,
+                  "ОФИЦИАЛЬНЫЙ", 0, C(654600), LV_TEXT_ALIGN_CENTER);
+            lv_label_set_long_mode(official_label, LV_LABEL_LONG_MODE_CLIP);
+        }
+        const char *difficulty_name = difficulty_names[
+            level->difficulty >= ON_LEVEL_DIFFICULTY_UNSPECIFIED &&
+            level->difficulty <= ON_LEVEL_DIFFICULTY_EXPERT ? level->difficulty :
+            ON_LEVEL_DIFFICULTY_UNSPECIFIED];
+        lv_color_t difficulty_color = level->difficulty == ON_LEVEL_DIFFICULTY_EASY ?
+            C(DDF1D0) : level->difficulty == ON_LEVEL_DIFFICULTY_NORMAL ?
+            C(E6E9EE) : level->difficulty == ON_LEVEL_DIFFICULTY_HARD ?
+            C(FFE0CC) : level->difficulty == ON_LEVEL_DIFFICULTY_EXPERT ?
+            C(F3D7E7) : BUTTON_GRAY;
+        box(card, 117, 31, 90, 19, 8, difficulty_color, 0);
+        label(card, 119, 31, 86, 18, difficulty_name, 0, BUTTON_TEXT,
+              LV_TEXT_ALIGN_CENTER);
+        char tags[76] = {0};size_t tags_used = 0;
+        for (int t = 0; t < level->tag_count; ++t) {
+            int wrote = snprintf(tags + tags_used, sizeof tags - tags_used,
+                                 "%s#%s", t ? " " : "", level->tags[t]);
+            if (wrote < 0 || (size_t)wrote >= sizeof tags - tags_used) break;
+            tags_used += (size_t)wrote;
+        }
+        if (tags[0]) {
+            lv_obj_t *tags_label = label(card, 214, 30, 318, 20, tags, 0,
+                                         MUTED, LV_TEXT_ALIGN_LEFT);
+            lv_label_set_long_mode(tags_label, LV_LABEL_LONG_MODE_DOTS);
+        }
+        if (level->description[0]) {
+            lv_obj_t *description_label = label(card, 118, 51, 414, 26,
+                  level->description, 0, BUTTON_TEXT, LV_TEXT_ALIGN_LEFT);
+            lv_label_set_long_mode(description_label, LV_LABEL_LONG_MODE_DOTS);
+        }
+    }
+    if (v->level_count == 0 && !v->levels_busy) {
+        box(root, 250, 333, 780, 170, 24, WHITE, 1);
+        art(root, PV_ART_KIRILL, 320, 425, 96);
+        label(root, 432, 368, 550, 64, "Уровней пока нет", 3, INK,
+              LV_TEXT_ALIGN_LEFT);
+        label(root, 434, 428, 540, 51,
+              "Опубликованные уровни появятся здесь.", 1, MUTED,
+              LV_TEXT_ALIGN_LEFT);
+    } else if (v->level_count > 0 && matching_count == 0) {
+        box(root, 250, 333, 780, 170, 24, WHITE, 1);
+        label(root, 300, 366, 680, 57, "Ничего не найдено", 3, INK,
+              LV_TEXT_ALIGN_CENTER);
+        label(root, 300, 427, 680, 44,
+              "Измени запрос или фильтры и попробуй снова.", 1, MUTED,
+              LV_TEXT_ALIGN_CENTER);
+    }
+    const OnPublishedLevelSummary *selected = catalog_find_selected(v);
+    if (selected && !catalog_dialog) {
+        box(root, 43, 650, 1195, 56, 16, PAPER, 1);
+        button(root, 60, 656, 116, 43, "Играть", 1, U_CUSTOM_PLAY);
+        button(root, 184, 656, 124, 43, "Сообщения", 0, U_COMMENTS_OPEN);
+        char like_label[48];
+        snprintf(like_label, sizeof like_label, "%s · %u",
+                 selected->liked ? "Убрать лайк" : "Нравится", selected->likes);
+        button(root, 316, 656, 208, 43, like_label, 1, U_CUSTOM_LIKE);
+        if (v->account.signed_in && v->account.admin) {
+            button(root, 534, 656, 178, 43,
+                   selected->official ? "Снять метку" : "Официальный", 1,
+                   U_CUSTOM_OFFICIAL);
+        }
+        char stats[90];
+        snprintf(stats, sizeof stats, "♡ %u  ↓ %u",
+                 selected->likes, selected->downloads);
+        label(root, 722, 661, 230, 34, stats, 1, MUTED, LV_TEXT_ALIGN_LEFT);
+        if (selected->author[0]) {
+            char author[ON_LOGIN_SIZE + 24];
+            snprintf(author, sizeof author, "%s: %s",
+                     font_translate("Автор"), selected->author);
+            lv_obj_t *author_label = label(root, 934, 662, 274, 32,
+                                           author, 1, MUTED,
+                                           LV_TEXT_ALIGN_LEFT);
+            lv_label_set_long_mode(author_label, LV_LABEL_LONG_MODE_DOTS);
+        }
+    } else if (pages > 1) {
         button(root, 69, 658, 170, 43, "‹ Назад", 1, U_CUSTOM_PREV);
         char page_text[40];
         snprintf(page_text, sizeof page_text, "%d / %d", custom_level_page + 1, pages);
         label(root, 514, 659, 252, 40, page_text, 1, MUTED, LV_TEXT_ALIGN_CENTER);
         button(root, 1040, 658, 170, 43, "Дальше ›", 1, U_CUSTOM_NEXT);
     }
+    if (catalog_dialog == 1) catalog_draw_account_dialog(root, v);
+    else if (catalog_dialog == 2) catalog_draw_comments_dialog(root, v);
+    if (workshop_keyboard_active) workshop_draw_keyboard_dialog(root);
 }
-
 static void workshop_background(lv_obj_t *root, const char *title) {
     box(root, 0, 0, GAME_W, GAME_H, 0, WS_BACKGROUND, 0);
     for (int x = 0; x < GAME_W; x += 64)
@@ -791,9 +1236,12 @@ static void workshop_background(lv_obj_t *root, const char *title) {
         box(root, 0, y, GAME_W, 1, 0, WS_GRID, 0);
     box(root, 38, 22, 1204, 676, 16, WS_BROWN, 0);
     box(root, 47, 31, 1186, 85, 12, WS_BROWN_DARK, 0);
-    label(root, 77, 47, 890, 55, title, 3, WS_CREAM,
+    label(root, 77, 47, 730, 55, title, 3, WS_CREAM,
           LV_TEXT_ALIGN_LEFT);
-    button(root, 1052, 44, 158, 60, "Назад", 2, U_WORKSHOP_BACK);
+    button(root, 825, 44, 205, 60, font_translate("Аккаунт"), 1,
+           U_ACCOUNT_OPEN);
+    button(root, 1052, 44, 158, 60, font_translate("Назад"), 2,
+           U_WORKSHOP_BACK);
 }
 
 static void workshop_reset_draft(void) {
@@ -819,9 +1267,18 @@ static void workshop_reset_draft(void) {
     workshop_player_x = 1;workshop_player_y = 7;
     workshop_player_w = .65f;workshop_player_h = .85f;workshop_player_angle = 0;
     workshop_player_flip_x = workshop_player_flip_y = 0;
+    workshop_player_group_id = 1;
+    workshop_player_layer = workshop_player_layer2 = workshop_player_z_order = 0;
+    workshop_player_alpha = 100;workshop_player_pulse = workshop_player_shake = 0;
     workshop_goal_x = 14;workshop_goal_y = 6;
     workshop_goal_w = 1;workshop_goal_h = 2;workshop_goal_angle = 0;
     workshop_goal_flip_x = workshop_goal_flip_y = 0;
+    workshop_goal_group_id = 2;
+    workshop_goal_layer = workshop_goal_layer2 = workshop_goal_z_order = 0;
+    workshop_goal_alpha = 100;workshop_goal_pulse = workshop_goal_shake = 0;
+    workshop_ground_group_id = 3;
+    workshop_ground_layer = workshop_ground_layer2 = workshop_ground_z_order = 0;
+    workshop_ground_alpha = 100;workshop_ground_pulse = workshop_ground_shake = 0;
     workshop_dialog = WS_DIALOG_NONE;
     workshop_keyboard_active = 0;workshop_input_kind = WS_INPUT_NONE;
     workshop_input_return_dialog = WS_DIALOG_NONE;
@@ -831,19 +1288,24 @@ static void workshop_reset_draft(void) {
     workshop_easing = workshop_group_id = workshop_layer = 0;
     workshop_next_group_id = 3;
     workshop_layer2 = workshop_z_order = 0;
+    workshop_alpha = 100;workshop_pulse = workshop_shake = 0;
+    workshop_effect_preview_time = 0;
     workshop_lock_x = workshop_lock_y = workshop_spawn = workshop_silent = 0;
     workshop_touch = 1;
     workshop_target_group = 2;
     workshop_ground_color_set = 0;workshop_ground_color_index = 1;
     workshop_ground_color_custom = 0;
+    workshop_ground_color_default = 0;
     workshop_color_set = workshop_color_index = 0;
+    /* Nothing chosen yet: new objects keep their own picture. */
+    workshop_color_default = 1;
     workshop_draft_exists = 0;
     workshop_name[0] = 0;workshop_description[0] = 0;
     snprintf(workshop_name, sizeof workshop_name, "%s", "Новый уровень");
 }
 
-static void workshop_home_screen(lv_obj_t *root) {
-    workshop_background(root, "Мастерская · мои уровни");
+static void workshop_home_screen(lv_obj_t *root, const OnNetView *view) {
+    workshop_background(root, font_translate("Мастерская · мои уровни"));
     box(root, 104, 138, 1072, 385, 14, WS_BROWN_DARK, 0);
     label(root, 139, 154, 900, 44, "ЛОКАЛЬНЫЕ ЧЕРНОВИКИ", 2,
           WS_CREAM, LV_TEXT_ALIGN_LEFT);
@@ -867,14 +1329,16 @@ static void workshop_home_screen(lv_obj_t *root) {
           WS_CREAM, LV_TEXT_ALIGN_LEFT);
     workshop_button(root, 130, 558, 360, 82, "+  Новый уровень", 2,
                     U_WORKSHOP_NEW, WS_ACCENT);
-    workshop_button(root, 820, 558, 328, 82, "Опубликованный каталог", 1,
+    workshop_button(root, 820, 558, 328, 82, font_translate("Опубликованный каталог"), 1,
                     U_WORKSHOP_CATALOG, WS_CYAN);
+    if (catalog_dialog == 1) catalog_draw_account_dialog(root, view);
+    if (workshop_keyboard_active) workshop_draw_keyboard_dialog(root);
 }
 
 static void workshop_draw_keyboard_dialog(lv_obj_t *root);
 
-static void workshop_details_screen(lv_obj_t *root) {
-    workshop_background(root, "Параметры уровня");
+static void workshop_details_screen(lv_obj_t *root, const OnNetView *view) {
+    workshop_background(root, font_translate("Параметры уровня"));
     box(root, 132, 142, 1016, 370, 15, WS_BROWN_DARK, 0);
     label(root, 166, 166, 350, 40, "НАЗВАНИЕ", 1, WS_YELLOW,
           LV_TEXT_ALIGN_LEFT);
@@ -885,8 +1349,9 @@ static void workshop_details_screen(lv_obj_t *root) {
     const char *description_preview = workshop_description;
     workshop_button(root, 163, 339, 950, 112, description_preview, 1,
                     U_WORKSHOP_EDIT_DESCRIPTION, WS_DARK_VALUE);
-    workshop_button(root, 780, 561, 368, 80, "Открыть редактор", 2,
+    workshop_button(root, 780, 561, 368, 80, font_translate("Открыть редактор"), 2,
                     U_WORKSHOP_DETAIL_EDIT, WS_ACCENT);
+    if (catalog_dialog == 1) catalog_draw_account_dialog(root, view);
     if (workshop_keyboard_active) workshop_draw_keyboard_dialog(root);
 }
 
@@ -1025,6 +1490,25 @@ static int workshop_first_recolorable_selected(void) {
 static int workshop_selection_can_manually_recolor(void) {
     return workshop_ground_selected || workshop_first_recolorable_selected() >= 0;
 }
+/* Colour used for the editor body of an object that keeps its own picture. */
+static uint32_t workshop_default_object_color(int type) {
+    switch (type) {
+    case ON_LEVEL_GROUND: return 0x65a845u;
+    case ON_LEVEL_HAZARD: return 0xe56c5bu;
+    case ON_LEVEL_SLOPE: return 0xe56c5bu;
+    case ON_LEVEL_TRIGGER: return 0xf27652u;
+    case ON_LEVEL_PARTICLE: return 0x68f0d8u;
+    default: return 0x55c8eau;
+    }
+}
+static void workshop_apply_color_default(int enabled) {
+    if (workshop_ground_selected) workshop_ground_color_default = enabled ? 1 : 0;
+    for (int i = 0; i < workshop_object_count; ++i) {
+        if (!workshop_selected_flags[i] ||
+            !workshop_type_can_manually_recolor(workshop_objects[i].type)) continue;
+        workshop_objects[i].color_default = enabled ? 1 : 0;
+    }
+}
 static void workshop_clear_selection(void) {
     memset(workshop_selected_flags, 0, sizeof workshop_selected_flags);
     workshop_player_selected = workshop_goal_selected = workshop_ground_selected = 0;
@@ -1080,9 +1564,13 @@ static void workshop_load_selected_properties(int object) {
         workshop_layer = workshop_objects[object].layer;
         workshop_layer2 = workshop_objects[object].layer2;
         workshop_z_order = workshop_objects[object].z_order;
+        workshop_alpha = workshop_objects[object].alpha;
+        workshop_pulse = workshop_objects[object].pulse;
+        workshop_shake = workshop_objects[object].shake;
         if (workshop_type_can_manually_recolor(workshop_objects[object].type)) {
             workshop_color_set = workshop_objects[object].color_set;
             workshop_color_index = workshop_objects[object].color_index;
+            workshop_color_default = workshop_objects[object].color_default;
         }
         if (workshop_objects[object].type == ON_LEVEL_TRIGGER)
             workshop_trigger_kind = workshop_objects[object].trigger_kind;
@@ -1101,12 +1589,89 @@ static void workshop_load_selected_properties(int object) {
             workshop_palette_type = ON_LEVEL_PORTAL_NORMAL;
             workshop_portal_variant = workshop_objects[object].type;
         }
-    } else if (object == -2) workshop_group_id = 1;
-    else if (object == -3) {
-        workshop_group_id = 2;
+    } else if (object == -2) {
+        workshop_group_id = workshop_player_group_id;
+        workshop_layer = workshop_player_layer;
+        workshop_layer2 = workshop_player_layer2;
+        workshop_z_order = workshop_player_z_order;
+        workshop_alpha = workshop_player_alpha;
+        workshop_pulse = workshop_player_pulse;
+        workshop_shake = workshop_player_shake;
+    } else if (object == -3) {
+        workshop_group_id = workshop_goal_group_id;
+        workshop_layer = workshop_goal_layer;
+        workshop_layer2 = workshop_goal_layer2;
+        workshop_z_order = workshop_goal_z_order;
+        workshop_alpha = workshop_goal_alpha;
+        workshop_pulse = workshop_goal_pulse;
+        workshop_shake = workshop_goal_shake;
         workshop_palette_type = ON_LEVEL_GOAL;
         workshop_goal_variant = ON_LEVEL_GOAL;
-    } else if (object == -4) workshop_group_id = 3;
+    } else if (object == -4) {
+        workshop_group_id = workshop_ground_group_id;
+        workshop_layer = workshop_ground_layer;
+        workshop_layer2 = workshop_ground_layer2;
+        workshop_z_order = workshop_ground_z_order;
+        workshop_alpha = workshop_ground_alpha;
+        workshop_pulse = workshop_ground_pulse;
+        workshop_shake = workshop_ground_shake;
+    }
+}
+
+static void workshop_apply_group_properties(void) {
+    int selected_any = 0;
+    for (int i = 0; i < workshop_object_count; ++i) {
+        if (!workshop_selected_flags[i]) continue;
+        WorkshopObject *o = &workshop_objects[i];
+        o->group_id = workshop_group_id;
+        o->layer = workshop_layer;
+        o->layer2 = workshop_layer2;
+        o->z_order = workshop_z_order;
+        o->alpha = workshop_alpha;
+        o->pulse = !!workshop_pulse;
+        o->shake = !!workshop_shake;
+        selected_any = 1;
+    }
+    if (workshop_player_selected) {
+        workshop_player_group_id = workshop_group_id;
+        workshop_player_layer = workshop_layer;
+        workshop_player_layer2 = workshop_layer2;
+        workshop_player_z_order = workshop_z_order;
+        workshop_player_alpha = workshop_alpha;
+        workshop_player_pulse = !!workshop_pulse;
+        workshop_player_shake = !!workshop_shake;
+        selected_any = 1;
+    }
+    if (workshop_goal_selected) {
+        workshop_goal_group_id = workshop_group_id;
+        workshop_goal_layer = workshop_layer;
+        workshop_goal_layer2 = workshop_layer2;
+        workshop_goal_z_order = workshop_z_order;
+        workshop_goal_alpha = workshop_alpha;
+        workshop_goal_pulse = !!workshop_pulse;
+        workshop_goal_shake = !!workshop_shake;
+        selected_any = 1;
+    }
+    if (workshop_ground_selected) {
+        workshop_ground_group_id = workshop_group_id;
+        workshop_ground_layer = workshop_layer;
+        workshop_ground_layer2 = workshop_layer2;
+        workshop_ground_z_order = workshop_z_order;
+        workshop_ground_alpha = workshop_alpha;
+        workshop_ground_pulse = !!workshop_pulse;
+        workshop_ground_shake = !!workshop_shake;
+        selected_any = 1;
+    }
+    if (selected_any && workshop_group_id > workshop_next_group_id)
+        workshop_next_group_id = workshop_group_id;
+}
+static void workshop_set_layer_for_selection(int value) {
+    workshop_layer = value;
+    for (int i = 0; i < workshop_object_count; ++i)
+        if (workshop_selected_flags[i]) workshop_objects[i].layer = value;
+    if (workshop_player_selected) workshop_player_layer = value;
+    if (workshop_goal_selected) workshop_goal_layer = value;
+    if (workshop_ground_selected) workshop_ground_layer = value;
 }
 
 static void workshop_place_object(int type, int col, int row) {
@@ -1114,12 +1679,14 @@ static void workshop_place_object(int type, int col, int row) {
         workshop_player_x = workshop_world_coord(col, workshop_player_w);
         workshop_player_y = workshop_world_coord(row, workshop_player_h);
         workshop_select_only(-2);
+        workshop_load_selected_properties(-2);
         return;
     }
     if (type == ON_LEVEL_GOAL) {
         workshop_goal_x = workshop_world_coord(col, workshop_goal_w);
         workshop_goal_y = workshop_world_coord(row, workshop_goal_h);
         workshop_select_only(-3);
+        workshop_load_selected_properties(-3);
         return;
     }
     int found = workshop_find_cell(col + .5f, row + .5f);
@@ -1144,11 +1711,17 @@ static void workshop_place_object(int type, int col, int row) {
     o->layer = workshop_layer;
     o->layer2 = workshop_layer2;
     o->z_order = workshop_z_order;
+    o->alpha = workshop_alpha;
+    o->pulse = workshop_pulse;
+    o->shake = workshop_shake;
     o->color_set = workshop_type_can_manually_recolor(type) ? workshop_color_set : 0;
     o->color_index = workshop_type_can_manually_recolor(type) ? workshop_color_index : 0;
+    o->color_default = workshop_type_can_manually_recolor(type) ?
+                       workshop_color_default : 0;
     if (type == ON_LEVEL_PARTICLE)
         o->emitter = on_level_particle_default();
     o->trigger_event = ON_TRIGGER_TOUCH;
+    o->trigger_touch_mode = ON_TRIGGER_TOUCH_ENTER;o->trigger_count = 3;
     o->trigger_group_id = workshop_trigger_kind == ON_TRIGGER_KIND_RECOLOR ? 3 : 2;
     o->trigger_x = 1;o->trigger_y = 0;o->trigger_duration = 3;
     workshop_set_trigger_kind(o, workshop_trigger_kind);
@@ -1355,9 +1928,11 @@ static void workshop_copy_selection(void) {
             .type=ON_LEVEL_GROUND,
             .x=workshop_ground_x,.y=workshop_ground_y,
             .w=workshop_ground_w,.h=workshop_ground_h,
-            .angle=workshop_ground_angle,.group_id=3,
-            .layer=workshop_layer,.layer2=workshop_layer2,
-            .z_order=workshop_z_order,.color_set=workshop_ground_color_set,
+            .angle=workshop_ground_angle,.group_id=workshop_ground_group_id,
+            .layer=workshop_ground_layer,.layer2=workshop_ground_layer2,
+            .z_order=workshop_ground_z_order,.alpha=workshop_ground_alpha,
+            .pulse=workshop_ground_pulse,.shake=workshop_ground_shake,
+            .color_set=workshop_ground_color_set,
             .color_index=workshop_ground_color_index,.trigger_kind=workshop_trigger_kind
         };
     }
@@ -1428,7 +2003,10 @@ static const char *workshop_trigger_name(int kind) {
            kind == ON_TRIGGER_KIND_NO_COLLISION ? "Нет столкновения" :
            kind == ON_TRIGGER_KIND_GRAVITY ? "Гравитация" :
            kind == ON_TRIGGER_KIND_RECOLOR ? "Перекраска" :
-           kind == ON_TRIGGER_KIND_BACKGROUND ? "Фон" : "Движение";
+           kind == ON_TRIGGER_KIND_BACKGROUND ? "Фон" :
+           kind == ON_TRIGGER_KIND_COUNT ? "Счётчик" :
+           kind == ON_TRIGGER_KIND_TOGGLE ? "Переключатель" :
+           kind == ON_TRIGGER_KIND_SPAWN ? "Появление" : "Движение";
 }
 static int workshop_trigger_action_for_kind(int kind) {
     return kind == ON_TRIGGER_KIND_ROTATE ? ON_TRIGGER_ROTATE :
@@ -1438,7 +2016,9 @@ static int workshop_trigger_action_for_kind(int kind) {
            kind == ON_TRIGGER_KIND_GRAVITY ? ON_TRIGGER_SET_GRAVITY :
            kind == ON_TRIGGER_KIND_RECOLOR ? ON_TRIGGER_RECOLOR :
            kind == ON_TRIGGER_KIND_BACKGROUND ? ON_TRIGGER_SET_BACKGROUND :
-           ON_TRIGGER_MOVE;
+           kind == ON_TRIGGER_KIND_COUNT || kind == ON_TRIGGER_KIND_TOGGLE ?
+           ON_TRIGGER_TOGGLE :
+           kind == ON_TRIGGER_KIND_SPAWN ? ON_TRIGGER_ACTIVATE : ON_TRIGGER_MOVE;
 }
 static int workshop_group_has_recolorable_object(int group_id) {
     if (group_id == 3) return 1; /* built-in platform */
@@ -1450,7 +2030,7 @@ static int workshop_group_has_recolorable_object(int group_id) {
 }
 static void workshop_set_trigger_kind(WorkshopObject *object, int kind) {
     if (!object || kind < ON_TRIGGER_KIND_MOVE ||
-        kind > ON_TRIGGER_KIND_BACKGROUND) return;
+        kind > ON_TRIGGER_KIND_SPAWN) return;
     int previous_kind = object->trigger_kind;
     object->trigger_kind = kind;
     object->trigger_action = workshop_trigger_action_for_kind(kind);
@@ -1526,7 +2106,11 @@ static void workshop_build_preview(OnPublishedLevel *level) {
                              workshop_colors[workshop_ground_color_set % 4]
                                                              [workshop_ground_color_index % 8] :
                              0x65a845u,
-                         .number=3,.visible=1};
+                         .color_default=workshop_ground_color_default ? 1 : 0,
+                         .number=workshop_ground_group_id,.visible=1,
+                         .layer=workshop_ground_layer,.layer2=workshop_ground_layer2,
+                         .z_order=workshop_ground_z_order,.alpha=workshop_ground_alpha,
+                         .pulse=workshop_ground_pulse,.shake=workshop_ground_shake};
     snprintf(o->name, sizeof o->name, "%s", "Платформа");
     o = &level->objects[level->object_count++];
     *o = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
@@ -1535,7 +2119,10 @@ static void workshop_build_preview(OnPublishedLevel *level) {
                          .angle=workshop_player_angle,
                          .flip_x=workshop_player_flip_x,
                          .flip_y=workshop_player_flip_y,
-                         .color=0xffffffu,.number=1,.visible=1};
+                         .color=0xffffffu,.number=workshop_player_group_id,.visible=1,
+                         .layer=workshop_player_layer,.layer2=workshop_player_layer2,
+                         .z_order=workshop_player_z_order,.alpha=workshop_player_alpha,
+                         .pulse=workshop_player_pulse,.shake=workshop_player_shake};
     snprintf(o->name, sizeof o->name, "%s", "Игрок");
     o = &level->objects[level->object_count++];
     *o = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
@@ -1544,7 +2131,10 @@ static void workshop_build_preview(OnPublishedLevel *level) {
                          .angle=workshop_goal_angle,
                          .flip_x=workshop_goal_flip_x,
                          .flip_y=workshop_goal_flip_y,
-                         .color=0xffffffu,.number=2,.visible=1};
+                         .color=0xffffffu,.number=workshop_goal_group_id,.visible=1,
+                         .layer=workshop_goal_layer,.layer2=workshop_goal_layer2,
+                         .z_order=workshop_goal_z_order,.alpha=workshop_goal_alpha,
+                         .pulse=workshop_goal_pulse,.shake=workshop_goal_shake};
     snprintf(o->name, sizeof o->name, "%s", "Финиш");
     for (int i = 0; i < workshop_object_count &&
                     level->object_count < ON_LEVEL_OBJECT_CAP; ++i) {
@@ -1558,13 +2148,23 @@ static void workshop_build_preview(OnPublishedLevel *level) {
             .color=workshop_type_can_manually_recolor(src->type) ?
                 workshop_colors[src->color_set % 4][src->color_index % 8] :
                 0xffffffu,
+            .color_default=workshop_type_can_manually_recolor(src->type) &&
+                           src->color_default ? 1 : 0,
             .number=src->group_id, .visible=1,
+            .layer=src->layer, .layer2=src->layer2, .z_order=src->z_order,
+            .alpha=src->alpha < 0 || src->alpha > 100 ? 100 : src->alpha,
+            .pulse=src->pulse, .shake=src->shake,
             .trigger_kind=src->trigger_kind,
             .trigger_event=src->trigger_event,
             .trigger_action=src->trigger_action,
+            .trigger_touch_mode=src->trigger_touch_mode,
+            .trigger_count=src->trigger_count,
             .target_id=src->trigger_kind == ON_TRIGGER_KIND_GRAVITY ||
                        src->trigger_kind == ON_TRIGGER_KIND_RECOLOR ||
-                       src->trigger_kind == ON_TRIGGER_KIND_BACKGROUND ? 0 :
+                       src->trigger_kind == ON_TRIGGER_KIND_BACKGROUND ||
+                       src->trigger_kind == ON_TRIGGER_KIND_COUNT ||
+                       src->trigger_kind == ON_TRIGGER_KIND_TOGGLE ||
+                       src->trigger_kind == ON_TRIGGER_KIND_SPAWN ? 0 :
                        workshop_target_object_id(src->trigger_group_id),
             .trigger_value=src->trigger_kind == ON_TRIGGER_KIND_GRAVITY ?
                            (float)src->trigger_gravity :
@@ -1575,6 +2175,10 @@ static void workshop_build_preview(OnPublishedLevel *level) {
             .trigger_value_y=src->trigger_kind == ON_TRIGGER_KIND_MOVE ?
                              (float)src->trigger_y : 0.0f,
             .trigger_color=workshop_colors[src->color_set % 4][src->color_index % 8],
+            .trigger_color_default=src->type == ON_LEVEL_TRIGGER &&
+                src->color_default &&
+                (src->trigger_kind == ON_TRIGGER_KIND_RECOLOR ||
+                 src->trigger_kind == ON_TRIGGER_KIND_BACKGROUND) ? 1 : 0,
             .trigger_group_id=src->trigger_group_id,
             .trigger_has_group=src->type == ON_LEVEL_TRIGGER &&
                                src->trigger_kind != ON_TRIGGER_KIND_GRAVITY &&
@@ -1608,7 +2212,7 @@ static void workshop_draw_group_dialog(lv_obj_t *root) {
                  U_WORKSHOP_LAYER2_DEC, U_WORKSHOP_Z_DEC};
     int inc[] = {U_WORKSHOP_GROUP_INC, U_WORKSHOP_LAYER_INC,
                  U_WORKSHOP_LAYER2_INC, U_WORKSHOP_Z_INC};
-    int tops[] = {132, 218, 304, 390};
+    int tops[] = {122, 184, 246, 308};
     for (int i = 0; i < 4; ++i) {
         label(root, 218, tops[i] + 7, 232, 44, names[i], 2,
               WS_CREAM, LV_TEXT_ALIGN_LEFT);
@@ -1619,19 +2223,36 @@ static void workshop_draw_group_dialog(lv_obj_t *root) {
               WS_CREAM, LV_TEXT_ALIGN_CENTER);
         workshop_button(root, 691, tops[i], 58, 54, "+", 2, inc[i], BUTTON_GRAY);
     }
-    workshop_button(root, 803, 388, 205, 59, "+  Добавить группу", 1,
+    workshop_button(root, 803, 308, 205, 54, "+  Добавить группу", 1,
                     U_WORKSHOP_ADD_GROUP, WS_CYAN);
-    label(root, 207, 485, 850, 38, "БЫСТРЫЙ ВЫБОР СЛОЯ", 1,
+    label(root, 218, 376, 232, 38, "Прозрачность", 2,
+          WS_CREAM, LV_TEXT_ALIGN_LEFT);
+    workshop_button(root, 481, 366, 58, 48, "−", 2,
+                    U_WORKSHOP_ALPHA_DEC, BUTTON_GRAY);
+    char alpha_text[24];snprintf(alpha_text, sizeof alpha_text, "%d%%",
+                                  workshop_alpha);
+    box(root, 547, 366, 136, 48, 8, WS_DARK_VALUE, 0);
+    label(root, 550, 370, 130, 40, alpha_text, 2,
+          WS_CREAM, LV_TEXT_ALIGN_CENTER);
+    workshop_button(root, 691, 366, 58, 48, "+", 2,
+                    U_WORKSHOP_ALPHA_INC, BUTTON_GRAY);
+    workshop_button(root, 803, 366, 205, 48,
+        workshop_pulse ? "Пульсация · ВКЛ." : "Пульсация · ВЫКЛ.", 1,
+        U_WORKSHOP_PULSE_TOGGLE, workshop_pulse ? WS_CYAN : BUTTON_GRAY);
+    workshop_button(root, 1018, 366, 150, 48,
+        workshop_shake ? "Тряска · ВКЛ." : "Тряска · ВЫКЛ.", 1,
+        U_WORKSHOP_SHAKE_TOGGLE, workshop_shake ? WS_CYAN : BUTTON_GRAY);
+    label(root, 207, 433, 850, 34, "БЫСТРЫЙ ВЫБОР СЛОЯ", 1,
           WS_YELLOW, LV_TEXT_ALIGN_CENTER);
     const char *layers[] = {"B5", "B4", "B3", "B2", "B1",
                             "T1", "T2", "T3", "T4", "По ум."};
     for (int i = 0; i < 10; ++i) {
         int x = 198 + i * 88;
-        workshop_button(root, x, 530, 80, 52, layers[i], 0,
+        workshop_button(root, x, 472, 80, 46, layers[i], 0,
                         U_WORKSHOP_LAYER_BASE + i,
                         workshop_layer == i ? WS_CYAN : BUTTON_GRAY);
     }
-    workshop_button(root, 500, 620, 280, 61, "ОК", 3,
+    workshop_button(root, 500, 590, 280, 61, "ОК", 3,
                     U_WORKSHOP_DIALOG_OK, WS_ACCENT);
 }
 
@@ -1733,16 +2354,22 @@ static void workshop_draw_color_dialog(lv_obj_t *root) {
         lv_color_t color = lv_color_hex(workshop_colors[workshop_color_set][i]);
         lv_obj_t *swatch = workshop_button(root, x, y, 150, 88, "", 0,
                         U_WORKSHOP_COLOR_BASE + i, color);
-        if (workshop_color_index == i) {
+        if (!workshop_color_default && workshop_color_index == i) {
             lv_obj_set_style_border_color(swatch, WS_CREAM, 0);
             lv_obj_set_style_border_width(swatch, 6, 0);
         }
     }
     char selected[56];
-    snprintf(selected, sizeof selected, "Палитра %d",
-             workshop_color_set + 1);
-    label(root, 230, 500, 820, 40, selected, 1,
+    if (workshop_color_default)
+        snprintf(selected, sizeof selected, "%s", "Обычная картинка");
+    else
+        snprintf(selected, sizeof selected, "Палитра %d",
+                 workshop_color_set + 1);
+    label(root, 230, 500, 400, 40, selected, 1,
           WS_CREAM, LV_TEXT_ALIGN_CENTER);
+    workshop_button(root, 650, 494, 400, 56, "По умолчанию", 1,
+                    U_WORKSHOP_COLOR_DEFAULT,
+                    workshop_color_default ? WS_CYAN : BUTTON_GRAY);
     workshop_button(root, 500, 566, 280, 64, "ОК", 3,
                     U_WORKSHOP_DIALOG_OK, WS_ACCENT);
 }
@@ -1911,7 +2538,7 @@ static void workshop_keyboard_text_mode(lv_obj_t *keyboard) {
 }
 
 static int workshop_input_is_trigger(int kind) {
-    return kind >= WS_INPUT_TRIGGER_GROUP && kind <= WS_INPUT_TRIGGER_DURATION;
+    return kind >= WS_INPUT_TRIGGER_GROUP && kind <= WS_INPUT_TRIGGER_COUNT;
 }
 static int workshop_input_is_geometry(int kind) {
     return kind >= WS_INPUT_OBJECT_WIDTH && kind <= WS_INPUT_OBJECT_ANGLE;
@@ -1920,10 +2547,16 @@ static const char *workshop_input_title(void) {
     switch (workshop_input_kind) {
     case WS_INPUT_TITLE: return "Название уровня";
     case WS_INPUT_DESCRIPTION: return "Описание уровня";
+    case WS_INPUT_ACCOUNT_LOGIN: return "Ник · a-z, 0-9 и _";
+    case WS_INPUT_ACCOUNT_PASSWORD: return "Пароль · 6-72 знака";
+    case WS_INPUT_ACCOUNT_BAN_NICK: return "Ник игрока";
+    case WS_INPUT_COMMENT: return "Сообщение · до 300 знаков";
+    case WS_INPUT_CATALOG_SEARCH: return "Поиск по каталогу";
     case WS_INPUT_TRIGGER_GROUP: return "Группа триггера · 0–9999";
     case WS_INPUT_TRIGGER_X: return "Смещение X · −9999…9999";
     case WS_INPUT_TRIGGER_Y: return "Смещение Y · −9999…9999";
     case WS_INPUT_TRIGGER_DURATION: return "Время вращения · 1–9999 секунд";
+    case WS_INPUT_TRIGGER_COUNT: return "Срабатываний · 1–999";
     case WS_INPUT_OBJECT_WIDTH: return "Ширина объекта · 0,1–64";
     case WS_INPUT_OBJECT_HEIGHT: return "Высота объекта · 0,1–40";
     case WS_INPUT_OBJECT_ANGLE: return "Свободный угол · 0–360 градусов";
@@ -1943,6 +2576,31 @@ static void workshop_finish_keyboard_input(void) {
     if (!workshop_active_textarea) {workshop_cancel_keyboard_input();return;}
     const char *text = lv_textarea_get_text(workshop_active_textarea);
     if (!text) text = "";
+    if (workshop_input_kind == WS_INPUT_CATALOG_SEARCH) {
+        snprintf(catalog_search, sizeof catalog_search, "%s", text);
+        workshop_cancel_keyboard_input();
+        return;
+    }
+    if (workshop_input_kind == WS_INPUT_ACCOUNT_LOGIN ||
+        workshop_input_kind == WS_INPUT_ACCOUNT_PASSWORD ||
+        workshop_input_kind == WS_INPUT_ACCOUNT_BAN_NICK ||
+        workshop_input_kind == WS_INPUT_COMMENT) {
+        char *target = workshop_input_kind == WS_INPUT_ACCOUNT_LOGIN ?
+            account_login_input : workshop_input_kind == WS_INPUT_ACCOUNT_PASSWORD ?
+            account_password_input : workshop_input_kind == WS_INPUT_ACCOUNT_BAN_NICK ?
+            account_ban_input : comment_input;
+        size_t cap = workshop_input_kind == WS_INPUT_ACCOUNT_PASSWORD ?
+            sizeof account_password_input :
+            workshop_input_kind == WS_INPUT_COMMENT ? sizeof comment_input :
+            sizeof account_login_input;
+        snprintf(target, cap, "%s", text);
+        workshop_keyboard_active = 0;
+        workshop_input_kind = WS_INPUT_NONE;
+        workshop_active_textarea = NULL;
+        workshop_dialog = workshop_input_return_dialog;
+        dirty = 1;
+        return;
+    }
     if (workshop_input_kind == WS_INPUT_TITLE) {
         snprintf(workshop_name, sizeof workshop_name, "%s", text);
     } else if (workshop_input_kind == WS_INPUT_DESCRIPTION) {
@@ -1980,6 +2638,12 @@ static void workshop_finish_keyboard_input(void) {
             if (value < 1) value = 1;
             if (value > 9999) value = 9999;
             o->trigger_duration = (int)value;
+        } else if (workshop_input_kind == WS_INPUT_TRIGGER_COUNT) {
+            if (value < 1) value = 1;
+            if (value > 999) value = 999;
+            o->trigger_count = (int)value;
+            if (o->trigger_event == ON_TRIGGER_START && o->trigger_count > 1)
+                o->trigger_count = 1;
         }
     }
     workshop_keyboard_active = 0;
@@ -2055,14 +2719,21 @@ static void workshop_keyboard_event(lv_event_t *event) {
 }
 
 static void workshop_open_keyboard_input(int input_kind) {
-    if (workshop_input_is_trigger(input_kind) &&
-        (workshop_selected < 0 || workshop_selected >= workshop_object_count ||
-         workshop_objects[workshop_selected].type != ON_LEVEL_TRIGGER)) return;
-    if (workshop_input_is_geometry(input_kind) && !workshop_selection_count()) return;
+    int account_field = input_kind == WS_INPUT_ACCOUNT_LOGIN ||
+        input_kind == WS_INPUT_ACCOUNT_PASSWORD ||
+        input_kind == WS_INPUT_ACCOUNT_BAN_NICK || input_kind == WS_INPUT_COMMENT;
+    if (!account_field) {
+        if (workshop_input_is_trigger(input_kind) &&
+            (workshop_selected < 0 || workshop_selected >= workshop_object_count ||
+             workshop_objects[workshop_selected].type != ON_LEVEL_TRIGGER)) return;
+        if (workshop_input_is_geometry(input_kind) && !workshop_selection_count()) return;
+    }
     workshop_input_kind = input_kind;
     workshop_input_return_dialog = workshop_dialog;
     workshop_keyboard_active = 1;
-    workshop_text_language = 0;workshop_text_upper = 0;
+    /* Comments are written in the player's language, nicks are latin only. */
+    workshop_text_language = 0;
+    workshop_text_upper = 0;
     workshop_active_textarea = NULL;
     dirty = 1;
 }
@@ -2087,23 +2758,52 @@ static void workshop_draw_keyboard_dialog(lv_obj_t *root) {
     lv_obj_set_style_radius(textarea, 8, 0);
     lv_textarea_set_cursor_click_pos(textarea, true);
     int numeric = workshop_input_kind >= WS_INPUT_TRIGGER_GROUP;
-    lv_textarea_set_one_line(textarea, numeric || workshop_input_kind == WS_INPUT_TITLE);
+    int account_field = workshop_input_kind == WS_INPUT_ACCOUNT_LOGIN ||
+        workshop_input_kind == WS_INPUT_ACCOUNT_PASSWORD ||
+        workshop_input_kind == WS_INPUT_ACCOUNT_BAN_NICK ||
+        workshop_input_kind == WS_INPUT_COMMENT;
+    lv_textarea_set_one_line(textarea, numeric || account_field ||
+                             workshop_input_kind == WS_INPUT_TITLE ||
+                             workshop_input_kind == WS_INPUT_CATALOG_SEARCH);
     lv_textarea_set_max_length(textarea,
         workshop_input_kind == WS_INPUT_TITLE ? 80 :
-        workshop_input_kind == WS_INPUT_DESCRIPTION ? 160 : 10);
+        workshop_input_kind == WS_INPUT_CATALOG_SEARCH ? 64 :
+        workshop_input_kind == WS_INPUT_DESCRIPTION ? 160 :
+        workshop_input_kind == WS_INPUT_COMMENT ? 300 :
+        account_field ? 24 : 10);
+    if (workshop_input_kind == WS_INPUT_ACCOUNT_PASSWORD)
+        lv_textarea_set_max_length(textarea, 72);
     if (numeric) lv_textarea_set_accepted_chars(textarea, "-0123456789.");
+    /* Nicks are latin letters, digits and underscore: no spaces, no ¢ or ₽. */
+    if (workshop_input_kind == WS_INPUT_ACCOUNT_LOGIN ||
+        workshop_input_kind == WS_INPUT_ACCOUNT_BAN_NICK)
+        lv_textarea_set_accepted_chars(textarea,
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_");
+    if (workshop_input_kind == WS_INPUT_ACCOUNT_PASSWORD)
+        lv_textarea_set_password_mode(textarea, true);
     char initial[ON_LEVEL_DESCRIPTION_SIZE] = {0};
     if (workshop_input_kind == WS_INPUT_TITLE)
         snprintf(initial, sizeof initial, "%s", workshop_name);
     else if (workshop_input_kind == WS_INPUT_DESCRIPTION)
         snprintf(initial, sizeof initial, "%s", workshop_description);
+    else if (workshop_input_kind == WS_INPUT_ACCOUNT_LOGIN)
+        snprintf(initial, sizeof initial, "%s", account_login_input);
+    else if (workshop_input_kind == WS_INPUT_ACCOUNT_PASSWORD)
+        snprintf(initial, sizeof initial, "%s", account_password_input);
+    else if (workshop_input_kind == WS_INPUT_ACCOUNT_BAN_NICK)
+        snprintf(initial, sizeof initial, "%s", account_ban_input);
+    else if (workshop_input_kind == WS_INPUT_COMMENT)
+        snprintf(initial, sizeof initial, "%s", comment_input);
+    else if (workshop_input_kind == WS_INPUT_CATALOG_SEARCH)
+        snprintf(initial, sizeof initial, "%s", catalog_search);
     else if (workshop_input_is_trigger(workshop_input_kind) &&
              workshop_selected >= 0 && workshop_selected < workshop_object_count) {
         const WorkshopObject *o = &workshop_objects[workshop_selected];
         int value = workshop_input_kind == WS_INPUT_TRIGGER_GROUP ? o->trigger_group_id :
                     workshop_input_kind == WS_INPUT_TRIGGER_X ? o->trigger_x :
                     workshop_input_kind == WS_INPUT_TRIGGER_Y ? o->trigger_y :
-                    o->trigger_duration;
+                    workshop_input_kind == WS_INPUT_TRIGGER_DURATION ?
+                    o->trigger_duration : o->trigger_count;
         snprintf(initial, sizeof initial, "%d", value);
     } else if (workshop_input_is_geometry(workshop_input_kind)) {
         float *x, *y, *w, *h, *angle;
@@ -2163,6 +2863,19 @@ static void workshop_draw_trigger_dialog(lv_obj_t *root) {
           WS_CREAM, LV_TEXT_ALIGN_CENTER);
     workshop_button(root, 845, 144, 66, 58, "›", 2,
                     U_WORKSHOP_TRIGGER_EVENT_NEXT, BUTTON_GRAY);
+    static const char *const touch_modes[] = {"Вход", "Выход",
+                                              "Удержание · 0,25с"};
+    if (o->trigger_event == ON_TRIGGER_TOUCH) {
+        char mode_label[42];
+        snprintf(mode_label, sizeof mode_label, "Режим · %s",
+                 font_translate(touch_modes[o->trigger_touch_mode % 3]));
+        workshop_button(root, 932, 144, 242, 58, mode_label, 1,
+                        U_WORKSHOP_TRIGGER_TOUCH_MODE, WS_CYAN);
+    } else {
+        box(root, 932, 144, 242, 58, 8, WS_DARK_VALUE, 0);
+        label(root, 940, 151, 226, 44, "Режим · не используется", 0,
+              WS_CREAM, LV_TEXT_ALIGN_CENTER);
+    }
     char value[32];
     if (o->trigger_kind == ON_TRIGGER_KIND_GRAVITY) {
         label(root, 158, 229, 310, 42, "Сила гравитации", 2,
@@ -2176,9 +2889,12 @@ static void workshop_draw_trigger_dialog(lv_obj_t *root) {
     } else if (o->trigger_kind == ON_TRIGGER_KIND_BACKGROUND) {
         label(root, 158, 229, 310, 42, "Цвет фона", 2,
               WS_YELLOW, LV_TEXT_ALIGN_LEFT);
-        snprintf(value, sizeof value, "#%06X",
-                 (unsigned)workshop_colors[o->color_set % 4][o->color_index % 8]);
-        workshop_button(root, 490, 216, 300, 64, value, 2,
+        if (o->color_default)
+            snprintf(value, sizeof value, "%s", "По умолчанию");
+        else
+            snprintf(value, sizeof value, "#%06X",
+                     (unsigned)workshop_colors[o->color_set % 4][o->color_index % 8]);
+        workshop_button(root, 490, 216, 300, 64, value, 1,
                         U_WORKSHOP_COLOR_PANEL, WS_DARK_VALUE);
     } else {
         label(root, 158, 229, 310, 42,
@@ -2187,12 +2903,22 @@ static void workshop_draw_trigger_dialog(lv_obj_t *root) {
         snprintf(value, sizeof value, "%d", o->trigger_group_id);
         workshop_button(root, 490, 216, 300, 64, value, 2,
                         U_WORKSHOP_TRIGGER_GROUP_EDIT, WS_DARK_VALUE);
+        if (o->trigger_kind == ON_TRIGGER_KIND_COUNT) {
+            label(root, 822, 229, 210, 42, "Срабатываний до действия", 1,
+                  WS_YELLOW, LV_TEXT_ALIGN_LEFT);
+            snprintf(value, sizeof value, "%d", o->trigger_count);
+            workshop_button(root, 1040, 216, 134, 64, value, 2,
+                            U_WORKSHOP_TRIGGER_COUNT_EDIT, WS_DARK_VALUE);
+        }
         if (o->trigger_kind == ON_TRIGGER_KIND_RECOLOR) {
             label(root, 158, 326, 310, 42, "Цвет объектов", 2,
                   WS_YELLOW, LV_TEXT_ALIGN_LEFT);
-            snprintf(value, sizeof value, "#%06X",
-                     (unsigned)workshop_colors[o->color_set % 4][o->color_index % 8]);
-            workshop_button(root, 490, 311, 300, 64, value, 2,
+            if (o->color_default)
+                snprintf(value, sizeof value, "%s", "По умолчанию");
+            else
+                snprintf(value, sizeof value, "#%06X",
+                         (unsigned)workshop_colors[o->color_set % 4][o->color_index % 8]);
+            workshop_button(root, 490, 311, 300, 64, value, 1,
                             U_WORKSHOP_COLOR_PANEL, WS_DARK_VALUE);
         }
     }
@@ -2225,15 +2951,19 @@ static void workshop_draw_trigger_dialog(lv_obj_t *root) {
           WS_YELLOW, LV_TEXT_ALIGN_LEFT);
     static const char *const trigger_names[] = {
         "Движение", "Разворот", "Вечно", "Невидимость",
-        "Нет столкновения", "Гравитация", "Перекраска", "Фон"
+        "Нет столкновения", "Гравитация", "Перекраска", "Фон",
+        "Счётчик", "Переключатель", "Появление"
     };
-    static const int trigger_x[] = {158, 407, 656, 905, 158, 407, 656, 905};
-    static const int trigger_y[] = {508, 508, 508, 508, 552, 552, 552, 552};
-    for (int i = 0; i < 8; ++i)
-        workshop_button(root, trigger_x[i], trigger_y[i], 220, 40, trigger_names[i], 0,
-                        U_WORKSHOP_TRIGGER_BASE + i,
+    static const int trigger_x[] = {158, 407, 656, 905, 158, 407, 656, 905,
+                                    158, 407, 656};
+    static const int trigger_y[] = {508, 508, 508, 508, 552, 552, 552, 552,
+                                    596, 596, 596};
+    for (int i = 0; i < 11; ++i)
+        workshop_button(root, trigger_x[i], trigger_y[i],
+                        i >= 8 ? 220 : 220, i >= 8 ? 38 : 40,
+                        trigger_names[i], 0, U_WORKSHOP_TRIGGER_BASE + i,
                         o->trigger_kind == i ? WS_CYAN : BUTTON_GRAY);
-    workshop_button(root, 500, 596, 280, 64, "ОК", 3,
+    workshop_button(root, 500, 638, 280, 44, "ОК", 3,
                     U_WORKSHOP_DIALOG_OK, WS_ACCENT);
 }
 
@@ -2423,11 +3153,31 @@ static void workshop_draw_transform_dialog(lv_obj_t *root) {
                     U_WORKSHOP_DIALOG_OK, WS_ACCENT);
 }
 
+static int workshop_draw_item_compare(const void *left, const void *right) {
+    const WorkshopDrawItem *a = (const WorkshopDrawItem *)left;
+    const WorkshopDrawItem *b = (const WorkshopDrawItem *)right;
+    if (a->layer != b->layer) return a->layer < b->layer ? -1 : 1;
+    if (a->layer2 != b->layer2) return a->layer2 < b->layer2 ? -1 : 1;
+    if (a->z_order != b->z_order) return a->z_order < b->z_order ? -1 : 1;
+    return a->sort_id - b->sort_id;
+}
 static void workshop_draw_world_object(lv_obj_t *root, int gx, int gy, int cell,
                                        int type, float x, float y, float w, float h,
                                        float angle, int flip_x, int flip_y,
-                                       int art_id, lv_color_t color, int selected) {
+                                       int art_id, lv_color_t color, int selected,
+                                       int default_color, int alpha, int pulse,
+                                       int shake, int object_id) {
     if (w <= 0 || h <= 0) return;
+    float base_w = w, base_h = h;
+    float pulse_scale = pulse ? 1.0f + .07f *
+        sinf(workshop_effect_preview_time * 6.28318530718f * 1.6f) : 1.0f;
+    float shake_offset = shake ?
+        sinf(workshop_effect_preview_time * 37.0f + (object_id % 4093) * .13f) * 2.5f : 0.0f;
+    w *= pulse_scale;h *= pulse_scale;
+    x += (base_w - w) * .5f + shake_offset / cell;
+    y += (base_h - h) * .5f;
+    lv_opa_t object_opacity = (lv_opa_t)lroundf(
+        fmaxf(0.0f, fminf(100.0f, (float)alpha)) * LV_OPA_COVER / 100.0f);
     float radians = angle * 0.01745329251994329577f;
     int art_flip_x = flip_x ^ (type == ON_LEVEL_ENEMY);
     float cx = gx + (x + w * .5f - workshop_camera_x) * cell;
@@ -2447,14 +3197,22 @@ static void workshop_draw_world_object(lv_obj_t *root, int gx, int gy, int cell,
     int rotation = (int)lroundf(angle * 10.0f);
     int has_art = art_id >= 0 && art_id < PV_ART_COUNT && pictures[art_id].data;
     int can_recolor_art = workshop_type_can_manually_recolor(type);
+    /* A default object shows the author's picture exactly as drawn. */
+    int tinted = can_recolor_art && !default_color;
     if (type == ON_LEVEL_PARTICLE) {
+        lv_color_t marker_color = default_color ?
+            lv_color_hex(workshop_default_object_color(type)) : color;
         lv_obj_t *marker = label(root, left, top, shape_w, shape_h, "P", 2,
-                                 color, LV_TEXT_ALIGN_CENTER);
+                                 marker_color, LV_TEXT_ALIGN_CENTER);
+        lv_obj_set_style_opa(marker, object_opacity, 0);
         lv_obj_set_style_transform_rotation(marker, rotation, 0);
         lv_obj_set_style_transform_pivot_x(marker, LV_PCT(50), 0);
         lv_obj_set_style_transform_pivot_y(marker, LV_PCT(50), 0);
-    } else if (type != ON_LEVEL_SLOPE && (!has_art || can_recolor_art)) {
-        lv_obj_t *shape = box(root, left, top, shape_w, shape_h, 4, color, 0);
+    } else if (type != ON_LEVEL_SLOPE && (!has_art || tinted)) {
+        lv_color_t body = default_color ?
+            lv_color_hex(workshop_default_object_color(type)) : color;
+        lv_obj_t *shape = box(root, left, top, shape_w, shape_h, 4, body, 0);
+        lv_obj_set_style_opa(shape, object_opacity, 0);
         lv_obj_set_style_transform_rotation(shape, rotation, 0);
         lv_obj_set_style_transform_pivot_x(shape, LV_PCT(50), 0);
         lv_obj_set_style_transform_pivot_y(shape, LV_PCT(50), 0);
@@ -2479,7 +3237,8 @@ static void workshop_draw_world_object(lv_obj_t *root, int gx, int gy, int cell,
                 lv_obj_t *image = art_flipped(root, art_id, tile_cx, tile_cy,
                                               image_w, art_flip_x, flip_y);
                 if (image) {
-                    if (can_recolor_art) {
+                    lv_obj_set_style_opa(image, object_opacity, 0);
+                    if (tinted) {
                         lv_obj_set_style_image_recolor(image, color, 0);
                         lv_obj_set_style_image_recolor_opa(image, LV_OPA_50, 0);
                     }
@@ -2500,7 +3259,8 @@ static void workshop_draw_world_object(lv_obj_t *root, int gx, int gy, int cell,
                                           (int)lroundf(cy), image_w,
                                           art_flip_x, flip_y);
             if (image) {
-                if (can_recolor_art) {
+                lv_obj_set_style_opa(image, object_opacity, 0);
+                if (tinted) {
                     lv_obj_set_style_image_recolor(image, color, 0);
                     lv_obj_set_style_image_recolor_opa(image, LV_OPA_50, 0);
                 }
@@ -2586,6 +3346,16 @@ static void workshop_draw_world_object(lv_obj_t *root, int gx, int gy, int cell,
     }
 }
 
+/* Tool captions such as «ЗЕРКАЛО» are only a tutorial aid: they stay hidden
+ * until the player switches the tutorial mode on, and it is remembered. */
+static int workshop_hints_on(void) {
+    return preferences_tutorial_hints_enabled();
+}
+
+static const char *workshop_tutorial_text(void) {
+    return workshop_hints_on() ? "Обучение: ВКЛ." : "Обучение: ВЫКЛ.";
+}
+
 static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
     box(root, 0, 0, GAME_W, GAME_H, 0, WS_BACKGROUND, 0);
     for (int x = 0; x < GAME_W; x += 64)
@@ -2593,15 +3363,27 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
     for (int y = 0; y < GAME_H; y += 64)
         box(root, 0, y, GAME_W, 1, 0, WS_GRID, 0);
     box(root, 0, 0, GAME_W, 102, 0, WS_BROWN_DARK, 0);
-    label(root, 182, 17, 560, 60, workshop_name, 3, WS_CREAM,
-          LV_TEXT_ALIGN_LEFT);
+    lv_obj_t *workshop_title = label(root, 182, 17, 430, 60, workshop_name, 3,
+                                     WS_CREAM, LV_TEXT_ALIGN_LEFT);
+    lv_label_set_long_mode(workshop_title, LV_LABEL_LONG_MODE_DOTS);
     char object_count_text[64];
     snprintf(object_count_text, sizeof object_count_text, "Объектов: %d / %d",
              3 + workshop_object_count, ON_LEVEL_OBJECT_CAP);
     label(root, 184, 74, 360, 24, object_count_text, 0, WS_YELLOW,
           LV_TEXT_ALIGN_LEFT);
-    button(root, 22, 20, 138, 60, "Назад", 2, U_WORKSHOP_BACK);
-    workshop_button(root, 747, 20, 144, 60, "Публиковать", 1,
+    button(root, 22, 20, 138, 60, font_translate("Назад"), 2,
+           U_WORKSHOP_BACK);
+    button(root, 619, 20, 118, 50, font_translate("Аккаунт"), 1,
+           U_ACCOUNT_OPEN);
+    char account_status[ON_LOGIN_SIZE + 24];
+    snprintf(account_status, sizeof account_status, "%s",
+             view->account.signed_in ? view->account.login :
+             font_translate("Гость"));
+    lv_obj_t *account_status_label = label(root, 619, 73, 118, 21,
+                                            account_status, 0, WS_CREAM,
+                                            LV_TEXT_ALIGN_CENTER);
+    lv_label_set_long_mode(account_status_label, LV_LABEL_LONG_MODE_DOTS);
+    workshop_button(root, 747, 20, 144, 60, font_translate("Публиковать"), 1,
                     U_WORKSHOP_PUBLISH, WS_ACCENT);
     workshop_button(root, 906, 20, 142, 60, "Сохранить", 1,
                     U_WORKSHOP_SAVE, WS_CYAN);
@@ -2625,32 +3407,63 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
     for (int row = 0; row <= WS_GRID_ROWS; ++row)
         box(map_clip, 0, row * cell, map_width, 1, 0, WS_GRID, 0);
 
-    workshop_draw_world_object(map_clip, 0, 0, cell, ON_LEVEL_GROUND,
-        workshop_ground_x, workshop_ground_y, workshop_ground_w, workshop_ground_h,
-        workshop_ground_angle, workshop_ground_flip_x, workshop_ground_flip_y,
-        PV_ART_LEVEL_PLATFORM,
-        workshop_ground_color_custom ?
-            lv_color_hex(workshop_colors[workshop_ground_color_set % 4]
-                                        [workshop_ground_color_index % 8]) : C(476B4E),
-        workshop_is_selected(-4));
-    workshop_draw_world_object(map_clip, 0, 0, cell, ON_LEVEL_PLAYER,
-        workshop_player_x, workshop_player_y, workshop_player_w, workshop_player_h,
-        workshop_player_angle, workshop_player_flip_x, workshop_player_flip_y,
-        PV_ART_BREAD, WS_CREAM,
-        workshop_is_selected(-2));
-    workshop_draw_world_object(map_clip, 0, 0, cell, ON_LEVEL_GOAL,
-        workshop_goal_x, workshop_goal_y, workshop_goal_w, workshop_goal_h,
-        workshop_goal_angle, workshop_goal_flip_x, workshop_goal_flip_y,
-        PV_ART_LEVEL_FLAG, WS_CREAM,
-        workshop_is_selected(-3));
-    for (int i = 0; i < workshop_object_count; ++i) {
-        const WorkshopObject *o = &workshop_objects[i];
-        lv_color_t color = lv_color_hex(
-            workshop_colors[o->color_set % 4][o->color_index % 8]);
-        workshop_draw_world_object(map_clip, 0, 0, cell, o->type,
-            o->x, o->y, o->w, o->h, o->angle, o->flip_x, o->flip_y,
-            workshop_object_art(o->type, o->trigger_kind), color,
-            workshop_is_selected(i));
+    int draw_count = 0;
+    workshop_draw_items[draw_count++] = (WorkshopDrawItem){
+        -4, 1, workshop_ground_layer, workshop_ground_layer2,
+        workshop_ground_z_order};
+    workshop_draw_items[draw_count++] = (WorkshopDrawItem){
+        -2, 2, workshop_player_layer, workshop_player_layer2,
+        workshop_player_z_order};
+    workshop_draw_items[draw_count++] = (WorkshopDrawItem){
+        -3, 3, workshop_goal_layer, workshop_goal_layer2,
+        workshop_goal_z_order};
+    for (int i = 0; i < workshop_object_count &&
+                    draw_count < WS_OBJECT_CAP + 3; ++i)
+        workshop_draw_items[draw_count++] = (WorkshopDrawItem){
+            i, 4 + i, workshop_objects[i].layer, workshop_objects[i].layer2,
+            workshop_objects[i].z_order};
+    qsort(workshop_draw_items, (size_t)draw_count,
+          sizeof workshop_draw_items[0], workshop_draw_item_compare);
+    for (int order = 0; order < draw_count; ++order) {
+        const WorkshopDrawItem *item = &workshop_draw_items[order];
+        if (item->index == -4) {
+            workshop_draw_world_object(map_clip, 0, 0, cell, ON_LEVEL_GROUND,
+                workshop_ground_x, workshop_ground_y, workshop_ground_w,
+                workshop_ground_h, workshop_ground_angle,
+                workshop_ground_flip_x, workshop_ground_flip_y,
+                PV_ART_LEVEL_PLATFORM,
+                workshop_ground_color_custom ?
+                    lv_color_hex(workshop_colors[workshop_ground_color_set % 4]
+                                                [workshop_ground_color_index % 8]) : C(476B4E),
+                workshop_is_selected(-4), workshop_ground_color_default,
+                workshop_ground_alpha, workshop_ground_pulse,
+                workshop_ground_shake, item->sort_id);
+        } else if (item->index == -2) {
+            workshop_draw_world_object(map_clip, 0, 0, cell, ON_LEVEL_PLAYER,
+                workshop_player_x, workshop_player_y, workshop_player_w,
+                workshop_player_h, workshop_player_angle,
+                workshop_player_flip_x, workshop_player_flip_y,
+                PV_ART_BREAD, WS_CREAM, workshop_is_selected(-2), 0,
+                workshop_player_alpha, workshop_player_pulse,
+                workshop_player_shake, item->sort_id);
+        } else if (item->index == -3) {
+            workshop_draw_world_object(map_clip, 0, 0, cell, ON_LEVEL_GOAL,
+                workshop_goal_x, workshop_goal_y, workshop_goal_w,
+                workshop_goal_h, workshop_goal_angle,
+                workshop_goal_flip_x, workshop_goal_flip_y,
+                PV_ART_LEVEL_FLAG, WS_CREAM, workshop_is_selected(-3), 0,
+                workshop_goal_alpha, workshop_goal_pulse,
+                workshop_goal_shake, item->sort_id);
+        } else {
+            const WorkshopObject *o = &workshop_objects[item->index];
+            lv_color_t color = lv_color_hex(
+                workshop_colors[o->color_set % 4][o->color_index % 8]);
+            workshop_draw_world_object(map_clip, 0, 0, cell, o->type,
+                o->x, o->y, o->w, o->h, o->angle, o->flip_x, o->flip_y,
+                workshop_object_art(o->type, o->trigger_kind), color,
+                workshop_is_selected(item->index), o->color_default,
+                o->alpha, o->pulse, o->shake, 4 + item->index);
+        }
     }
     for (int row = 0; row < WS_GRID_ROWS; ++row)
         for (int col = 0; col < WS_GRID_COLS; ++col) {
@@ -2758,12 +3571,15 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
               WS_YELLOW, LV_TEXT_ALIGN_LEFT);
         static const char *const trigger_names[] = {
             "Движение", "Разворот", "Вечно", "Невидим.",
-            "Без столкн.", "Гравитац.", "Перекрас.", "Фон"
+            "Без столкн.", "Гравитац.", "Перекрас.", "Фон",
+            "Счётчик", "Переключ.", "Появление"
         };
-        static const int trigger_x[] = {760, 876, 992, 1108, 760, 876, 992, 1108};
-        static const int trigger_y[] = {420, 420, 420, 420, 461, 461, 461, 461};
-        for (int i = 0; i < 8; ++i)
-            workshop_button(root, trigger_x[i], trigger_y[i], 108, 38,
+        static const int trigger_x[] = {760, 876, 992, 1108, 760, 876, 992, 1108,
+                                        760, 876, 992};
+        static const int trigger_y[] = {414, 414, 414, 414, 450, 450, 450, 450,
+                                        486, 486, 486};
+        for (int i = 0; i < 11; ++i)
+            workshop_button(root, trigger_x[i], trigger_y[i], 108, 33,
                             trigger_names[i], 0, U_WORKSHOP_TRIGGER_BASE + i,
                             workshop_trigger_kind == i ? WS_CYAN : BUTTON_GRAY);
     }
@@ -2809,7 +3625,8 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
              workshop_camera_x, workshop_camera_y);
     int camera_y = (show_block_variants || show_trigger_variants ||
                     show_orb_variants || show_goal_variants ||
-                    show_portal_variants) ? 507 : 414;
+                    show_portal_variants) ?
+                    (show_trigger_variants ? 519 : 507) : 414;
     label(root, 768, camera_y, 214, 38, camera_label, 0,
           WS_CREAM, LV_TEXT_ALIGN_LEFT);
     workshop_arrow_button(root, 984, camera_y - 3, 52, 45,
@@ -2839,8 +3656,9 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
     workshop_button(root, 724, 565, 38, 62, "P", 2,
                     U_WORKSHOP_PALETTE_BASE + 9,
                     workshop_palette_type == ON_LEVEL_PARTICLE ? WS_CYAN : BUTTON_GRAY);
-    label(root, 43, 637, 193, 28, "ДВИГАТЬ ОБЪЕКТЫ", 0,
-          WS_YELLOW, LV_TEXT_ALIGN_LEFT);
+    if (workshop_hints_on())
+        label(root, 43, 637, 193, 28, "ДВИГАТЬ ОБЪЕКТЫ", 0,
+              WS_YELLOW, LV_TEXT_ALIGN_LEFT);
     workshop_nudge_button(root, 43, 666, 46, 44,
                           U_WORKSHOP_NUDGE_BASE, WS_ACCENT, -1);
     workshop_nudge_button(root, 92, 666, 46, 44,
@@ -2849,18 +3667,23 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
                           U_WORKSHOP_NUDGE_BASE + 2, WS_ACCENT, 2);
     workshop_nudge_button(root, 190, 666, 46, 44,
                           U_WORKSHOP_NUDGE_BASE + 3, WS_ACCENT, 1);
-    label(root, 252, 637, 96, 28, "ПОВОРОТ", 0,
-          WS_YELLOW, LV_TEXT_ALIGN_CENTER);
+    if (workshop_hints_on())
+        label(root, 252, 637, 96, 28, "ПОВОРОТ", 0,
+              WS_YELLOW, LV_TEXT_ALIGN_CENTER);
     workshop_rotation_button(root, 252, 666, 46, 44,
                              U_WORKSHOP_ROTATE_BASE, WS_ACCENT, -1, NULL, 0);
     workshop_rotation_button(root, 303, 666, 46, 44,
                              U_WORKSHOP_ROTATE_BASE + 1, WS_ACCENT, 1, NULL, 0);
-    label(root, 354, 637, 98, 28, "ЗЕРКАЛО", 0,
-          WS_YELLOW, LV_TEXT_ALIGN_CENTER);
+    if (workshop_hints_on())
+        label(root, 354, 637, 98, 28, "ЗЕРКАЛО", 0,
+              WS_YELLOW, LV_TEXT_ALIGN_CENTER);
     workshop_mirror_button(root, 354, 666, 46, 44,
                            U_WORKSHOP_FLIP_BASE, WS_ACCENT, 0);
     workshop_mirror_button(root, 405, 666, 46, 44,
                            U_WORKSHOP_FLIP_BASE + 1, WS_ACCENT, 1);
+    workshop_button(root, 480, 652, 250, 54, workshop_tutorial_text(), 1,
+                    U_TUTORIAL_TOGGLE,
+                    workshop_hints_on() ? WS_CYAN : BUTTON_GRAY);
     const char *publish_status = workshop_notice[0] ? workshop_notice :
         view->level_publish_busy ? "Публикуем уровень в общий каталог…" :
         view->level_publish_notice[0] ? view->level_publish_notice :
@@ -2889,6 +3712,7 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
     else if (workshop_dialog == WS_DIALOG_TRIGGER) workshop_draw_trigger_dialog(root);
     else if (workshop_dialog == WS_DIALOG_TRANSFORM) workshop_draw_transform_dialog(root);
     else if (workshop_dialog == WS_DIALOG_PARTICLE) workshop_draw_particle_dialog(root);
+    if (catalog_dialog == 1) catalog_draw_account_dialog(root, view);
     if (workshop_keyboard_active) workshop_draw_keyboard_dialog(root);
 }
 
@@ -3167,11 +3991,29 @@ static void custom_platformer_screen(lv_obj_t *root) {
     on_net_view(&view);
     const char *title = view.loaded_level_title[0] ?
         view.loaded_level_title : "Уровень";
-    label(root, 27, 18, 535, 66, title, 2, INK, LV_TEXT_ALIGN_LEFT);
+    label(root, 27, 16, 267, 64, title, 2, INK, LV_TEXT_ALIGN_LEFT);
+    GameCustomHudSnapshot hud;game_custom_hud_snapshot(&hud);
+    char hud_text[72];
+    snprintf(hud_text, sizeof hud_text, "Прогресс %d%%", hud.progress_percent);
+    label(root, 300, 15, 126, 35, hud_text, 0, INK, LV_TEXT_ALIGN_LEFT);
+    snprintf(hud_text, sizeof hud_text, "Попытка %d", hud.attempts);
+    label(root, 429, 15, 100, 35, hud_text, 0, INK, LV_TEXT_ALIGN_LEFT);
+    int hud_elapsed = (int)hud.elapsed_seconds;
+    snprintf(hud_text, sizeof hud_text, "Время %d:%02d",
+             hud_elapsed / 60, hud_elapsed % 60);
+    label(root, 532, 15, 105, 35, hud_text, 0, INK, LV_TEXT_ALIGN_LEFT);
+    snprintf(hud_text, sizeof hud_text, "Монеты %d/%d", hud.coins, hud.total_coins);
+    label(root, 640, 15, 155, 35, hud_text, 0, INK, LV_TEXT_ALIGN_LEFT);
+    lv_obj_t *progress = box(root, 300, 57, 484, 12, 6, C(C7D0D6), 0);
+    lv_obj_set_style_border_width(progress, 0, 0);
+    if (hud.progress_percent > 0) {
+        int fill_width = (478 * hud.progress_percent + 50) / 100;
+        lv_obj_t *fill = box(root, 303, 60, fill_width, 6, 3, C(F7C85B), 0);
+        lv_obj_set_style_border_width(fill, 0, 0);
+    }
     button(root, 805, 21, 210, 62, "Настройки", 1, U_SETTINGS_OPEN);
     button(root, 1033, 21, 215, 62, "К уровням", 2,
            U_CUSTOM_BACK);
-    if (game_custom_player_dead()) return;
 
     lv_obj_t *back = box(root, 58, 525, 100, 170, 12, BUTTON_WHITE, 0);
     vector_arrow(back, 13, 17, -1);
@@ -3182,15 +4024,23 @@ static void custom_platformer_screen(lv_obj_t *root) {
     label(forward, 1, 111, 98, 43, "ВПЕРЁД", 0, BUTTON_TEXT,
           LV_TEXT_ALIGN_CENTER);
 
+    if (!game_custom_jetpack_mode() &&
+        (hud.movement_abilities & ON_LEVEL_ABILITY_DASH)) {
+        lv_obj_t *dash = box(root, 750, 567, 140, 99, 18, BUTTON_WHITE, 1);
+        lv_obj_set_style_border_width(dash, 2, 0);
+        lv_obj_set_style_border_color(dash, BUTTON_BLACK, 0);
+        label(dash, 5, 24, 130, 53, "РЫВОК", 1, BUTTON_TEXT,
+              LV_TEXT_ALIGN_CENTER);
+    }
     lv_obj_t *trigger = box(root, 910, 567, 128, 99, 19, BUTTON_WHITE, 1);
     lv_obj_set_style_border_width(trigger, 2, 0);
-    lv_obj_set_style_border_color(trigger, C(243B52), 0);
+    lv_obj_set_style_border_color(trigger, BUTTON_BLACK, 0);
     label(trigger, 5, 21, 118, 56, "ДЕЙСТВИЕ", 1, BUTTON_TEXT,
           LV_TEXT_ALIGN_CENTER);
     if (!game_custom_jetpack_mode()) {
         lv_obj_t *jump = box(root, 1081, 525, 169, 169, 84, BUTTON_GRAY, 1);
         lv_obj_set_style_border_width(jump, 3, 0);
-        lv_obj_set_style_border_color(jump, C(243B52), 0);
+        lv_obj_set_style_border_color(jump, BUTTON_BLACK, 0);
         vector_arrow(jump, 47, 13, 0);
         label(jump, 4, 102, 161, 44, "ПРЫЖОК", 1, BUTTON_TEXT,
               LV_TEXT_ALIGN_CENTER);
@@ -3199,8 +4049,8 @@ static void custom_platformer_screen(lv_obj_t *root) {
         lv_obj_t *down = box(root, 1168, 525, 82, 169, 12, BUTTON_GRAY, 1);
         lv_obj_set_style_border_width(up, 3, 0);
         lv_obj_set_style_border_width(down, 3, 0);
-        lv_obj_set_style_border_color(up, C(243B52), 0);
-        lv_obj_set_style_border_color(down, C(243B52), 0);
+        lv_obj_set_style_border_color(up, BUTTON_BLACK, 0);
+        lv_obj_set_style_border_color(down, BUTTON_BLACK, 0);
         vector_arrow(up, 4, 9, 0);
         vector_arrow(down, 4, 9, 2);
         label(up, 1, 91, 80, 54, "ВВЕРХ", 0, BUTTON_TEXT,
@@ -3257,6 +4107,8 @@ static void settings_dialog(lv_obj_t *root) {
         preferences_neutral_background_enabled() ? 5 : 3, 0);
     lv_obj_set_style_border_width(artwork,
         preferences_neutral_background_enabled() ? 3 : 5, 0);
+    button(root, 350, 490, 580, 58, workshop_tutorial_text(), 2,
+           U_TUTORIAL_TOGGLE);
     button(root, 530, 566, 220, 56, "Закрыть", 1, U_SETTINGS_CLOSE);
 }
 
@@ -3392,6 +4244,7 @@ static uint32_t state_signature(int phase, const OnNetView *v) {
         h = mix(h, &workshop_ground_color_set, sizeof workshop_ground_color_set);
         h = mix(h, &workshop_ground_color_index, sizeof workshop_ground_color_index);
         h = mix(h, &workshop_ground_color_custom, sizeof workshop_ground_color_custom);
+        h = mix(h, &workshop_ground_color_default, sizeof workshop_ground_color_default);
         h = mix(h, &workshop_player_x, sizeof workshop_player_x);
         h = mix(h, &workshop_player_y, sizeof workshop_player_y);
         h = mix(h, &workshop_player_w, sizeof workshop_player_w);
@@ -3423,13 +4276,44 @@ static uint32_t state_signature(int phase, const OnNetView *v) {
         h = mix(h, &workshop_layer, sizeof workshop_layer);
         h = mix(h, &workshop_layer2, sizeof workshop_layer2);
         h = mix(h, &workshop_z_order, sizeof workshop_z_order);
+        h = mix(h, &workshop_alpha, sizeof workshop_alpha);
+        h = mix(h, &workshop_pulse, sizeof workshop_pulse);
+        h = mix(h, &workshop_shake, sizeof workshop_shake);
+        h = mix(h, &workshop_player_group_id, sizeof workshop_player_group_id);
+        h = mix(h, &workshop_player_layer, sizeof workshop_player_layer);
+        h = mix(h, &workshop_player_layer2, sizeof workshop_player_layer2);
+        h = mix(h, &workshop_player_z_order, sizeof workshop_player_z_order);
+        h = mix(h, &workshop_player_alpha, sizeof workshop_player_alpha);
+        h = mix(h, &workshop_player_pulse, sizeof workshop_player_pulse);
+        h = mix(h, &workshop_player_shake, sizeof workshop_player_shake);
+        h = mix(h, &workshop_goal_group_id, sizeof workshop_goal_group_id);
+        h = mix(h, &workshop_goal_layer, sizeof workshop_goal_layer);
+        h = mix(h, &workshop_goal_layer2, sizeof workshop_goal_layer2);
+        h = mix(h, &workshop_goal_z_order, sizeof workshop_goal_z_order);
+        h = mix(h, &workshop_goal_alpha, sizeof workshop_goal_alpha);
+        h = mix(h, &workshop_goal_pulse, sizeof workshop_goal_pulse);
+        h = mix(h, &workshop_goal_shake, sizeof workshop_goal_shake);
+        h = mix(h, &workshop_ground_group_id, sizeof workshop_ground_group_id);
+        h = mix(h, &workshop_ground_layer, sizeof workshop_ground_layer);
+        h = mix(h, &workshop_ground_layer2, sizeof workshop_ground_layer2);
+        h = mix(h, &workshop_ground_z_order, sizeof workshop_ground_z_order);
+        h = mix(h, &workshop_ground_alpha, sizeof workshop_ground_alpha);
+        h = mix(h, &workshop_ground_pulse, sizeof workshop_ground_pulse);
+        h = mix(h, &workshop_ground_shake, sizeof workshop_ground_shake);
         h = mix(h, &workshop_group_id, sizeof workshop_group_id);
         h = mix(h, &workshop_next_group_id, sizeof workshop_next_group_id);
         h = mix(h, &workshop_color_set, sizeof workshop_color_set);
         h = mix(h, &workshop_color_index, sizeof workshop_color_index);
+        h = mix(h, &workshop_color_default, sizeof workshop_color_default);
         h = mix(h, &v->level_publish_busy, sizeof v->level_publish_busy);
         h = mix(h, v->level_publish_id, strlen(v->level_publish_id));
         h = mix(h, v->level_publish_notice, strlen(v->level_publish_notice));
+        h = mix(h, &v->account, sizeof v->account);
+        h = mix(h, &v->account_busy, sizeof v->account_busy);
+        h = mix(h, v->account_notice, strlen(v->account_notice));
+        h = mix(h, &catalog_dialog, sizeof catalog_dialog);
+        h = mix(h, account_login_input, strlen(account_login_input));
+        h = mix(h, account_password_input, strlen(account_password_input));
     } else if (phase == GAME_ONLINE_ROOMS) {
         h = mix(h, &v->room_count, sizeof v->room_count);
         h = mix(h, &v->rooms, (size_t)v->room_count * sizeof v->rooms[0]);
@@ -3445,17 +4329,41 @@ static uint32_t state_signature(int phase, const OnNetView *v) {
         h = mix(h, &v->busy, sizeof v->busy);
         h = mix(h, v->notice, strlen(v->notice));
     } else if (phase == GAME_CUSTOM_LEVELS) {
+        h = mix(h, &custom_level_page, sizeof custom_level_page);
+        h = mix(h, catalog_search, strlen(catalog_search));
+        h = mix(h, &catalog_filter_difficulty, sizeof catalog_filter_difficulty);
+        h = mix(h, &catalog_filter_tag, sizeof catalog_filter_tag);
+        h = mix(h, &catalog_sort_mode, sizeof catalog_sort_mode);
         h = mix(h, &v->level_count, sizeof v->level_count);
         h = mix(h, v->levels, (size_t)v->level_count * sizeof v->levels[0]);
         h = mix(h, &v->levels_busy, sizeof v->levels_busy);
         h = mix(h, v->levels_notice, strlen(v->levels_notice));
+        h = mix(h, &v->account, sizeof v->account);
+        h = mix(h, &v->comment_count, sizeof v->comment_count);
+        h = mix(h, v->comments, (size_t)v->comment_count * sizeof v->comments[0]);
+        h = mix(h, &v->account_busy, sizeof v->account_busy);
+        h = mix(h, &v->comments_busy, sizeof v->comments_busy);
+        h = mix(h, v->account_notice, strlen(v->account_notice));
+        h = mix(h, &catalog_dialog, sizeof catalog_dialog);
+        h = mix(h, catalog_selected, strlen(catalog_selected));
+        h = mix(h, account_login_input, strlen(account_login_input));
+        h = mix(h, account_password_input, strlen(account_password_input));
+        h = mix(h, account_ban_input, strlen(account_ban_input));
+        h = mix(h, comment_input, strlen(comment_input));
     } else if (phase == GAME_CUSTOM_PLAY) {
         h = mix(h, v->loaded_level_id, strlen(v->loaded_level_id));
         h = mix(h, v->loaded_level_title, strlen(v->loaded_level_title));
         int jetpack = game_custom_jetpack_mode();
-        int player_dead = game_custom_player_dead();
         h = mix(h, &jetpack, sizeof jetpack);
-        h = mix(h, &player_dead, sizeof player_dead);
+        GameCustomHudSnapshot hud;game_custom_hud_snapshot(&hud);
+        int seconds = (int)hud.elapsed_seconds;
+        h = mix(h, &hud.progress_percent, sizeof hud.progress_percent);
+        h = mix(h, &hud.attempts, sizeof hud.attempts);
+        h = mix(h, &seconds, sizeof seconds);
+        h = mix(h, &hud.coins, sizeof hud.coins);
+        h = mix(h, &hud.total_coins, sizeof hud.total_coins);
+        h = mix(h, &hud.won, sizeof hud.won);
+        h = mix(h, &hud.movement_abilities, sizeof hud.movement_abilities);
     } else if (phase == GAME_ONLINE_MATCH) {
         OnMatch s;
         int role, selected;
@@ -3712,7 +4620,7 @@ static void pressed(lv_event_t *ev) {
         workshop_block_variant = variants[code - U_WORKSHOP_BLOCK_VARIANT_BASE];
         dirty = 1;return;
     }
-    if (code >= U_WORKSHOP_TRIGGER_BASE && code < U_WORKSHOP_TRIGGER_BASE + 8) {
+    if (code >= U_WORKSHOP_TRIGGER_BASE && code < U_WORKSHOP_TRIGGER_BASE + 11) {
         workshop_trigger_kind = code - U_WORKSHOP_TRIGGER_BASE;
         if (workshop_dialog == WS_DIALOG_TRIGGER && workshop_selected >= 0 &&
             workshop_selected < workshop_object_count &&
@@ -3781,10 +4689,13 @@ static void pressed(lv_event_t *ev) {
         code < U_WORKSHOP_COLOR_BASE + 8) {
         if (workshop_selection_can_manually_recolor()) {
             workshop_color_index = code - U_WORKSHOP_COLOR_BASE;
+            /* Picking a swatch leaves the default mode behind. */
+            workshop_color_default = 0;
             if (workshop_ground_selected) {
                 workshop_ground_color_set = workshop_color_set;
                 workshop_ground_color_index = workshop_color_index;
                 workshop_ground_color_custom = 1;
+                workshop_ground_color_default = 0;
             }
             for (int i = 0; i < workshop_object_count; ++i) {
                 if (!workshop_selected_flags[i] ||
@@ -3792,6 +4703,7 @@ static void pressed(lv_event_t *ev) {
                     continue;
                 workshop_objects[i].color_set = workshop_color_set;
                 workshop_objects[i].color_index = workshop_color_index;
+                workshop_objects[i].color_default = 0;
             }
             dirty = 1;
         }
@@ -3799,9 +4711,7 @@ static void pressed(lv_event_t *ev) {
     }
     if (code >= U_WORKSHOP_LAYER_BASE &&
         code < U_WORKSHOP_LAYER_BASE + 10) {
-        workshop_layer = code - U_WORKSHOP_LAYER_BASE;
-        if (workshop_selected >= 0 && workshop_selected < workshop_object_count)
-            workshop_objects[workshop_selected].layer = workshop_layer;
+        workshop_set_layer_for_selection(code - U_WORKSHOP_LAYER_BASE);
         dirty = 1;return;
     }
     if (code >= U_KEY_BASE && code < U_KEY_BASE + 32) {
@@ -3819,8 +4729,166 @@ static void pressed(lv_event_t *ev) {
     if (code == U_ROOM_BASE + 9) {page++;dirty = 1;return;}
     if (code >= U_CUSTOM_LEVEL_BASE && code < U_CUSTOM_LEVEL_BASE + 8) {
         int n = code - U_CUSTOM_LEVEL_BASE;
-        if (visible_level_ids[n][0]) game_custom_level_request(visible_level_ids[n]);
+        if (visible_level_ids[n][0]) {
+            /* The first tap picks a level, the action bar below plays it. */
+            snprintf(catalog_selected, sizeof catalog_selected, "%s",
+                     visible_level_ids[n]);
+            dirty = 1;
+        }
         return;
+    }
+    if (code == U_CUSTOM_PLAY) {
+        if (catalog_selected[0]) game_custom_level_request(catalog_selected);
+        dirty = 1;return;
+    }
+    if (code == U_CUSTOM_DESELECT) {catalog_selected[0] = 0;dirty = 1;return;}
+    if (code == U_CUSTOM_LIKE) {
+        if (catalog_selected[0]) on_net_level_like(catalog_selected);
+        dirty = 1;return;
+    }
+    if (code == U_CATALOG_SEARCH) {
+        workshop_open_keyboard_input(WS_INPUT_CATALOG_SEARCH);
+        return;
+    }
+    if (code == U_CATALOG_SEARCH_CLEAR) {
+        catalog_search[0] = 0;custom_level_page = 0;dirty = 1;return;
+    }
+    if (code == U_CATALOG_DIFFICULTY) {
+        if (catalog_filter_difficulty == ON_LEVEL_DIFFICULTY_UNSPECIFIED)
+            catalog_filter_difficulty = ON_LEVEL_DIFFICULTY_EASY;
+        else if (catalog_filter_difficulty >= ON_LEVEL_DIFFICULTY_EXPERT)
+            catalog_filter_difficulty = ON_LEVEL_DIFFICULTY_UNSPECIFIED;
+        else catalog_filter_difficulty++;
+        custom_level_page = 0;dirty = 1;return;
+    }
+    if (code == U_CATALOG_TAG) {
+        OnNetView view;on_net_view(&view);
+        int unique_tags = 0;
+        for (int i = 0; i < view.level_count; ++i)
+            for (int t = 0; t < view.levels[i].tag_count; ++t) {
+                int duplicate = 0;
+                for (int j = 0; j <= i && !duplicate; ++j) {
+                    int limit = j == i ? t : view.levels[j].tag_count;
+                    for (int k = 0; k < limit; ++k)
+                        if (!strcmp(view.levels[i].tags[t], view.levels[j].tags[k]))
+                            { duplicate = 1;break; }
+                }
+                if (!duplicate) unique_tags++;
+            }
+        catalog_filter_tag = unique_tags ? catalog_filter_tag + 1 : -1;
+        if (catalog_filter_tag >= unique_tags) catalog_filter_tag = -1;
+        custom_level_page = 0;dirty = 1;return;
+    }
+    if (code == U_CATALOG_SORT) {
+        catalog_sort_mode = (catalog_sort_mode + 1) % 3;
+        custom_level_page = 0;dirty = 1;return;
+    }
+    if (code == U_CUSTOM_OFFICIAL) {
+        if (!catalog_selected[0]) return;
+        OnNetView view;
+        on_net_view(&view);
+        int official = 0;
+        for (int i = 0; i < view.level_count; i++)
+            if (!strcmp(view.levels[i].id, catalog_selected))
+                official = on_level_is_official(view.levels[i].id,
+                                                view.levels[i].official);
+        on_net_level_set_official(catalog_selected, !official);
+        dirty = 1;return;
+    }
+    if (code == U_ACCOUNT_OPEN) {
+        on_net_account_restore();
+        catalog_dialog = 1;dirty = 1;return;
+    }
+    if (code == U_ACCOUNT_CLOSE) {
+        catalog_dialog = 0;
+        workshop_publish_after_signin = 0;
+        account_dialog_submitted = 0;
+        dirty = 1;return;
+    }
+    if (code == U_ACCOUNT_SIGN_IN || code == U_ACCOUNT_CREATE) {
+        OnNetView account_view = {0};
+        on_net_account_restore();on_net_view(&account_view);
+        snprintf(account_token_before_submit,
+                 sizeof account_token_before_submit, "%s",
+                 account_view.account.token);
+        account_dialog_submitted = 1;
+        on_net_account_sign_in(account_login_input, account_password_input,
+                               code == U_ACCOUNT_CREATE);
+        dirty = 1;return;
+    }
+    if (code == U_ACCOUNT_SIGN_OUT) {
+        workshop_publish_after_signin = 0;
+        account_dialog_submitted = 0;
+        on_net_account_sign_out();
+        comment_input[0] = 0;
+        dirty = 1;return;
+    }
+    if (code == U_ACCOUNT_LOGIN_FIELD) {
+        workshop_open_keyboard_input(WS_INPUT_ACCOUNT_LOGIN);
+        return;
+    }
+    if (code == U_ACCOUNT_PASSWORD_FIELD) {
+        workshop_open_keyboard_input(WS_INPUT_ACCOUNT_PASSWORD);
+        return;
+    }
+    if (code == U_ACCOUNT_BAN_NICK) {
+        workshop_open_keyboard_input(WS_INPUT_ACCOUNT_BAN_NICK);
+        return;
+    }
+    if (code == U_ACCOUNT_BAN || code == U_ACCOUNT_UNBAN) {
+        if (account_ban_input[0])
+            on_net_account_ban(account_ban_input,
+                               font_translate("Нарушение правил"),
+                               code == U_ACCOUNT_BAN);
+        dirty = 1;return;
+    }
+    if (code == U_COMMENTS_OPEN) {
+        if (!catalog_selected[0]) return;
+        catalog_dialog = 2;
+        comment_input[0] = 0;
+        on_net_comments_load(catalog_selected);
+        dirty = 1;return;
+    }
+    if (code == U_COMMENT_CLOSE) {catalog_dialog = 0;dirty = 1;return;}
+    if (code == U_COMMENT_WRITE) {
+        workshop_open_keyboard_input(WS_INPUT_COMMENT);
+        return;
+    }
+    if (code == U_COMMENT_SEND) {
+        if (catalog_selected[0] && comment_input[0]) {
+            on_net_comment_post(catalog_selected, comment_input);
+            comment_input[0] = 0;
+        }
+        dirty = 1;return;
+    }
+    if (code == U_COMMENT_BAN_AUTHOR) {
+        OnNetView view;
+        on_net_view(&view);
+        for (int i = 0; i < view.level_count; i++)
+            if (!strcmp(view.levels[i].id, catalog_selected) &&
+                view.levels[i].author[0]) {
+                on_net_account_ban(view.levels[i].author,
+                                   font_translate("Уровень непроходимый"), 1);
+                break;
+            }
+        dirty = 1;return;
+    }
+    if (code >= U_COMMENT_HIDE_BASE && code < U_COMMENT_HIDE_BASE + 4) {
+        OnNetView view;
+        int n = code - U_COMMENT_HIDE_BASE;
+        on_net_view(&view);
+        if (catalog_selected[0] && n < view.comment_count)
+            on_net_comment_hide(catalog_selected, view.comments[n].id);
+        dirty = 1;return;
+    }
+    if (code >= U_COMMENT_BAN_BASE && code < U_COMMENT_BAN_BASE + 4) {
+        OnNetView view;
+        int n = code - U_COMMENT_BAN_BASE;
+        on_net_view(&view);
+        if (n < view.comment_count && view.comments[n].login[0])
+            on_net_account_ban(view.comments[n].login,
+                               font_translate("Плохое сообщение"), 1);
+        dirty = 1;return;
     }
     if (code == U_CUSTOM_PREV) {if (custom_level_page > 0) custom_level_page--;dirty = 1;return;}
     if (code == U_CUSTOM_NEXT) {custom_level_page++;dirty = 1;return;}
@@ -3828,7 +4896,8 @@ static void pressed(lv_event_t *ev) {
         game_input_press(300, 181 + (code - U_BOOK_ENTRY_BASE) * 99);
         dirty = 1;return;
     }
-    if (code > U_LEVEL_BASE && code <= U_LEVEL_BASE + 10) {
+    if (game_phase() == GAME_SELECT && code > U_LEVEL_BASE &&
+        code <= U_LEVEL_BASE + 10) {
         int n = code - U_LEVEL_BASE;
         game_input_press(190 + ((n - 1) % 5) * 220,
                          260 + ((n - 1) / 5) * 190);return;
@@ -3848,6 +4917,9 @@ static void pressed(lv_event_t *ev) {
         dirty = 1;break;
     case U_SETTINGS_BG_ART:
         preferences_set_neutral_background_enabled(0);
+        dirty = 1;break;
+    case U_TUTORIAL_TOGGLE:
+        preferences_set_tutorial_hints_enabled(!workshop_hints_on());
         dirty = 1;break;
     case U_MENU_PLAY: game_input_press(640, 600);break;
     case U_MENU_LEVELS: game_input_press(635, 85);break;
@@ -3875,6 +4947,15 @@ static void pressed(lv_event_t *ev) {
         workshop_open_keyboard_input(WS_INPUT_TRIGGER_Y);break;
     case U_WORKSHOP_TRIGGER_DURATION_EDIT:
         workshop_open_keyboard_input(WS_INPUT_TRIGGER_DURATION);break;
+    case U_WORKSHOP_TRIGGER_COUNT_EDIT:
+        workshop_open_keyboard_input(WS_INPUT_TRIGGER_COUNT);break;
+    case U_WORKSHOP_TRIGGER_TOUCH_MODE:
+        if (workshop_selected >= 0 && workshop_selected < workshop_object_count &&
+            workshop_objects[workshop_selected].type == ON_LEVEL_TRIGGER) {
+            WorkshopObject *o = &workshop_objects[workshop_selected];
+            o->trigger_touch_mode = (o->trigger_touch_mode + 1) % 3;
+        }
+        dirty = 1;break;
     case U_WORKSHOP_TRIGGER_EVENT_PREV:
     case U_WORKSHOP_TRIGGER_EVENT_NEXT:
         if (workshop_selected >= 0 && workshop_selected < workshop_object_count &&
@@ -3882,6 +4963,9 @@ static void pressed(lv_event_t *ev) {
             int step = code == U_WORKSHOP_TRIGGER_EVENT_NEXT ? 1 : 3;
             WorkshopObject *o = &workshop_objects[workshop_selected];
             o->trigger_event = (o->trigger_event + step) % 4;
+            if (o->trigger_kind == ON_TRIGGER_KIND_COUNT &&
+                o->trigger_event == ON_TRIGGER_START && o->trigger_count > 1)
+                o->trigger_count = 1;
         }
         dirty = 1;break;
     case U_WORKSHOP_TRIGGER_ACTION:
@@ -3896,8 +4980,16 @@ static void pressed(lv_event_t *ev) {
         workshop_draft_exists = 1;game_workshop_back();break;
     case U_WORKSHOP_PLAY: workshop_preview();break;
     case U_WORKSHOP_PUBLISH: {
+        OnNetView account_view = {0};
+        on_net_account_restore();on_net_view(&account_view);
         workshop_build_preview(&workshop_preview_level);
         workshop_draft_exists = 1;
+        workshop_notice[0] = 0;
+        if (!account_view.account.signed_in) {
+            workshop_publish_after_signin = 1;
+            catalog_dialog = 1;
+            dirty = 1;break;
+        }
         if (!on_net_level_publish(&workshop_preview_level)) dirty = 1;
         break;
     }
@@ -3946,11 +5038,8 @@ static void pressed(lv_event_t *ev) {
         dirty = 1;break;
     case U_WORKSHOP_GROUP_PANEL:
         workshop_dialog = WS_DIALOG_GROUP;
-        if (workshop_selected >= 0 && workshop_selected < workshop_object_count) {
-            WorkshopObject *o = &workshop_objects[workshop_selected];
-            workshop_group_id = o->group_id;workshop_layer = o->layer;
-            workshop_layer2 = o->layer2;workshop_z_order = o->z_order;
-        }
+        if (workshop_selection_count() && workshop_selected != -1)
+            workshop_load_selected_properties(workshop_selected);
         dirty = 1;break;
     case U_WORKSHOP_COLOR_PANEL:
         if (workshop_selection_can_manually_recolor()) {
@@ -3959,13 +5048,20 @@ static void pressed(lv_event_t *ev) {
             if (selected >= 0) {
                 workshop_color_set = workshop_objects[selected].color_set;
                 workshop_color_index = workshop_objects[selected].color_index;
+                workshop_color_default = workshop_objects[selected].color_default;
             } else {
                 workshop_color_set = workshop_ground_color_set;
                 workshop_color_index = workshop_ground_color_index;
+                workshop_color_default = workshop_ground_color_default;
             }
             dirty = 1;
         }
         break;
+    case U_WORKSHOP_COLOR_DEFAULT:
+        /* Default simply turns the object's own picture back on. */
+        workshop_color_default = workshop_color_default ? 0 : 1;
+        workshop_apply_color_default(workshop_color_default);
+        dirty = 1;break;
     case U_WORKSHOP_DIALOG_OK:
         if (workshop_dialog == WS_DIALOG_MOVE &&
             workshop_selected >= 0 && workshop_selected < workshop_object_count) {
@@ -3974,13 +5070,8 @@ static void pressed(lv_event_t *ev) {
             float moved_y = o->y + (workshop_lock_y ? 0 : workshop_move_y);
             o->x = workshop_world_coord(moved_x, o->w);
             o->y = workshop_world_coord(moved_y, o->h);
-        } else if (workshop_dialog == WS_DIALOG_GROUP &&
-                   workshop_selected >= 0 && workshop_selected < workshop_object_count) {
-            WorkshopObject *o = &workshop_objects[workshop_selected];
-            o->group_id = workshop_group_id;o->layer = workshop_layer;
-            o->layer2 = workshop_layer2;o->z_order = workshop_z_order;
-            if (workshop_group_id > workshop_next_group_id)
-                workshop_next_group_id = workshop_group_id;
+        } else if (workshop_dialog == WS_DIALOG_GROUP) {
+            workshop_apply_group_properties();
         }
         workshop_dialog = WS_DIALOG_NONE;dirty = 1;break;
     case U_WORKSHOP_EASE_PREV: workshop_easing = (workshop_easing + 3) & 3;dirty = 1;break;
@@ -4017,6 +5108,18 @@ static void pressed(lv_event_t *ev) {
     case U_WORKSHOP_LAYER2_INC: if (workshop_layer2 < 9) workshop_layer2++;dirty = 1;break;
     case U_WORKSHOP_Z_DEC: if (workshop_z_order > -99) workshop_z_order--;dirty = 1;break;
     case U_WORKSHOP_Z_INC: if (workshop_z_order < 99) workshop_z_order++;dirty = 1;break;
+    case U_WORKSHOP_ALPHA_DEC:
+        if (workshop_alpha >= 10) workshop_alpha -= 10;
+        workshop_apply_group_properties();dirty = 1;break;
+    case U_WORKSHOP_ALPHA_INC:
+        if (workshop_alpha <= 90) workshop_alpha += 10;
+        workshop_apply_group_properties();dirty = 1;break;
+    case U_WORKSHOP_PULSE_TOGGLE:
+        workshop_pulse = !workshop_pulse;
+        workshop_apply_group_properties();dirty = 1;break;
+    case U_WORKSHOP_SHAKE_TOGGLE:
+        workshop_shake = !workshop_shake;
+        workshop_apply_group_properties();dirty = 1;break;
     case U_WORKSHOP_TOUCH: workshop_touch = !workshop_touch;dirty = 1;break;
     case U_WORKSHOP_SPAWN: workshop_spawn = !workshop_spawn;dirty = 1;break;
     case U_WORKSHOP_SILENT: workshop_silent = !workshop_silent;dirty = 1;break;
@@ -4096,8 +5199,8 @@ static void rebuild(int phase, const OnNetView *net) {
     lv_obj_remove_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
     if (phase == GAME_MENU) menu_screen(screen);
     else if (phase == GAME_SELECT) levels_screen(screen);
-    else if (phase == GAME_WORKSHOP) workshop_home_screen(screen);
-    else if (phase == GAME_WORKSHOP_DETAILS) workshop_details_screen(screen);
+    else if (phase == GAME_WORKSHOP) workshop_home_screen(screen, net);
+    else if (phase == GAME_WORKSHOP_DETAILS) workshop_details_screen(screen, net);
     else if (phase == GAME_WORKSHOP_EDIT) workshop_editor_screen(screen, net);
     else if (phase == GAME_CUSTOM_LEVELS) custom_levels_screen(screen, net);
     else if (phase == GAME_CUSTOM_PLAY) custom_platformer_screen(screen);
@@ -4187,6 +5290,8 @@ int lvgl_ui_init(void) {
         pictures[id].data = (const uint8_t *)pixels;
     }
     page = 0;chosen_map = 1;active_phase = -1;drag_index = -1;
+    if (!account_login_input[0])
+        preferences_account_login(account_login_input, sizeof account_login_input);
     drag_ghost = drag_target = NULL;
     drag_notice_left = 0;drag_notice[0] = 0;
     pointer_down = captured = touch_x = touch_y = search_open = dirty = 0;
@@ -4236,6 +5341,19 @@ int lvgl_ui_test_workshop_level(OnPublishedLevel *level) {
     if (!level) return 0;
     workshop_build_preview(level);
     return 1;
+}
+/* Fills the catalog's account fields without driving the on-screen keyboard
+ * key by key; the keyboard itself is covered by the workshop tests. */
+void lvgl_ui_test_set_account_input(const char *login, const char *password) {
+    snprintf(account_login_input, sizeof account_login_input, "%s",
+             login ? login : "");
+    snprintf(account_password_input, sizeof account_password_input, "%s",
+             password ? password : "");
+    dirty = 1;
+}
+void lvgl_ui_test_set_comment_input(const char *text) {
+    snprintf(comment_input, sizeof comment_input, "%s", text ? text : "");
+    dirty = 1;
 }
 #endif
 
@@ -4293,7 +5411,7 @@ static CustomTouch *custom_touch_allocate(int id) {
 }
 
 static void custom_controls_sync(void) {
-    int left = 0, right = 0, jump = 0, up = 0, down = 0, trigger = 0;
+    int left = 0, right = 0, jump = 0, up = 0, down = 0, trigger = 0, dash = 0;
     for (int i = 0; i < CUSTOM_TOUCH_MAX; ++i) {
         const CustomTouch *touch = &custom_touches[i];
         if (!touch->active) continue;
@@ -4303,15 +5421,18 @@ static void custom_controls_sync(void) {
         up |= touch->up;
         down |= touch->down;
         trigger |= touch->trigger;
+        dash |= touch->dash;
     }
     game_custom_control((int)right - (int)left, jump, trigger);
     game_custom_vertical_control((int)up - (int)down);
+    game_custom_dash_control(dash);
 }
 
 static void custom_controls_clear(void) {
     memset(custom_touches, 0, sizeof custom_touches);
     game_custom_control(0, 0, 0);
     game_custom_vertical_control(0);
+    game_custom_dash_control(0);
 }
 
 static void custom_settings_touch(int x, int y) {
@@ -4362,7 +5483,6 @@ int lvgl_ui_touch_pointer(int pointer_id, int x, int y, int down) {
         dirty = 1;
         return 1;
     }
-    if (game_custom_player_dead()) return 1;
     CustomTouch *touch = custom_touch_find(pointer_id);
     if (!down) {
         if (touch) memset(touch, 0, sizeof *touch);
@@ -4379,10 +5499,17 @@ int lvgl_ui_touch_pointer(int pointer_id, int x, int y, int down) {
                             y >= 525 && y < 695;
             int down_button = jetpack && x >= 1168 && x < 1250 &&
                               y >= 525 && y < 695;
+            int dash_button = !jetpack && x >= 750 && x < 895 &&
+                              y >= 567 && y < 666;
             int trigger_button = x >= 910 && x < 1038 && y >= 567 && y < 666;
+            GameCustomHudSnapshot hud;game_custom_hud_snapshot(&hud);
+            dash_button = dash_button &&
+                (hud.movement_abilities & ON_LEVEL_ABILITY_DASH);
             touch->axis = left_button ? -1 : right_button ? 1 : 0;
             touch->jump = !jetpack && (jump_button ||
-                (new_press && !left_button && !right_button && !trigger_button));
+                (new_press && !left_button && !right_button &&
+                 !trigger_button && !dash_button));
+            touch->dash = dash_button;
             touch->up = up_button;
             touch->down = down_button;
             touch->trigger = trigger_button;
@@ -4479,12 +5606,21 @@ int lvgl_ui_cancel(void) {
 
 void lvgl_ui_frame(float dt, uint32_t *game_rgba) {
     if (!display || !game_rgba) return;
-    if (game_phase() == GAME_WORKSHOP_EDIT &&
-        workshop_dialog == WS_DIALOG_PARTICLE) {
-        if (dt < 0.0f) dt = 0.0f;
-        if (dt > .05f) dt = .05f;
-        workshop_particle_preview_time += dt;
-        workshop_particle_preview_update();
+    if (game_phase() == GAME_WORKSHOP_EDIT && dt > 0.0f) {
+        float frame_dt = dt > .05f ? .05f : dt;
+        workshop_effect_preview_time += frame_dt;
+        if (workshop_dialog == WS_DIALOG_PARTICLE) {
+            workshop_particle_preview_time += frame_dt;
+            workshop_particle_preview_update();
+        } else if (workshop_dialog == WS_DIALOG_NONE &&
+                   !workshop_keyboard_active) {
+            int animate = workshop_player_pulse || workshop_player_shake ||
+                workshop_goal_pulse || workshop_goal_shake ||
+                workshop_ground_pulse || workshop_ground_shake;
+            for (int i = 0; i < workshop_object_count && !animate; ++i)
+                animate = workshop_objects[i].pulse || workshop_objects[i].shake;
+            if (animate) dirty = 1;
+        }
     }
     if (drag_notice_left > 0) {
         drag_notice_left -= dt;
@@ -4505,7 +5641,25 @@ void lvgl_ui_frame(float dt, uint32_t *game_rgba) {
     OnNetView v = {0};
     if (phase == GAME_ONLINE_ROOMS || phase == GAME_ONLINE_LOBBY ||
         phase == GAME_ONLINE_MATCH || phase == GAME_CUSTOM_LEVELS ||
-        phase == GAME_CUSTOM_PLAY || phase == GAME_WORKSHOP_EDIT) on_net_view(&v);
+        phase == GAME_CUSTOM_PLAY || phase == GAME_WORKSHOP ||
+        phase == GAME_WORKSHOP_DETAILS || phase == GAME_WORKSHOP_EDIT) on_net_view(&v);
+    if (account_dialog_submitted && !v.account_busy) {
+        account_dialog_submitted = 0;
+        if (v.account.signed_in &&
+            strcmp(v.account.token, account_token_before_submit)) {
+            account_password_input[0] = 0;
+            catalog_dialog = 0;
+            if (phase == GAME_WORKSHOP_EDIT && workshop_publish_after_signin) {
+                workshop_publish_after_signin = 0;
+                workshop_notice[0] = 0;
+                if (!on_net_level_publish(&workshop_preview_level))
+                    snprintf(workshop_notice, sizeof workshop_notice, "%s",
+                             font_translate("Не удалось начать публикацию."));
+            }
+            dirty = 1;
+        }
+        account_token_before_submit[0] = 0;
+    }
     if (drag_index >= 0 &&
         (phase != drag_phase || (phase == GAME_ONLINE_MATCH && v.state.winner))) {
         drag_index = -1;

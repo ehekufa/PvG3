@@ -25,6 +25,8 @@ int lvgl_ui_test_art_loaded(int id);
 int lvgl_ui_test_label_present(const char *text);
 int lvgl_ui_test_label_does_not_wrap(const char *text);
 int lvgl_ui_test_workshop_level(OnPublishedLevel *level);
+void lvgl_ui_test_set_account_input(const char *login, const char *password);
+void lvgl_ui_test_set_comment_input(const char *text);
 #endif
 
 #endif

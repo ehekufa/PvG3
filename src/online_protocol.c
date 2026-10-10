@@ -4,6 +4,7 @@
 #include "online_protocol.h"
 
 #include <ctype.h>
+#include <limits.h>
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -21,6 +22,7 @@
 typedef struct { char type; int start, end, after, count; } JT;
 typedef struct { const char *s; size_t n, at; JT *t; int used, cap, bad; } JD;
 
+static int utf8_units(const char *text, size_t cap, size_t limit);
 static void ws(JD *d) {
     while (d->at < d->n && (d->s[d->at] == ' ' || d->s[d->at] == '\t' ||
                              d->s[d->at] == '\n' || d->s[d->at] == '\r')) d->at++;
@@ -185,6 +187,12 @@ static int num(const JD *d, int t, double *out) {
     if (end != d->s + d->t[t].end || !isfinite(n)) return 0;
     *out = n;return 1;
 }
+static int int64_field(const JD *d, int obj, const char *key, int64_t *out) {
+    double value;
+    if (!out || !num(d, field(d, obj, key), &value) || value < 0 ||
+        value > 9000000000000000.0 || floor(value) != value) return 0;
+    *out = (int64_t)value;return 1;
+}
 static int int_field(const JD *d, int obj, const char *key, int *out) {
     double v;
     if (!num(d, field(d, obj, key), &v) || v < -2000000000.0 ||
@@ -319,7 +327,42 @@ static int level_trigger_kind(const JD *d, int token) {
     if (eq(d, token, "gravity")) return ON_TRIGGER_KIND_GRAVITY;
     if (eq(d, token, "recolor")) return ON_TRIGGER_KIND_RECOLOR;
     if (eq(d, token, "background")) return ON_TRIGGER_KIND_BACKGROUND;
+    if (eq(d, token, "count")) return ON_TRIGGER_KIND_COUNT;
+    if (eq(d, token, "toggle")) return ON_TRIGGER_KIND_TOGGLE;
+    if (eq(d, token, "spawn")) return ON_TRIGGER_KIND_SPAWN;
     return -1;
+}
+static int level_touch_mode(const JD *d, int token) {
+    if (token < 0 || eq(d, token, "enter")) return ON_TRIGGER_TOUCH_ENTER;
+    if (eq(d, token, "exit")) return ON_TRIGGER_TOUCH_EXIT;
+    if (eq(d, token, "stay")) return ON_TRIGGER_TOUCH_STAY;
+    return -1;
+}
+static int level_difficulty(const JD *d, int token) {
+    if (eq(d, token, "easy")) return ON_LEVEL_DIFFICULTY_EASY;
+    if (eq(d, token, "normal")) return ON_LEVEL_DIFFICULTY_NORMAL;
+    if (eq(d, token, "hard")) return ON_LEVEL_DIFFICULTY_HARD;
+    if (eq(d, token, "expert")) return ON_LEVEL_DIFFICULTY_EXPERT;
+    return 0;
+}
+static int parse_level_tags(const JD *d, int parent, char tags[][ON_LEVEL_TAG_SIZE],
+                            int *tag_count) {
+    if (!d || parent < 0 || !tags || !tag_count) return 0;
+    int token = field(d, parent, "tags");
+    *tag_count = 0;
+    if (token < 0 || d->t[token].type == 'z') return 1;
+    if (d->t[token].type != 'a' && d->t[token].type != 'o') return 0;
+    for (int child = token + 1; child < d->t[token].after; child = d->t[child].after) {
+        char value[ON_LEVEL_TAG_SIZE];
+        if (*tag_count >= ON_LEVEL_TAG_CAP ||
+            !text_string(d, child, value, sizeof value) || !value[0] ||
+            !utf8_units(value, sizeof value, 16)) return 0;
+        for (int i = 0; i < *tag_count; ++i)
+            if (!strcmp(tags[i], value)) return 0;
+        snprintf(tags[*tag_count], ON_LEVEL_TAG_SIZE, "%s", value);
+        ++*tag_count;
+    }
+    return 1;
 }
 static int parse_particle_emitter(const JD *d, int object,
                                  OnLevelParticle *emitter) {
@@ -372,8 +415,14 @@ static int mark_level_object_id(uint8_t *seen, int id) {
     *byte |= mask;
     return 1;
 }
+static int level_summary_newer(const OnPublishedLevelSummary *a,
+                               const OnPublishedLevelSummary *b) {
+    if (a->updated_at != b->updated_at) return a->updated_at > b->updated_at;
+    return strcmp(a->id, b->id) > 0;
+}
 int on_protocol_level_index(const char *json, OnPublishedLevelSummary *out, int cap) {
     if (!json || cap < 0 || (cap && !out)) return -1;
+    int limit = cap < ON_LEVEL_LIST_CAP ? cap : ON_LEVEL_LIST_CAP;
     JD d;if (!doc_open(&d, json)) return -1;
     if (d.t[0].type == 'z') {free(d.t);return 0;}
     if (d.t[0].type != 'o') {free(d.t);return -1;}
@@ -387,21 +436,102 @@ int on_protocol_level_index(const char *json, OnPublishedLevelSummary *out, int 
             int id_token = field(&d, value, "id");
             int title_token = field(&d, value, "title");
             int description_token = field(&d, value, "description");
+            int official_token = field(&d, value, "official");
+            int author_token = field(&d, value, "author");
+            int official = 0;
             char stored_id[ON_LEVEL_ID_SIZE];
+            char author[ON_LOGIN_SIZE] = {0};
             int description_ok = description_token < 0 ||
                 text_string(&d, description_token, description, sizeof description);
+            /* A moderator's badge is optional, and a malformed one never hides
+             * the level: the entry is simply shown without the mark. */
+            if (official_token >= 0) {int flag = 0;
+                if (bool_field(&d, value, "official", &flag)) official = flag;}
+            /* A missing or malformed author never hides the level. */
+            if (author_token >= 0 &&
+                !text_string(&d, author_token, author, sizeof author))
+                author[0] = 0;
+            if (!on_account_valid_login(author)) author[0] = 0;
             if (str(&d, id_token, stored_id, sizeof stored_id) && !strcmp(id, stored_id) &&
                 text_string(&d, title_token, title, sizeof title) && title[0] &&
-                description_ok && count < cap && count < ON_LEVEL_LIST_CAP) {
-                snprintf(tmp[count].id, sizeof tmp[count].id, "%s", id);
-                snprintf(tmp[count].title, sizeof tmp[count].title, "%s", title);
-                snprintf(tmp[count].description, sizeof tmp[count].description, "%s", description);
-                count++;
+                description_ok && limit > 0) {
+                OnPublishedLevelSummary candidate;
+                memset(&candidate, 0, sizeof candidate);
+                snprintf(candidate.id, sizeof candidate.id, "%s", id);
+                snprintf(candidate.title, sizeof candidate.title, "%s", title);
+                snprintf(candidate.description, sizeof candidate.description, "%s", description);
+                candidate.official = !!official;
+                snprintf(candidate.author, sizeof candidate.author, "%s", author);
+                candidate.difficulty = level_difficulty(&d,
+                    field(&d, value, "difficulty"));
+                if (!parse_level_tags(&d, value, candidate.tags,
+                                      &candidate.tag_count)) {
+                    memset(candidate.tags, 0, sizeof candidate.tags);
+                    candidate.tag_count = 0;
+                }
+                (void)int64_field(&d, value, "updatedAt", &candidate.updated_at);
+                int where = count;
+                while (where > 0 && level_summary_newer(&candidate,
+                                                        &tmp[where - 1]))
+                    --where;
+                if (where < limit) {
+                    if (count < limit) ++count;
+                    memmove(&tmp[where + 1], &tmp[where],
+                            (size_t)(count - where - 1) * sizeof tmp[0]);
+                    tmp[where] = candidate;
+                }
             }
         }
         key = d.t[value].after;
     }
     if (count) memcpy(out, tmp, (size_t)count * sizeof tmp[0]);
+    free(d.t);return count;
+}
+static unsigned level_stat_children(const JD *d, int node, const char *client_id,
+                                    int *mine) {
+    if (mine) *mine = 0;
+    if (!d || node < 0 || d->t[node].type != 'o') return 0;
+    unsigned count = 0;
+    for (int key = node + 1; key < d->t[node].after;) {
+        int value = key + 1;
+        char id[ON_PLAYER_ID_SIZE] = {0};
+        int active = d->t[value].type == 't';
+        if (active && str(d, key, id, sizeof id)) {
+            if (count < UINT_MAX) ++count;
+            if (mine && client_id && !strcmp(id, client_id)) *mine = 1;
+        }
+        key = d->t[value].after;
+    }
+    return count;
+}
+int on_protocol_level_stats(const char *json, OnPublishedLevelSummary *levels,
+                            int count, const char *client_id) {
+    if (!json || count < 0 || (count && !levels)) return -1;
+    JD d;if (!doc_open(&d, json)) return -1;
+    for (int i = 0; i < count; ++i) {
+        levels[i].likes = levels[i].downloads = 0;
+        levels[i].liked = levels[i].downloaded = 0;
+    }
+    if (d.t[0].type == 'z') {free(d.t);return 0;}
+    if (d.t[0].type != 'o') {free(d.t);return -1;}
+    for (int key = 1; key < d.t[0].after;) {
+        int value = key + 1;
+        char level_id[ON_LEVEL_ID_SIZE] = {0};
+        if (d.t[value].type == 'o' && str(&d, key, level_id, sizeof level_id)) {
+            int index = -1;
+            for (int i = 0; i < count; ++i)
+                if (!strcmp(levels[i].id, level_id)) {index = i;break;}
+            if (index >= 0) {
+                int likes = field(&d, value, "likes");
+                int downloads = field(&d, value, "downloads");
+                levels[index].likes = level_stat_children(&d, likes, client_id,
+                                                           &levels[index].liked);
+                levels[index].downloads = level_stat_children(&d, downloads,
+                    client_id, &levels[index].downloaded);
+            }
+        }
+        key = d.t[value].after;
+    }
     free(d.t);return count;
 }
 static int parse_level_object(const JD *d, int node, OnLevelObject *out) {
@@ -410,8 +540,27 @@ static int parse_level_object(const JD *d, int node, OnLevelObject *out) {
     int type = level_object_type(d, field(d, node, "type"));
     int flip_x_token = field(d, node, "flipX");
     int flip_y_token = field(d, node, "flipY");
+    int default_color_token = field(d, node, "defaultColor");
+    int pulse_token = field(d, node, "pulse");
+    int shake_token = field(d, node, "shake");
+    item.alpha = 100;
     if ((flip_x_token >= 0 && !bool_field(d, node, "flipX", &item.flip_x)) ||
-        (flip_y_token >= 0 && !bool_field(d, node, "flipY", &item.flip_y))) return 0;
+        (flip_y_token >= 0 && !bool_field(d, node, "flipY", &item.flip_y)) ||
+        (default_color_token >= 0 &&
+         !bool_field(d, node, "defaultColor", &item.color_default)) ||
+        (pulse_token >= 0 && !bool_field(d, node, "pulse", &item.pulse)) ||
+        (shake_token >= 0 && !bool_field(d, node, "shake", &item.shake))) return 0;
+    if ((field(d, node, "layer") >= 0 &&
+         !int_field(d, node, "layer", &item.layer)) ||
+        (field(d, node, "layer2") >= 0 &&
+         !int_field(d, node, "layer2", &item.layer2)) ||
+        (field(d, node, "zOrder") >= 0 &&
+         !int_field(d, node, "zOrder", &item.z_order)) ||
+        (field(d, node, "alpha") >= 0 &&
+         !int_field(d, node, "alpha", &item.alpha)) ||
+        item.layer < 0 || item.layer > 9 || item.layer2 < 0 || item.layer2 > 9 ||
+        item.z_order < -99 || item.z_order > 99 || item.alpha < 0 || item.alpha > 100)
+        return 0;
     if (type < 0 || !int_field(d, node, "id", &item.id) || item.id < 1 || item.id > 1000000 ||
         !float_field(d, node, "x", &item.x) || !float_field(d, node, "y", &item.y) ||
         !float_field(d, node, "w", &item.w) || !float_field(d, node, "h", &item.h) ||
@@ -444,6 +593,12 @@ static int parse_level_object(const JD *d, int node, OnLevelObject *out) {
         int value_y_token = field(d, trigger, "valueY");
         int degrees_token = field(d, trigger, "degrees");
         int duration_token = field(d, trigger, "duration");
+        int touch_mode_token = field(d, trigger, "touchMode");
+        int count_token = field(d, trigger, "count");
+        item.trigger_touch_mode = level_touch_mode(d, touch_mode_token);
+        item.trigger_count = 3;
+        if (item.trigger_kind == ON_TRIGGER_KIND_COUNT && count_token >= 0 &&
+            !int_field(d, trigger, "count", &item.trigger_count)) return 0;
         if (item.trigger_kind == ON_TRIGGER_KIND_ROTATE && duration_token >= 0)
             value_token = -1;
         else if (item.trigger_kind == ON_TRIGGER_KIND_ROTATE && degrees_token >= 0)
@@ -465,8 +620,10 @@ static int parse_level_object(const JD *d, int node, OnLevelObject *out) {
             item.trigger_has_duration = 1;
         }
         if (item.trigger_kind < ON_TRIGGER_KIND_MOVE ||
-            item.trigger_kind > ON_TRIGGER_KIND_BACKGROUND ||
+            item.trigger_kind > ON_TRIGGER_KIND_SPAWN ||
             item.trigger_event < 0 || item.trigger_action < 0 ||
+            item.trigger_touch_mode < ON_TRIGGER_TOUCH_ENTER ||
+            item.trigger_touch_mode > ON_TRIGGER_TOUCH_STAY ||
             (target_token >= 0 && !int_field(d, trigger, "targetId", &item.target_id)) ||
             (value_y_token >= 0 && !float_field(d, trigger, "valueY", &item.trigger_value_y)) ||
             !isfinite(item.trigger_value) || !isfinite(item.trigger_value_y) ||
@@ -474,7 +631,10 @@ static int parse_level_object(const JD *d, int node, OnLevelObject *out) {
                                   item.trigger_group_id < 0 || item.trigger_group_id > 9999)) ||
             item.target_id < 0 || item.target_id > 1000000 ||
             (field(d, trigger, "color") >= 0 &&
-             !color_value(d, field(d, trigger, "color"), &item.trigger_color))) return 0;
+             !color_value(d, field(d, trigger, "color"), &item.trigger_color)) ||
+            (field(d, trigger, "defaultColor") >= 0 &&
+             !bool_field(d, trigger, "defaultColor",
+                         &item.trigger_color_default))) return 0;
         item.trigger_has_group = group_token >= 0;
         if (item.trigger_kind == ON_TRIGGER_KIND_MOVE) {
             if (item.trigger_action > ON_TRIGGER_ROTATE ||
@@ -508,6 +668,22 @@ static int parse_level_object(const JD *d, int node, OnLevelObject *out) {
             if (item.trigger_action != ON_TRIGGER_SET_BACKGROUND || item.trigger_has_group ||
                 item.target_id != 0 || item.trigger_has_duration || value_token >= 0 ||
                 value_y_token >= 0 || item.trigger_value != 0 || item.trigger_value_y != 0)
+                return 0;
+        } else if (item.trigger_kind == ON_TRIGGER_KIND_COUNT) {
+            if (item.trigger_action != ON_TRIGGER_TOGGLE || !item.trigger_has_group ||
+                item.target_id != 0 || item.trigger_has_duration || value_token >= 0 ||
+                value_y_token >= 0 || item.trigger_count < 1 || item.trigger_count > 999 ||
+                (item.trigger_event == ON_TRIGGER_START && item.trigger_count > 1))
+                return 0;
+        } else if (item.trigger_kind == ON_TRIGGER_KIND_TOGGLE) {
+            if (item.trigger_action != ON_TRIGGER_TOGGLE || !item.trigger_has_group ||
+                item.target_id != 0 || item.trigger_has_duration || value_token >= 0 ||
+                value_y_token >= 0)
+                return 0;
+        } else if (item.trigger_kind == ON_TRIGGER_KIND_SPAWN) {
+            if (item.trigger_action != ON_TRIGGER_ACTIVATE || !item.trigger_has_group ||
+                item.target_id != 0 || item.trigger_has_duration || value_token >= 0 ||
+                value_y_token >= 0)
                 return 0;
         } else if (!item.trigger_has_group && item.target_id <= 0) {
             return 0;
@@ -544,6 +720,45 @@ int on_protocol_published_level(const char *json, const char *expected_id,
         description_token = field(&d, project, "description");
         if (description_token >= 0 &&
             !text_string(&d, description_token, value->description, sizeof value->description)) ok = 0;
+    }
+    int record_official_token = field(&d, 0, "official");
+    if (ok && record_official_token >= 0 &&
+        !bool_field(&d, 0, "official", &value->official)) ok = 0;
+    value->author[0] = 0;
+    value->author_token[0] = 0;
+    int record_author_token = field(&d, 0, "author");
+    if (ok && record_author_token >= 0) {
+        /* New signed publications use {login,tok}; older public records may
+         * still carry a bare login string. Never retain a read-back token. */
+        if (d.t[record_author_token].type == 'o') {
+            int login_token = field(&d, record_author_token, "login");
+            if (!text_string(&d, login_token, value->author,
+                             sizeof value->author)) ok = 0;
+        } else if (!text_string(&d, record_author_token, value->author,
+                                sizeof value->author)) ok = 0;
+    }
+    if (!on_account_valid_login(value->author)) value->author[0] = 0;
+    int difficulty_token = field(&d, 0, "difficulty");
+    value->difficulty = difficulty_token < 0 ? ON_LEVEL_DIFFICULTY_UNSPECIFIED :
+                        level_difficulty(&d, difficulty_token);
+    if (difficulty_token >= 0 && !value->difficulty) ok = 0;
+    if (ok && !parse_level_tags(&d, 0, value->tags, &value->tag_count)) ok = 0;
+    int movement = field(&d, 0, "movement");
+    if (ok && movement >= 0) {
+        if (d.t[movement].type != 'o') ok = 0;
+        int enabled = 0;
+        if (ok && field(&d, movement, "doubleJump") >= 0) {
+            if (!bool_field(&d, movement, "doubleJump", &enabled)) ok = 0;
+            else if (enabled) value->movement_abilities |= ON_LEVEL_ABILITY_DOUBLE_JUMP;
+        }
+        if (ok && field(&d, movement, "dash") >= 0) {
+            if (!bool_field(&d, movement, "dash", &enabled)) ok = 0;
+            else if (enabled) value->movement_abilities |= ON_LEVEL_ABILITY_DASH;
+        }
+        if (ok && field(&d, movement, "wallSlide") >= 0) {
+            if (!bool_field(&d, movement, "wallSlide", &enabled)) ok = 0;
+            else if (enabled) value->movement_abilities |= ON_LEVEL_ABILITY_WALL_SLIDE;
+        }
     }
     int objects = field(&d, project, "objects");
     if (ok && (objects < 0 || d.t[objects].type != 'a' ||
@@ -943,8 +1158,10 @@ static int utf8_units(const char *text, size_t cap, size_t limit) {
 }
 static int published_trigger_valid(const OnLevelObject *o) {
     if (!o || o->trigger_kind < ON_TRIGGER_KIND_MOVE ||
-        o->trigger_kind > ON_TRIGGER_KIND_BACKGROUND ||
+        o->trigger_kind > ON_TRIGGER_KIND_SPAWN ||
         o->trigger_event < ON_TRIGGER_TOUCH || o->trigger_event > ON_TRIGGER_START ||
+        o->trigger_touch_mode < ON_TRIGGER_TOUCH_ENTER ||
+        o->trigger_touch_mode > ON_TRIGGER_TOUCH_STAY ||
         o->trigger_action < ON_TRIGGER_TOGGLE ||
         o->trigger_action > ON_TRIGGER_SET_BACKGROUND ||
         o->target_id < 0 || o->target_id > 1000000 ||
@@ -953,6 +1170,7 @@ static int published_trigger_valid(const OnLevelObject *o) {
          (o->trigger_group_id < 0 || o->trigger_group_id > 9999)) ||
         (o->trigger_has_duration != 0 && o->trigger_has_duration != 1) ||
         (o->trigger_has_duration && o->trigger_kind != ON_TRIGGER_KIND_ROTATE) ||
+        (o->trigger_color_default != 0 && o->trigger_color_default != 1) ||
         !isfinite(o->trigger_value) || !isfinite(o->trigger_value_y) ||
         o->trigger_color > 0xffffffu) return 0;
     if (o->trigger_kind == ON_TRIGGER_KIND_MOVE) {
@@ -988,6 +1206,20 @@ static int published_trigger_valid(const OnLevelObject *o) {
         return o->trigger_action == ON_TRIGGER_SET_BACKGROUND && !o->trigger_has_group &&
             o->target_id == 0 && !o->trigger_has_duration &&
             o->trigger_value == 0 && o->trigger_value_y == 0;
+    if (o->trigger_kind == ON_TRIGGER_KIND_COUNT)
+        return o->trigger_action == ON_TRIGGER_TOGGLE && o->trigger_has_group &&
+            o->target_id == 0 && !o->trigger_has_duration &&
+            o->trigger_count >= 1 && o->trigger_count <= 999 &&
+            !(o->trigger_event == ON_TRIGGER_START && o->trigger_count > 1) &&
+            o->trigger_value == 0 && o->trigger_value_y == 0;
+    if (o->trigger_kind == ON_TRIGGER_KIND_TOGGLE)
+        return o->trigger_action == ON_TRIGGER_TOGGLE && o->trigger_has_group &&
+            o->target_id == 0 && !o->trigger_has_duration &&
+            o->trigger_value == 0 && o->trigger_value_y == 0;
+    if (o->trigger_kind == ON_TRIGGER_KIND_SPAWN)
+        return o->trigger_action == ON_TRIGGER_ACTIVATE && o->trigger_has_group &&
+            o->target_id == 0 && !o->trigger_has_duration &&
+            o->trigger_value == 0 && o->trigger_value_y == 0;
     if (!o->trigger_has_group && o->target_id <= 0) return 0;
     return (o->trigger_kind == ON_TRIGGER_KIND_INVISIBILITY &&
             o->trigger_action == ON_TRIGGER_INVISIBLE) ||
@@ -997,12 +1229,30 @@ static int published_trigger_valid(const OnLevelObject *o) {
 
 static int published_level_valid(const OnPublishedLevel *level) {
     if (!level || !on_protocol_valid_level_id(level->id) ||
+        !memchr(level->id, 0, sizeof level->id) ||
+        !memchr(level->author, 0, sizeof level->author) ||
+        !memchr(level->author_token, 0, sizeof level->author_token) ||
+        (level->author[0] && !on_account_valid_login(level->author)) ||
+        (level->author_token[0] &&
+         (!level->author[0] || !on_account_valid_token(level->author_token))) ||
         !level->title[0] || !memchr(level->title, 0, sizeof level->title) ||
         !memchr(level->description, 0, sizeof level->description) ||
         !utf8_units(level->title, sizeof level->title, 80) ||
         !utf8_units(level->description, sizeof level->description, 160) ||
         !level->width || !level->height || level->width != 16 || level->height != 10 ||
+        level->difficulty < ON_LEVEL_DIFFICULTY_UNSPECIFIED ||
+        level->difficulty > ON_LEVEL_DIFFICULTY_EXPERT ||
+        level->tag_count < 0 || level->tag_count > ON_LEVEL_TAG_CAP ||
+        (level->movement_abilities & ~(ON_LEVEL_ABILITY_DOUBLE_JUMP |
+          ON_LEVEL_ABILITY_DASH | ON_LEVEL_ABILITY_WALL_SLIDE)) != 0 ||
         level->object_count < 1 || level->object_count > ON_LEVEL_OBJECT_CAP) return 0;
+    for (int i = 0; i < level->tag_count; ++i) {
+        if (!memchr(level->tags[i], 0, sizeof level->tags[i]) ||
+            !level->tags[i][0] || !utf8_units(level->tags[i], sizeof level->tags[i], 16))
+            return 0;
+        for (int j = 0; j < i; ++j)
+            if (!strcmp(level->tags[i], level->tags[j])) return 0;
+    }
     uint8_t *seen = (uint8_t *)calloc(LEVEL_OBJECT_ID_BITMAP_BYTES, 1);
     if (!seen) return 0;
     int has_player = 0, has_goal = 0, valid = 1;
@@ -1017,8 +1267,13 @@ static int published_level_valid(const OnPublishedLevel *level) {
             o->x + o->w > ON_LEVEL_WORLD_LIMIT ||
             o->y + o->h > ON_LEVEL_WORLD_LIMIT || o->w > 64 || o->h > 40 ||
             o->angle < 0 || o->angle >= 360 || o->color > 0xffffffu ||
+            (o->color_default != 0 && o->color_default != 1) ||
             (o->flip_x != 0 && o->flip_x != 1) ||
             (o->flip_y != 0 && o->flip_y != 1) ||
+            o->layer < 0 || o->layer > 9 || o->layer2 < 0 || o->layer2 > 9 ||
+            o->z_order < -99 || o->z_order > 99 || o->alpha < 0 || o->alpha > 100 ||
+            (o->pulse != 0 && o->pulse != 1) ||
+            (o->shake != 0 && o->shake != 1) ||
             o->number < 0 || o->number > 9999 || (o->visible != 0 && o->visible != 1)) {
             valid = 0;break;
         }
@@ -1051,8 +1306,10 @@ size_t on_protocol_published_level_json(const OnPublishedLevel *level,
     };
     static const char *const trigger_kinds[] = {
         "move", "rotate", "forever", "invisibility", "no-collision", "gravity",
-        "recolor", "background"
+        "recolor", "background", "count", "toggle", "spawn"
     };
+    static const char *const touch_modes[] = {"enter", "exit", "stay"};
+    static const char *const difficulties[] = {"normal", "easy", "normal", "hard", "expert"};
     static const char *const names[] = {
         "Блок", "Платформа", "Шипы", "Монета", "Гусь", "Игрок", "Финиш", "Триггер",
         "Склон", "Жёлтый орб", "Оранжевый орб", "Эмиттер частиц", "Чекпоинт",
@@ -1063,6 +1320,16 @@ size_t on_protocol_published_level_json(const OnPublishedLevel *level,
     put_json_string(&w, level->id);
     put(&w, ",\"title\":");put_json_string(&w, level->title);
     put(&w, ",\"description\":");put_json_string(&w, level->description);
+    put(&w, ",\"difficulty\":\"%s\",\"tags\":[",
+        difficulties[level->difficulty]);
+    for (int i = 0; i < level->tag_count; ++i) {
+        if (i) put(&w, ",");
+        put_json_string(&w, level->tags[i]);
+    }
+    put(&w, "],\"movement\":{\"doubleJump\":%s,\"dash\":%s,\"wallSlide\":%s}",
+        level->movement_abilities & ON_LEVEL_ABILITY_DOUBLE_JUMP ? "true" : "false",
+        level->movement_abilities & ON_LEVEL_ABILITY_DASH ? "true" : "false",
+        level->movement_abilities & ON_LEVEL_ABILITY_WALL_SLIDE ? "true" : "false");
     put(&w, ",\"project\":{\"format\":\"PVG3-MAKER\",\"version\":1,"
         "\"width\":%d,\"height\":%d,\"objects\":[",
         level->width, level->height);
@@ -1074,15 +1341,26 @@ size_t on_protocol_published_level_json(const OnPublishedLevel *level,
         put(&w, ",\"x\":%.4f,\"y\":%.4f,\"w\":%.4f,\"h\":%.4f,"
             "\"angle\":%.3f,\"flipX\":%s,\"flipY\":%s,"
             "\"color\":\"#%06x\",\"number\":%d,"
-            "\"visible\":%s,\"layer\":0,\"layer2\":0,\"zOrder\":0",
+            "\"visible\":%s,\"layer\":%d,\"layer2\":%d,\"zOrder\":%d,"
+            "\"alpha\":%d,\"pulse\":%s,\"shake\":%s",
             (double)o->x, (double)o->y, (double)o->w, (double)o->h,
             (double)o->angle, o->flip_x ? "true" : "false",
             o->flip_y ? "true" : "false", (unsigned)o->color, o->number,
-            o->visible ? "true" : "false");
+            o->visible ? "true" : "false", o->layer, o->layer2, o->z_order,
+            o->alpha, o->pulse ? "true" : "false", o->shake ? "true" : "false");
+        /* Only levels that opt out of a tint carry the flag, so every older
+         * record keeps its exact payload. */
+        if (o->color_default) put(&w, ",\"defaultColor\":true");
         if (o->type == ON_LEVEL_TRIGGER) {
-            put(&w, ",\"trigger\":{\"kind\":\"%s\",\"event\":\"%s\",\"action\":\"%s\",\"targetId\":%d",
+            put(&w, ",\"trigger\":{\"kind\":\"%s\",\"event\":\"%s\",\"action\":\"%s\","
+                "\"targetId\":%d",
                 trigger_kinds[o->trigger_kind], events[o->trigger_event],
                 actions[o->trigger_action], o->target_id);
+            if (o->trigger_touch_mode != ON_TRIGGER_TOUCH_ENTER)
+                put(&w, ",\"touchMode\":\"%s\"",
+                    touch_modes[o->trigger_touch_mode]);
+            if (o->trigger_kind == ON_TRIGGER_KIND_COUNT)
+                put(&w, ",\"count\":%d", o->trigger_count);
             if (o->trigger_has_group)
                 put(&w, ",\"groupId\":%d", o->trigger_group_id);
             if (o->trigger_kind == ON_TRIGGER_KIND_MOVE) {
@@ -1101,7 +1379,11 @@ size_t on_protocol_published_level_json(const OnPublishedLevel *level,
             } else if (o->trigger_kind == ON_TRIGGER_KIND_GRAVITY) {
                 put(&w, ",\"value\":%.4f", (double)o->trigger_value);
             }
-            put(&w, ",\"color\":\"#%06x\"}", (unsigned)o->trigger_color);
+            put(&w, ",\"color\":\"#%06x\"", (unsigned)o->trigger_color);
+            if ((o->trigger_kind == ON_TRIGGER_KIND_RECOLOR ||
+                 o->trigger_kind == ON_TRIGGER_KIND_BACKGROUND) &&
+                o->trigger_color_default) put(&w, ",\"defaultColor\":true");
+            put(&w, "}");
         } else if (o->type == ON_LEVEL_PARTICLE) {
             const OnLevelParticle *emitter = &o->emitter;
             put(&w, ",\"emitter\":{\"enabled\":%s,\"continuous\":%s,"
@@ -1117,7 +1399,17 @@ size_t on_protocol_published_level_json(const OnPublishedLevel *level,
         }
         put(&w, "}");
     }
-    put(&w, "]}}");
+    put(&w, "]}");
+    if (level->official) put(&w, ",\"official\":true");
+    if (level->author[0]) {
+        put(&w, ",\"author\":");
+        if (level->author_token[0]) {
+            put(&w, "{\"login\":");put_json_string(&w, level->author);
+            put(&w, ",\"tok\":");put_json_string(&w, level->author_token);
+            put(&w, "}");
+        } else put_json_string(&w, level->author);
+    }
+    put(&w, "}");
     if (w.bad) {if (out) out[0] = 0;return 0;}
     return w.at;
 }
@@ -1127,8 +1419,21 @@ size_t on_protocol_level_summary_json(const OnPublishedLevel *level,
     JW w = {out, cap, 0, 0};
     put(&w, "{\"id\":");put_json_string(&w, level->id);
     put(&w, ",\"title\":");put_json_string(&w, level->title);
+    static const char *const difficulties[] = {"normal", "easy", "normal", "hard", "expert"};
     put(&w, ",\"description\":");put_json_string(&w, level->description);
-    put(&w, ",\"updatedAt\":%lld}", (long long)updated_at);
+    put(&w, ",\"difficulty\":\"%s\",\"tags\":[",
+        difficulties[level->difficulty]);
+    for (int i = 0; i < level->tag_count; ++i) {
+        if (i) put(&w, ",");
+        put_json_string(&w, level->tags[i]);
+    }
+    put(&w, "],\"updatedAt\":%lld", (long long)updated_at);
+    if (level->official) put(&w, ",\"official\":true");
+    if (level->author[0]) {
+        put(&w, ",\"author\":");
+        put_json_string(&w, level->author);
+    }
+    put(&w, "}");
     if (w.bad) {out[0] = 0;return 0;}
     return w.at;
 }

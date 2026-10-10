@@ -97,9 +97,15 @@ static void published_level_writer(void) {
     snprintf(level.id, sizeof level.id, "%s", "23817");
     snprintf(level.title, sizeof level.title, "%s", "Проверка \"уровня\"");
     snprintf(level.description, sizeof level.description, "%s", "Маршрут и триггер.");
-    level.width = 16;level.height = 10;level.object_count = 19;
+    level.width = 16;level.height = 10;level.object_count = 20;
+    level.difficulty = ON_LEVEL_DIFFICULTY_HARD;level.tag_count = 2;
+    snprintf(level.tags[0], sizeof level.tags[0], "%s", "точность");
+    snprintf(level.tags[1], sizeof level.tags[1], "%s", "прыжки");
+    level.movement_abilities = ON_LEVEL_ABILITY_DOUBLE_JUMP |
+        ON_LEVEL_ABILITY_DASH | ON_LEVEL_ABILITY_WALL_SLIDE;
     level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
-        .x=0,.y=8,.w=16,.h=2,.color=0x65a845u,.visible=1};
+        .x=0,.y=8,.w=16,.h=2,.color=0x65a845u,.visible=1,
+        .layer=2,.layer2=4,.z_order=7,.alpha=55,.pulse=1,.shake=1};
     snprintf(level.objects[0].name, sizeof level.objects[0].name, "%s", "Платформа");
     level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
         .x=1,.y=7,.w=.65f,.h=.85f,.color=0xffffffu,.visible=1};
@@ -169,6 +175,12 @@ static void published_level_writer(void) {
         .x=34,.y=-20,.w=1,.h=1,.color=0xf27652u,.visible=1,
         .trigger_kind=ON_TRIGGER_KIND_BACKGROUND,.trigger_event=ON_TRIGGER_START,
         .trigger_action=ON_TRIGGER_SET_BACKGROUND,.trigger_color=0x3456abu};
+    level.objects[19] = (OnLevelObject){.id=20,.type=ON_LEVEL_TRIGGER,
+        .x=36,.y=-20,.w=1,.h=1,.color=0xf27652u,.visible=1,
+        .trigger_kind=ON_TRIGGER_KIND_COUNT,.trigger_event=ON_TRIGGER_TOUCH,
+        .trigger_action=ON_TRIGGER_TOGGLE,.trigger_touch_mode=ON_TRIGGER_TOUCH_EXIT,
+        .trigger_count=4,.trigger_color=0xffc54eu,
+        .trigger_group_id=42,.trigger_has_group=1};
     char body[8192], index[1024];
     size_t size = on_protocol_published_level_json(&level, body, sizeof body);
     assert(size && strstr(body, "PVG3-PUBLISHED-LEVEL") &&
@@ -196,6 +208,15 @@ static void published_level_writer(void) {
            strstr(body, "\"type\":\"checkpoint\"") &&
            strstr(body, "\"type\":\"portal-normal\"") &&
            strstr(body, "\"type\":\"portal-jetpack\"") &&
+           strstr(body, "\"kind\":\"count\"") &&
+           strstr(body, "\"touchMode\":\"exit\"") &&
+           strstr(body, "\"count\":4") &&
+           strstr(body, "\"difficulty\":\"hard\"") &&
+           strstr(body, "\"doubleJump\":true") && strstr(body, "\"dash\":true") &&
+           strstr(body, "\"wallSlide\":true") &&
+           strstr(body, "\"alpha\":55") && strstr(body, "\"pulse\":true") &&
+           strstr(body, "\"shake\":true") && strstr(body, "\"layer\":2") &&
+           strstr(body, "\"layer2\":4") && strstr(body, "\"zOrder\":7") &&
            strstr(body, "\"gravityEnabled\":true") &&
            strstr(body, "\"continuous\":false") &&
            strstr(body, "\"rate\":13") &&
@@ -203,7 +224,19 @@ static void published_level_writer(void) {
            strstr(body, "\"speed\":177") &&
            strstr(body, "\"flipX\":true") && strstr(body, "\"flipY\":true") &&
            on_protocol_published_level(body, "23817", &decoded));
-    assert(!strcmp(decoded.title, level.title) && decoded.object_count == 19);
+    assert(!strcmp(decoded.title, level.title) && decoded.object_count == 20);
+    assert(decoded.difficulty == ON_LEVEL_DIFFICULTY_HARD && decoded.tag_count == 2 &&
+           !strcmp(decoded.tags[0], "точность") &&
+           decoded.movement_abilities == (ON_LEVEL_ABILITY_DOUBLE_JUMP |
+               ON_LEVEL_ABILITY_DASH | ON_LEVEL_ABILITY_WALL_SLIDE));
+    assert(decoded.objects[0].layer == 2 && decoded.objects[0].layer2 == 4 &&
+           decoded.objects[0].z_order == 7 && decoded.objects[0].alpha == 55 &&
+           decoded.objects[0].pulse && decoded.objects[0].shake);
+    assert(decoded.objects[19].trigger_kind == ON_TRIGGER_KIND_COUNT &&
+           decoded.objects[19].trigger_count == 4 &&
+           decoded.objects[19].trigger_action == ON_TRIGGER_TOGGLE &&
+           decoded.objects[19].trigger_touch_mode == ON_TRIGGER_TOUCH_EXIT &&
+           decoded.objects[19].trigger_group_id == 42);
     assert(decoded.objects[3].trigger_kind == ON_TRIGGER_KIND_MOVE &&
            decoded.objects[3].trigger_value == 9999 &&
            decoded.objects[3].trigger_value_y == -9999 &&
@@ -426,15 +459,199 @@ static void web_fixture(const char *path) {
            m.plants[11].type == ON_PEA_PLANT && m.lilies[11] &&
            m.duck_count == 1 && m.ducks[0].type == ON_CONE);
 }
+/* «По умолчанию»: an object keeps the colours of its own artwork, and a
+ * recolor/background trigger flagged the same way restores that look. */
+static void published_default_color(void) {
+    static OnPublishedLevel level, decoded;
+    static char body[8192];
+    memset(&level, 0, sizeof level);
+    snprintf(level.id, sizeof level.id, "%s", "45120");
+    snprintf(level.title, sizeof level.title, "%s", "Обычный цвет");
+    snprintf(level.description, sizeof level.description, "%s", "Default colors.");
+    level.width = 16;level.height = 10;level.object_count = 5;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_PLAYER,
+        .x=1,.y=7,.w=.65f,.h=.85f,.color=0xffffffu,.visible=1};
+    snprintf(level.objects[0].name, sizeof level.objects[0].name, "%s", "Player");
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.color=0xffffffu,.visible=1};
+    snprintf(level.objects[1].name, sizeof level.objects[1].name, "%s", "Finish");
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_BLOCK,
+        .x=6,.y=7,.w=1,.h=1,.color=0x123456u,.visible=1,.color_default=1};
+    snprintf(level.objects[2].name, sizeof level.objects[2].name, "%s", "Block");
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_TRIGGER,
+        .x=8,.y=7,.w=1,.h=1,.color=0xf27652u,.visible=1,.color_default=1,
+        .trigger_kind=ON_TRIGGER_KIND_RECOLOR,.trigger_event=ON_TRIGGER_START,
+        .trigger_action=ON_TRIGGER_RECOLOR,.trigger_group_id=1,.trigger_has_group=1,
+        .trigger_color=0xffc54eu,.trigger_color_default=1};
+    snprintf(level.objects[3].name, sizeof level.objects[3].name, "%s", "Trigger");
+    level.objects[4] = (OnLevelObject){.id=5,.type=ON_LEVEL_TRIGGER,
+        .x=9,.y=7,.w=1,.h=1,.color=0xf27652u,.visible=1,
+        .trigger_kind=ON_TRIGGER_KIND_BACKGROUND,.trigger_event=ON_TRIGGER_START,
+        .trigger_action=ON_TRIGGER_SET_BACKGROUND,
+        .trigger_color=0x3456abu,.trigger_color_default=1};
+    snprintf(level.objects[4].name, sizeof level.objects[4].name, "%s", "Trigger");
+    size_t size = on_protocol_published_level_json(&level, body, sizeof body);
+    assert(size && strstr(body, "\"defaultColor\":true") &&
+           on_protocol_published_level(body, "45120", &decoded));
+    assert(decoded.objects[2].color_default == 1 &&
+           decoded.objects[2].color == 0x123456u);
+    assert(decoded.objects[3].color_default == 1 &&
+           decoded.objects[3].trigger_color_default == 1);
+    assert(decoded.objects[4].trigger_color_default == 1);
+    assert(!decoded.objects[0].color_default && !decoded.objects[1].color_default);
+    /* Levels that never opt out keep their exact, smaller payload. */
+    level.objects[2].color_default = 0;
+    level.objects[3].color_default = level.objects[3].trigger_color_default = 0;
+    level.objects[4].trigger_color_default = 0;
+    size = on_protocol_published_level_json(&level, body, sizeof body);
+    assert(size && !strstr(body, "defaultColor") &&
+           on_protocol_published_level(body, "45120", &decoded));
+    assert(!decoded.objects[2].color_default &&
+           !decoded.objects[3].trigger_color_default &&
+           !decoded.objects[4].trigger_color_default);
+    /* A non-boolean switch is rejected instead of being silently ignored. */
+    const char *broken =
+        "{\"format\":\"PVG3-PUBLISHED-LEVEL\",\"version\":1,\"id\":\"45121\","
+        "\"title\":\"Broken\",\"description\":\"\","
+        "\"project\":{\"format\":\"PVG3-MAKER\",\"version\":1,\"width\":16,\"height\":10,"
+        "\"objects\":["
+        "{\"id\":1,\"type\":\"block\",\"name\":\"Block\",\"x\":1,\"y\":7,\"w\":1,\"h\":1,"
+        "\"angle\":0,\"flipX\":false,\"flipY\":false,\"color\":\"#55c8ea\","
+        "\"defaultColor\":5,\"number\":1,\"visible\":true},"
+        "{\"id\":2,\"type\":\"player\",\"name\":\"Player\",\"x\":1,\"y\":7,\"w\":.65,\"h\":.85,"
+        "\"angle\":0,\"flipX\":false,\"flipY\":false,\"color\":\"#ffffff\","
+        "\"number\":2,\"visible\":true},"
+        "{\"id\":3,\"type\":\"goal\",\"name\":\"Finish\",\"x\":14,\"y\":6,\"w\":1,\"h\":2,"
+        "\"angle\":0,\"flipX\":false,\"flipY\":false,\"color\":\"#ffffff\","
+        "\"number\":3,\"visible\":true}]}}";
+    assert(!on_protocol_published_level(broken, "45121", &decoded));
+}
+
+/* A moderator's «official» mark travels with the record and the catalog entry,
+ * while levels without it keep their exact, smaller payload. */
+static void test_level_official_flag(void) {
+    static OnPublishedLevel level;
+    static OnPublishedLevel decoded;
+    static char body[ON_LEVEL_JSON_CAP];
+    memset(&level, 0, sizeof level);
+    snprintf(level.id, sizeof level.id, "%s", "45122");
+    snprintf(level.title, sizeof level.title, "%s", "Official");
+    level.width = 16;level.height = 10;level.object_count = 2;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_PLAYER,
+        .x=1,.y=7,.w=.65f,.h=.85f,.color=0xffffffu,.visible=1};
+    snprintf(level.objects[0].name, sizeof level.objects[0].name, "%s", "Player");
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.color=0xffffffu,.visible=1};
+    snprintf(level.objects[1].name, sizeof level.objects[1].name, "%s", "Finish");
+
+    size_t plain = on_protocol_published_level_json(&level, body, sizeof body);
+    assert(plain && !strstr(body, "\"official\"") &&
+           on_protocol_published_level(body, "45122", &decoded));
+    assert(!decoded.official);
+
+    level.official = 1;
+    size_t marked = on_protocol_published_level_json(&level, body, sizeof body);
+    assert(marked > plain && strstr(body, "\"official\":true") &&
+           on_protocol_published_level(body, "45122", &decoded));
+    assert(decoded.official == 1);
+
+    static char summary[512];
+    size_t summary_size = on_protocol_level_summary_json(&level, summary,
+        sizeof summary, 1700000000000ll);
+    assert(summary_size && strstr(summary, "\"official\":true"));
+
+    OnPublishedLevelSummary list[4];
+    int count = on_protocol_level_index(
+        "{\"45122\":{\"id\":\"45122\",\"title\":\"Official\",\"description\":\"\","
+        "\"updatedAt\":1,\"official\":true},"
+        "\"45123\":{\"id\":\"45123\",\"title\":\"Plain\",\"description\":\"\","
+        "\"updatedAt\":2}}", list, 4);
+    assert(count == 2);
+    int official_index = -1, plain_index = -1;
+    for (int i = 0; i < count; ++i) {
+        if (!strcmp(list[i].id, "45122")) official_index = i;
+        if (!strcmp(list[i].id, "45123")) plain_index = i;
+    }
+    assert(official_index >= 0 && plain_index >= 0 &&
+           list[official_index].official == 1 && !list[plain_index].official);
+    assert(on_level_is_official(list[official_index].id,
+                                list[official_index].official));
+    assert(!on_level_is_official(list[plain_index].id,
+                                 list[plain_index].official));
+    assert(on_level_is_official(ON_LEVEL_OFFICIAL_ID, 0));
+    /* A malformed flag does not break the catalog entry. */
+    assert(on_protocol_level_index(
+        "{\"45124\":{\"id\":\"45124\",\"title\":\"Weird\",\"description\":\"\","
+        "\"updatedAt\":3,\"official\":\"yes\"}}", list, 4) == 1);
+    assert(!list[0].official);
+
+    /* The account that published a level travels with the record and with its
+     * catalog card; a nonsense author is dropped instead of hiding the level. */
+    snprintf(level.author, sizeof level.author, "%s", "qwertyuiopaj1234");
+    size_t authored = on_protocol_published_level_json(&level, body, sizeof body);
+    assert(authored > marked && strstr(body, "\"author\":\"qwertyuiopaj1234\"") &&
+           on_protocol_published_level(body, "45122", &decoded));
+    assert(!strcmp(decoded.author, level.author));
+    summary_size = on_protocol_level_summary_json(&level, summary,
+        sizeof summary, 1700000000000ll);
+    assert(summary_size && strstr(summary, "\"author\":\"qwertyuiopaj1234\""));
+    count = on_protocol_level_index(
+        "{\"45122\":{\"id\":\"45122\",\"title\":\"Official\",\"description\":\"\","
+        "\"updatedAt\":1,\"official\":true,\"author\":\"qwertyuiopaj1234\"},"
+        "\"45123\":{\"id\":\"45123\",\"title\":\"Plain\",\"description\":\"\","
+        "\"updatedAt\":2,\"author\":\"Bad Nick!\"}}", list, 4);
+    assert(count == 2);
+    int valid_author_index = -1, invalid_author_index = -1;
+    for (int i = 0; i < count; ++i) {
+        if (!strcmp(list[i].id, "45122")) valid_author_index = i;
+        if (!strcmp(list[i].id, "45123")) invalid_author_index = i;
+    }
+    assert(valid_author_index >= 0 && invalid_author_index >= 0 &&
+           !strcmp(list[valid_author_index].author, "qwertyuiopaj1234"));
+    assert(!list[invalid_author_index].author[0]);
+    snprintf(level.author_token, sizeof level.author_token, "%064x", 0xabc);
+    authored = on_protocol_published_level_json(&level, body, sizeof body);
+    assert(authored && strstr(body,
+           "\"author\":{\"login\":\"qwertyuiopaj1234\",\"tok\":\""));
+    assert(on_protocol_published_level(body, "45122", &decoded) &&
+           !strcmp(decoded.author, "qwertyuiopaj1234") &&
+           !decoded.author_token[0]); /* never retain a public read-back token */
+    snprintf(level.author_token, sizeof level.author_token, "%064x", 0xabcdef);
+    snprintf(level.author, sizeof level.author, "%s", "Bad Nick!");
+    assert(!on_protocol_published_level_json(&level, body, sizeof body));
+    level.author[0] = 0;
+    level.author_token[0] = 0;
+
+    OnPublishedLevelSummary stats[2] = {0};
+    snprintf(stats[0].id, sizeof stats[0].id, "%s", "45122");
+    snprintf(stats[1].id, sizeof stats[1].id, "%s", "45123");
+    const char *client = "0123456789abcdef0123456789abcdef";
+    const char *sparse_stats =
+        "{\"45122\":{\"likes\":{\"0123456789abcdef0123456789abcdef\":true,"
+        "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\":true},"
+        "\"downloads\":{\"0123456789abcdef0123456789abcdef\":true}},"
+        "\"99999\":{\"likes\":{\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\":true}}}";
+    assert(on_protocol_level_stats(sparse_stats, stats, 2, client) == 2);
+    assert(stats[0].likes == 2 && stats[0].downloads == 1 &&
+           stats[0].liked && stats[0].downloaded);
+    assert(stats[1].likes == 0 && stats[1].downloads == 0 &&
+           !stats[1].liked && !stats[1].downloaded);
+    assert(on_protocol_level_stats("null", stats, 2, client) == 0);
+    assert(stats[0].likes == 0 && stats[0].downloads == 0 &&
+           !stats[0].liked && !stats[0].downloaded);
+}
+
 int main(int argc, char **argv) {
     assert(on_level_id_is_official(ON_LEVEL_OFFICIAL_ID));
     assert(on_level_id_is_official("338069"));
     assert(!on_level_id_is_official("338068"));
+    test_level_official_flag();
     assert(!on_level_id_is_official("1338069"));
     match_codec();
     rooms_and_commands();
     published_level_writer();
     published_level_object_limit();
+    published_default_color();
     if (argc == 2) web_fixture(argv[1]);
     puts("Native online match, JSON protocol and optional browser fixture passed");
     return 0;

@@ -2,12 +2,26 @@
  * external browser, insecure HTTP, embedded credentials or Java APK code.
  * Called only by online_net.c's background pthread, never from game_tick. */
 #include "android_online_http.h"
+#include "online_config.h"
 #include "online_net.h"
 
 #include <stdio.h>
 #include <string.h>
 
-#define BASE "https://pvg3-ae824-default-rtdb.firebaseio.com/"
+/* The configured address is decoded once, then reused for every request.
+ * It is a value, not a literal, so callers use "%s" instead of pasting. */
+static const char *base_url(void) {
+    static char base[256];
+    static int ready;
+    if (!ready) {
+        char host[192];
+        pvg3_database_host(host, sizeof host);
+        snprintf(base, sizeof base, "https://%s/", host);
+        ready = 1;
+    }
+    return base;
+}
+#define BASE base_url()
 static JavaVM *vm;
 void android_online_set_vm(JavaVM *jvm) { vm = jvm; }
 
@@ -26,7 +40,8 @@ static void property(JNIEnv *env, jobject conn, jmethodID setter,
 }
 /* Restrict HTTPS requests to the room protocol and public level catalog. */
 static int safe_path(const char *path) {
-    static const char *const roots[] = {"rooms", "levels", "levels-index"};
+    static const char *const roots[] = {"rooms", "levels", "levels-index",
+        "level-stats", "accounts", "tokens", "admins", "bans", "comments"};
     if (!path) return 0;
     int allowed = 0;
     for (size_t i = 0; i < sizeof roots / sizeof roots[0]; i++) {
@@ -65,7 +80,7 @@ int on_http_request(const char *path, const char *method, const char *body,
     jstring address = NULL, verb = NULL;
     jbyteArray bytes = NULL;
     char full[192];
-    int n = snprintf(full, sizeof full, BASE "%s", path);
+    int n = snprintf(full, sizeof full, "%s%s", base_url(), path);
     if (n <= 0 || (size_t)n >= sizeof full) goto done;
     url_class = (*env)->FindClass(env, "java/net/URL");
     http_class = (*env)->FindClass(env, "java/net/HttpURLConnection");

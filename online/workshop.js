@@ -6,7 +6,10 @@ export const LEVEL_WIDTH = 16;
 export const LEVEL_HEIGHT = 10;
 export const WORLD_LIMIT = 100_000;
 export const OFFICIAL_LEVEL_ID = '338069';
-export const isOfficialLevel = id => String(id) === OFFICIAL_LEVEL_ID;
+/* The historic ID stays official, and a moderator can now mark any level with
+ * the `official` flag in its published record. */
+export const isOfficialLevel = (id, record) =>
+  String(id) === OFFICIAL_LEVEL_ID || record?.official === true;
 export const TILE_W = 80;
 export const TILE_H = 72;
 // Shared ceiling for all object types combined; matches ON_LEVEL_OBJECT_CAP.
@@ -16,17 +19,19 @@ export const MAX_OBJECT_WIDTH = LEVEL_WIDTH * 4;
 export const MAX_OBJECT_HEIGHT = LEVEL_HEIGHT * 4;
 export const TRIGGER_KINDS = Object.freeze([
   'move', 'rotate', 'forever', 'invisibility', 'no-collision', 'gravity',
-  'recolor', 'background',
+  'recolor', 'background', 'count', 'toggle', 'spawn',
 ]);
 export const TRIGGER_LABELS = Object.freeze({
   move: 'Движение', rotate: 'Разворот', forever: 'Вечно',
   invisibility: 'Невидимость', 'no-collision': 'Нет столкновения',
   gravity: 'Гравитация', recolor: 'Перекраска', background: 'Фон',
+  count: 'Счётчик', toggle: 'Переключатель', spawn: 'Появление группы',
 });
 const TRIGGER_ACTIONS = Object.freeze({
   move: 'move', rotate: 'rotate', forever: 'activate',
   invisibility: 'invisible', 'no-collision': 'no-collision', gravity: 'set-gravity',
   recolor: 'recolor', background: 'set-background',
+  count: 'toggle', toggle: 'toggle', spawn: 'activate',
 });
 export const LEVEL_TYPES = Object.freeze([
   'block', 'ground', 'hazard', 'coin', 'enemy', 'player', 'goal', 'trigger', 'slope',
@@ -39,6 +44,15 @@ const NON_MANUALLY_RECOLORABLE_TYPES = new Set([
 ]);
 export function canManuallyRecolorType(type) {
   return LEVEL_TYPES.includes(type) && !NON_MANUALLY_RECOLORABLE_TYPES.has(type);
+}
+// «По умолчанию»: the object keeps the colours of its own artwork, no tint.
+export function usesDefaultArtwork(object) {
+  return canManuallyRecolorType(object?.type) && object.defaultColor === true;
+}
+// Colour of an object that keeps its own picture, used where art is missing.
+export function defaultObjectColor(type) {
+  return canManuallyRecolorType(type) ?
+    DEFAULT_COLORS[type] : FIXED_SPRITE_FALLBACK_COLOR;
 }
 export const TYPE_LABELS = Object.freeze({
   block: 'Блок', ground: 'Платформа', hazard: 'Шипы', coin: 'Монета',
@@ -54,6 +68,8 @@ const TYPE_SIZES = Object.freeze({
   checkpoint: [1, 1], 'portal-normal': [1, 1], 'portal-jetpack': [1, 1],
 });
 const FIXED_SPRITE_FALLBACK_COLOR = '#fffdf8';
+// Backdrop of the preview before any background trigger changes it.
+const PREVIEW_BACKGROUND_COLOR = '#8bcce6';
 const DEFAULT_COLORS = Object.freeze({
   block: '#55c8ea', ground: '#65a845', hazard: '#e56c5b',
   coin: FIXED_SPRITE_FALLBACK_COLOR, enemy: FIXED_SPRITE_FALLBACK_COLOR,
@@ -95,6 +111,10 @@ const FULL_ART_BOUNDS = Object.freeze([0, 0, 1, 1]);
 const SLOPE_VERTICES = Object.freeze([[0, 1], [1, 0], [1, 1]]);
 const SPIKE_VERTICES = Object.freeze([[.5, .03], [1, 1], [0, 1]]);
 const EVENTS = new Set(['touch', 'coin', 'manual', 'start']);
+const TOUCH_MODES = new Set(['enter', 'exit', 'stay']);
+export const DIFFICULTIES = Object.freeze(['easy', 'normal', 'hard', 'expert']);
+const DEFAULT_MOVEMENT = Object.freeze({doubleJump: false, dash: false, wallSlide: false});
+const TRIGGER_STAY_INTERVAL = .25;
 const LEGACY_TRIGGER_ACTIONS = new Set(['toggle', 'move', 'recolor', 'number', 'rotate']);
 const FOREVER_ACTIONS = new Set(['activate', 'unactivate']);
 const GROUP_ID_MAX = 9999;
@@ -113,6 +133,18 @@ export const PARTICLE_EMITTER_LIMITS = Object.freeze({
 });
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const finite = value => typeof value === 'number' && Number.isFinite(value);
+export function compareObjectLayers(a, b) {
+  return (a.layer || 0) - (b.layer || 0) ||
+    (a.layer2 || 0) - (b.layer2 || 0) ||
+    (a.zOrder || 0) - (b.zOrder || 0);
+}
+function effectTransform(object, time) {
+  const pulse = object.pulse === true ?
+    1 + .07 * Math.sin(Math.max(0, Number(time) || 0) * Math.PI * 2 * 1.6) : 1;
+  const shake = object.shake === true ?
+    Math.sin((Number(time) || 0) * 37 + (object.id || 0) * .13) * 2.5 : 0;
+  return {pulse, shake, alpha: clamp((object.alpha ?? 100) / 100, 0, 1)};
+}
 const worldClamp = (value, size = 0) => clamp(value, -WORLD_LIMIT, WORLD_LIMIT - size);
 const copy = value => JSON.parse(JSON.stringify(value));
 
@@ -155,7 +187,7 @@ function rgb(value) {
 function defaultObject(id, type, x, y, width, height, color, number = 0) {
   return {id, type, name: TYPE_LABELS[type], x, y, w: width, h: height,
     angle: 0, flipX: false, flipY: false, color, number, visible: true,
-    layer: 0, layer2: 0, zOrder: 0};
+    layer: 0, layer2: 0, zOrder: 0, alpha: 100, pulse: false, shake: false};
 }
 
 export function setTriggerKind(level, id, kind) {
@@ -166,6 +198,7 @@ export function setTriggerKind(level, id, kind) {
   const previousKind = trigger.kind || 'move';
   const wasGlobal = previousKind === 'gravity' || previousKind === 'background';
   const isGlobal = kind === 'gravity' || kind === 'background';
+  const groupKind = ['recolor', 'count', 'toggle', 'spawn'].includes(kind);
   if (!isGlobal && wasGlobal) {
     const target = kind === 'recolor' ?
       level.objects.find(item => item.id !== object.id && item.type !== 'trigger' &&
@@ -178,20 +211,23 @@ export function setTriggerKind(level, id, kind) {
   }
   trigger.kind = kind;
   trigger.action = TRIGGER_ACTIONS[kind];
+  trigger.touchMode = TOUCH_MODES.has(trigger.touchMode) ? trigger.touchMode : 'enter';
   if (isGlobal) {
     delete trigger.targetId;delete trigger.groupId;
-  } else if (kind === 'recolor') {
-    const hasRecolorableTarget = Number.isInteger(trigger.groupId) &&
-      level.objects.some(item => item.id !== object.id && item.type !== 'trigger' &&
-        item.number === trigger.groupId && canManuallyRecolorType(item.type));
-    if (!hasRecolorableTarget) {
-      const target = level.objects.find(item => item.id !== object.id && item.type !== 'trigger' &&
-        canManuallyRecolorType(item.type)) ||
+  } else if (groupKind) {
+    const target = level.objects.find(item => item.id !== object.id &&
+      item.type !== 'trigger' && item.number === trigger.groupId);
+    if (!Number.isInteger(trigger.groupId) || (!target && kind !== 'spawn')) {
+      const fallback = level.objects.find(item => item.type === 'goal') ||
         level.objects.find(item => item.id !== object.id && item.type !== 'trigger');
-      trigger.groupId = Number.isInteger(target?.number) ? target.number : 0;
+      trigger.groupId = Number.isInteger(fallback?.number) ? fallback.number : 0;
     }
     delete trigger.targetId;
   }
+  if (kind === 'count') {
+    if (!Number.isInteger(trigger.count) || trigger.count < 1 || trigger.count > 999)
+      trigger.count = 3;
+  } else delete trigger.count;
   if (kind === 'move' && previousKind !== 'move') {
     trigger.valueX = 1;trigger.valueY = 0;
   }
@@ -216,7 +252,7 @@ export function setTriggerKind(level, id, kind) {
 export function newDraft(id = localId()) {
   return {
     localId: id, title: 'Новый уровень', description: '', width: LEVEL_WIDTH,
-    height: LEVEL_HEIGHT, objects: [
+    height: LEVEL_HEIGHT, difficulty: 'normal', tags: [], movement: {...DEFAULT_MOVEMENT}, objects: [
       defaultObject(1, 'player', 1, 7, .65, .85, DEFAULT_COLORS.player, 1),
       defaultObject(2, 'goal', 14, 6, 1, 2, DEFAULT_COLORS.goal, 2),
       defaultObject(3, 'ground', 0, 8, 16, 2, DEFAULT_COLORS.ground, 3),
@@ -233,6 +269,9 @@ export function addObject(level, type, x, y, triggerKind = 'move') {
     size[0], size[1], DEFAULT_COLORS[type],
     Math.max(0, ...level.objects.map(o => Number(o.number) || 0)) + 1,
   );
+  // Nothing has been picked yet: a recolorable object keeps its own picture
+  // until the author chooses a color.
+  if (canManuallyRecolorType(type)) object.defaultColor = true;
   if (type === 'particle') object.emitter = {...DEFAULT_PARTICLE_EMITTER};
   if (type === 'trigger') {
     const kind = TRIGGER_KINDS.includes(triggerKind) ? triggerKind : 'move';
@@ -242,10 +281,12 @@ export function addObject(level, type, x, y, triggerKind = 'move') {
       level.objects.find(object => object.type === 'goal') || level.objects[0];
     const targetGroup = Number.isInteger(target?.number) ? target.number : 0;
     const action = TRIGGER_ACTIONS[kind];
-    object.trigger = {kind, event: 'touch', action,
+    object.trigger = {kind, event: 'touch', touchMode: 'enter', action,
       ...(['gravity', 'background'].includes(kind) ? {} :
-        kind === 'recolor' ? {groupId: targetGroup} :
+        ['recolor', 'count', 'toggle', 'spawn'].includes(kind) ?
+          {groupId: targetGroup} :
           {targetId: target?.id || 0, groupId: targetGroup}),
+      ...(kind === 'count' ? {count: 3} : {}),
       valueX: kind === 'move' ? 1 : 0, valueY: 0,
       duration: kind === 'rotate' ? 3 : 0,
       value: kind === 'move' ? 1 : 0,
@@ -310,8 +351,7 @@ export function findObjectAt(level, x, y) {
       const [left, top, right, bottom] = artBounds(o.type);
       return u >= left && u <= right && v >= top && v <= bottom;
     })
-    .sort((a, b) => (b.layer || 0) - (a.layer || 0) ||
-                    (b.zOrder || 0) - (a.zOrder || 0))
+    .sort((a, b) => compareObjectLayers(b, a))
     .at(0) || null;
 }
 
@@ -403,6 +443,20 @@ export function validateDraft(level) {
     return fail('Укажи название длиной от 1 до 80 символов.');
   if (typeof level.description !== 'string' || level.description.length > 160)
     return fail('Описание должно быть не длиннее 160 символов.');
+  const difficulty = level.difficulty ?? 'normal';
+  if (!DIFFICULTIES.includes(difficulty)) return fail('Выбери сложность уровня.');
+  const tags = level.tags ?? [];
+  if (!Array.isArray(tags) || tags.length > 8 || tags.some(tag =>
+      typeof tag !== 'string' || !tag.trim() || tag.trim().length > 16 ||
+      /[\n\r,]/.test(tag))) return fail('Теги: не больше 8, до 16 символов каждый.');
+  const normalizedTags = tags.map(tag => tag.trim().toLocaleLowerCase('ru'));
+  if (new Set(normalizedTags).size !== normalizedTags.length)
+    return fail('Теги не должны повторяться.');
+  const movement = level.movement ?? DEFAULT_MOVEMENT;
+  if (!movement || typeof movement !== 'object' || Array.isArray(movement) ||
+      ['doubleJump', 'dash', 'wallSlide'].some(key =>
+        movement[key] !== undefined && typeof movement[key] !== 'boolean'))
+    return fail('Проверь настройки способностей игрока.');
   if (level.width !== LEVEL_WIDTH || level.height !== LEVEL_HEIGHT ||
       !Array.isArray(level.objects) || level.objects.length < 1 ||
       level.objects.length > MAX_LEVEL_OBJECTS)
@@ -424,9 +478,16 @@ export function validateDraft(level) {
         object.angle < 0 || object.angle >= 360 ||
         (object.flipX !== undefined && typeof object.flipX !== 'boolean') ||
         (object.flipY !== undefined && typeof object.flipY !== 'boolean') ||
+        (object.defaultColor !== undefined && typeof object.defaultColor !== 'boolean') ||
         !rgb(object.color) ||
         !Number.isInteger(object.number) || object.number < 0 || object.number > 9999 ||
-        typeof object.visible !== 'boolean')
+        typeof object.visible !== 'boolean' ||
+        (object.layer !== undefined && (!Number.isInteger(object.layer) || object.layer < 0 || object.layer > 9)) ||
+        (object.layer2 !== undefined && (!Number.isInteger(object.layer2) || object.layer2 < 0 || object.layer2 > 9)) ||
+        (object.zOrder !== undefined && (!Number.isInteger(object.zOrder) || object.zOrder < -99 || object.zOrder > 99)) ||
+        (object.alpha !== undefined && (!Number.isInteger(object.alpha) || object.alpha < 0 || object.alpha > 100)) ||
+        (object.pulse !== undefined && typeof object.pulse !== 'boolean') ||
+        (object.shake !== undefined && typeof object.shake !== 'boolean'))
       return fail(`Проверь размеры, цвет и положение объекта «${TYPE_LABELS[object.type]}».`);
     hasPlayer ||= object.type === 'player';
     hasGoal ||= object.type === 'goal';
@@ -453,11 +514,16 @@ export function validateDraft(level) {
       const gravityKind = kind === 'gravity';
       const recolorKind = kind === 'recolor';
       const backgroundKind = kind === 'background';
+      const countKind = kind === 'count';
+      const toggleKind = kind === 'toggle';
+      const spawnKind = kind === 'spawn';
       const fixedAction = kind === 'invisibility' ? 'invisible' : 'no-collision';
       const validAction = gravityKind ? t?.action === 'set-gravity' :
         recolorKind ? t?.action === 'recolor' :
         backgroundKind ? t?.action === 'set-background' :
         specialKind ? t?.action === fixedAction :
+        countKind || toggleKind ? t?.action === 'toggle' :
+        spawnKind ? t?.action === 'activate' :
         foreverConfigured ? FOREVER_ACTIONS.has(t.action) : LEGACY_TRIGGER_ACTIONS.has(t?.action);
       const validValues = kind === 'move' ? finite(moveX) && moveX >= -9999 && moveX <= 9999 &&
           finite(moveY) && moveY >= -9999 && moveY <= 9999 :
@@ -465,14 +531,21 @@ export function validateDraft(level) {
         kind === 'forever' ? foreverConfigured ||
           (validTarget && finite(t?.value) && t.value >= -100 && t.value <= 100) :
         gravityKind ? Number.isInteger(t?.value) && t.value >= -100 && t.value <= 100 :
-        recolorKind || backgroundKind || specialKind;
+        countKind ? Number.isInteger(t?.count ?? 3) && (t.count ?? 3) >= 1 &&
+          (t.count ?? 3) <= 999 :
+        recolorKind || backgroundKind || specialKind || toggleKind || spawnKind;
+      const groupLogicKind = countKind || toggleKind || spawnKind;
       if (!t || !TRIGGER_KINDS.includes(kind) || !EVENTS.has(t.event) ||
+          (t.touchMode !== undefined && !TOUCH_MODES.has(t.touchMode)) ||
           !validAction || (!gravityKind && !backgroundKind && kind !== 'forever' &&
-                           !targetConfigured) ||
+                           !groupLogicKind && !targetConfigured) ||
           (kind === 'forever' && !foreverConfigured && !validTarget) ||
           (specialKind && !validGroup && !directTargetConfigured) ||
           (recolorKind && !validGroup) ||
-          (t.groupId !== undefined && !validGroup) || !validValues || !rgb(t.color))
+          (countKind && t.event === 'start' && (t.count ?? 3) > 1) ||
+          (groupLogicKind && !validGroup) ||
+          (t.groupId !== undefined && !validGroup) || !validValues || !rgb(t.color) ||
+          (t.defaultColor !== undefined && typeof t.defaultColor !== 'boolean'))
         return fail('Настрой триггер: событие, группу, действие и параметры.');
     }
   }
@@ -488,19 +561,28 @@ function recordObject(object) {
     color: canManuallyRecolorType(object.type) ?
       object.color : FIXED_SPRITE_FALLBACK_COLOR,
     number: object.number || 0, visible: object.visible !== false,
-    layer: object.layer || 0, layer2: object.layer2 || 0, zOrder: object.zOrder || 0,
+    layer: object.layer || 0, layer2: object.layer2 || 0,
+    zOrder: object.zOrder || 0,
+    alpha: object.alpha ?? 100, pulse: object.pulse === true,
+    shake: object.shake === true,
   };
+  if (usesDefaultArtwork(object)) result.defaultColor = true;
   if (object.type === 'particle')
     result.emitter = normalizeParticleEmitter(object.emitter);
   if (object.type === 'trigger') {
     const t = object.trigger || {};
     const kind = TRIGGER_KINDS.includes(t.kind) ? t.kind : 'move';
-    const trigger = {kind, event: t.event || 'touch', action: t.action || 'move',
-      color: t.color || '#ffc54e'};
-    if (!['gravity', 'background', 'recolor'].includes(kind))
+    const trigger = {kind, event: t.event || 'touch',
+      action: t.action || 'move', color: t.color || '#ffc54e'};
+    if (TOUCH_MODES.has(t.touchMode) && t.touchMode !== 'enter')
+      trigger.touchMode = t.touchMode;
+    if ((kind === 'recolor' || kind === 'background') && object.defaultColor === true)
+      trigger.defaultColor = true;
+    if (!['gravity', 'background', 'recolor', 'count', 'toggle', 'spawn'].includes(kind))
       trigger.targetId = Number.isInteger(t.targetId) ? t.targetId : 0;
     if (!['gravity', 'background'].includes(kind) && Number.isInteger(t.groupId))
       trigger.groupId = t.groupId;
+    if (kind === 'count') trigger.count = t.count ?? 3;
     if (kind === 'gravity') {
       trigger.value = t.value ?? 0;
     } else if (kind === 'move') {
@@ -525,9 +607,13 @@ export function publishedRecord(id, level) {
   const check = validateDraft(level);
   if (!check.ok) throw new Error(check.message);
   if (!/^[1-9][0-9]{0,5}$/.test(id)) throw new Error('Некорректный ID публикации.');
+  const movement = {...DEFAULT_MOVEMENT, ...(level.movement || {})};
   return {
     format: 'PVG3-PUBLISHED-LEVEL', version: 1, id,
     title: level.title.trim(), description: level.description,
+    difficulty: level.difficulty || 'normal',
+    tags: (level.tags || []).map(tag => tag.trim()),
+    movement,
     project: {format: 'PVG3-MAKER', version: 1,
       width: LEVEL_WIDTH, height: LEVEL_HEIGHT,
       objects: level.objects.map(recordObject)},
@@ -548,6 +634,7 @@ export function draftFromPublished(record) {
       delete trigger.degrees;delete trigger.value;
     }
     return {...object,
+      ...(object.defaultColor === true ? {defaultColor: true} : {}),
       color: canManuallyRecolorType(object.type) ?
         object.color : FIXED_SPRITE_FALLBACK_COLOR,
       trigger,
@@ -556,9 +643,20 @@ export function draftFromPublished(record) {
       layer: Number.isInteger(object.layer) ? object.layer : 0,
       layer2: Number.isInteger(object.layer2) ? object.layer2 : 0,
       zOrder: Number.isInteger(object.zOrder) ? object.zOrder : 0,
+      alpha: Number.isInteger(object.alpha) ? object.alpha : 100,
+      pulse: object.pulse === true, shake: object.shake === true,
+      ...(object.type === 'trigger' ? {trigger: {
+        ...trigger,
+        touchMode: TOUCH_MODES.has(trigger?.touchMode) ? trigger.touchMode : 'enter',
+        ...(trigger?.kind === 'count' ? {count: trigger.count ?? 3} : {}),
+      }} : {}),
     };
   });
   return {localId: localId(), title: record.title, description: record.description || '',
+    difficulty: DIFFICULTIES.includes(record.difficulty) ? record.difficulty : 'normal',
+    tags: Array.isArray(record.tags) ? record.tags.filter(tag => typeof tag === 'string').slice(0, 8) : [],
+    movement: {...DEFAULT_MOVEMENT,
+      ...(record.movement && typeof record.movement === 'object' ? record.movement : {})},
     width: LEVEL_WIDTH, height: LEVEL_HEIGHT, objects};
 }
 
@@ -568,9 +666,47 @@ export function isPublishedRecord(record, expectedId = record?.id) {
       typeof record.title !== 'string' || !record.project ||
       record.project.format !== 'PVG3-MAKER' || record.project.version !== 1) return false;
   const draft = {title: record.title, description: record.description || '',
+    difficulty: record.difficulty || 'normal',
+    tags: Array.isArray(record.tags) ? record.tags : [],
+    movement: record.movement ?? DEFAULT_MOVEMENT,
     width: record.project.width, height: record.project.height,
     objects: record.project.objects};
   return validateDraft(draft).ok;
+}
+
+export function filterPublishedLevels(source, filters = {}) {
+  const locale = String(filters.language || 'ru').toLowerCase().startsWith('en') ? 'en' : 'ru';
+  const query = String(filters.query || '').trim().toLocaleLowerCase(locale);
+  const difficulty = filters.difficulty || 'all';
+  const tag = filters.tag || 'all';
+  const sort = filters.sort || 'newest';
+  const levels = (Array.isArray(source) ? source : []).filter(level => {
+    if (!level || typeof level !== 'object') return false;
+    if (difficulty !== 'all' && level.difficulty !== difficulty) return false;
+    if (tag !== 'all' && !(Array.isArray(level.tags) && level.tags.includes(tag)))
+      return false;
+    if (!query) return true;
+    const searchable = [level.id, level.title, level.description, level.author,
+      ...(Array.isArray(level.tags) ? level.tags : [])]
+      .map(value => String(value ?? '').toLocaleLowerCase(locale)).join(' ');
+    return searchable.includes(query);
+  });
+  const stable = (a, b) => {
+    const updated = Number(b.updatedAt) - Number(a.updatedAt);
+    if (Number.isFinite(updated) && updated !== 0) return updated;
+    const numericId = Number(b.id) - Number(a.id);
+    return Number.isFinite(numericId) && numericId !== 0 ? numericId :
+      String(b.id ?? '').localeCompare(String(a.id ?? ''), locale, {numeric: true});
+  };
+  if (sort === 'likes')
+    levels.sort((a, b) => (Number(b.likes) || 0) - (Number(a.likes) || 0) || stable(a, b));
+  else if (sort === 'downloads')
+    levels.sort((a, b) => (Number(b.downloads) || 0) - (Number(a.downloads) || 0) || stable(a, b));
+  else if (sort === 'title')
+    levels.sort((a, b) => String(a.title || '').localeCompare(
+      String(b.title || ''), locale) || stable(a, b));
+  else levels.sort(stable);
+  return levels;
 }
 
 export function resolveControlMode(preference, coarsePointer) {
@@ -607,17 +743,53 @@ export function createPreviewState(level) {
   const objects = copy(level.objects);
   for (const object of objects)
     if (object.type === 'particle') object.emitter = normalizeParticleEmitter(object.emitter);
+  let lowestObjectBottom = Number.isFinite(level.height) && level.height > 0 ?
+    level.height : LEVEL_HEIGHT;
+  for (const object of objects)
+    if (object.visible !== false && object.type !== 'trigger' && object.type !== 'particle')
+      lowestObjectBottom = Math.max(lowestObjectBottom, object.y + object.h);
+  const fallPlaneY = Math.min(lowestObjectBottom + 3, WORLD_LIMIT) * TILE_H;
   const state = {objects, x: player.x * TILE_W, y: player.y * TILE_H,
-    vx: 0, vy: 0, gravity: 1450, backgroundColor: '#8bcce6',
-    grounded: false, time: 0, coins: 0, won: false,
+    vx: 0, vy: 0, gravity: 1450, backgroundColor: PREVIEW_BACKGROUND_COLOR,
+    fallPlaneY, grounded: false, time: 0, coins: 0,
+    totalCoins: objects.filter(object => object.type === 'coin').length,
+    attempts: 1, won: false,
+    abilities: {...DEFAULT_MOVEMENT, ...(level.movement || {})},
     collected: [], triggerFired: [], triggerActive: [], triggerTimers: Object.create(null),
+    triggerCounts: Object.create(null), triggerTouchInside: new Set(),
+    triggerTouchTimers: Object.create(null),
     invisible: [], noCollision: [], groupRotations: [], jumpHeld: false,
+    triggerHeld: false, dashHeld: false, jumpCount: 0,
+    dashRemaining: 0, dashCooldown: 0, dashDirection: 0,
     orbActivated: false, checkpointId: 0,
     jetpack: false, jetpackActive: false, facingLeft: objectFlipX(player),
     portalInside: new Set(),
-    spawn: {x: player.x * TILE_W, y: player.y * TILE_H}};
+    spawn: {x: player.x * TILE_W, y: player.y * TILE_H},
+    levelStart: {x: player.x * TILE_W, y: player.y * TILE_H}};
   runTriggers(state, 'start');
   return state;
+}
+
+export function previewHudSnapshot(state) {
+  if (!state) return null;
+  const player = state.objects.find(object => object.type === 'player');
+  const goal = state.objects.find(object => object.type === 'goal');
+  let progress = 0;
+  if (player && goal) {
+    const goalX = (goal.x + goal.w / 2) * TILE_W;
+    const goalY = (goal.y + goal.h / 2) * TILE_H;
+    const startX = (state.levelStart?.x ?? state.x) + player.w * TILE_W / 2;
+    const startY = (state.levelStart?.y ?? state.y) + player.h * TILE_H / 2;
+    const startDistance = Math.hypot(goalX - startX, goalY - startY);
+    const currentDistance = Math.hypot(goalX - (state.x + player.w * TILE_W / 2),
+      goalY - (state.y + player.h * TILE_H / 2));
+    progress = startDistance > 1 ?
+      clamp(Math.round((1 - currentDistance / startDistance) * 100), 0, 100) : 0;
+  }
+  if (state.won) progress = 100;
+  return {progressPercent: progress, attempts: state.attempts || 1,
+    elapsedSeconds: Math.max(0, state.time || 0), coins: state.coins || 0,
+    totalCoins: state.totalCoins || 0, won: state.won === true};
 }
 function playerTriangleContact(px, py, pw, ph, object, vx, vy, silhouette,
                                 climbable = false) {
@@ -755,6 +927,8 @@ function activatePreviewCheckpoint(state, player, checkpoint) {
 function resetPreviewPlayer(state) {
   state.x = state.spawn.x;state.y = state.spawn.y;
   state.vx = state.vy = 0;state.grounded = false;
+  state.attempts = (state.attempts || 1) + 1;
+  state.jumpCount = 0;state.dashRemaining = 0;state.dashCooldown = 0;
   const player = state.objects.find(object => object.type === 'player');
   state.facingLeft = player ? objectFlipX(player) : false;
   state.jumpHeld = false;state.orbActivated = false;state.jetpackActive = false;
@@ -771,6 +945,10 @@ function resolvePreviewPlayer(state, player, solids) {
       if (!contact) continue;
       state.x += contact.x * contact.depth;
       state.y += contact.y * contact.depth;
+      const wallContact = Math.abs(contact.x) > .7;
+      if (wallContact && state.dashRemaining > 0) state.dashRemaining = 0;
+      if (wallContact && state.abilities.wallSlide && state.vy > 0)
+        state.vy = Math.min(state.vy, 140);
       const inwardVelocity = state.vx * contact.x + state.vy * contact.y;
       if (inwardVelocity < 0) {
         state.vx -= inwardVelocity * contact.x;
@@ -786,20 +964,36 @@ function resolvePreviewPlayer(state, player, solids) {
 function executeTrigger(state, trigger) {
   const t = trigger.trigger || {};
   const kind = TRIGGER_KINDS.includes(t.kind) ? t.kind : 'move';
+  if (kind === 'spawn') {
+    for (const target of state.objects)
+      if (target.type !== 'trigger' && target.number === t.groupId)
+        target.visible = true;
+    return;
+  }
+  if (kind === 'count' || kind === 'toggle') {
+    for (const target of state.objects)
+      if (target.type !== 'trigger' && target.number === t.groupId)
+        target.visible = !target.visible;
+    return;
+  }
   if (kind === 'gravity') {
     const offset = Number.isInteger(t.value) ? clamp(t.value, -100, 100) : 0;
     state.gravity = 1450 + offset * 10;
     return;
   }
   if (kind === 'background') {
-    if (rgb(t.color)) state.backgroundColor = t.color;
+    if (t.defaultColor === true) state.backgroundColor = PREVIEW_BACKGROUND_COLOR;
+    else if (rgb(t.color)) state.backgroundColor = t.color;
     return;
   }
   if (kind === 'recolor') {
-    if (rgb(t.color) && Number.isInteger(t.groupId))
+    if (Number.isInteger(t.groupId))
       for (const target of state.objects)
         if (target.type !== 'trigger' && canManuallyRecolorType(target.type) &&
-            target.number === t.groupId) target.color = t.color;
+            target.number === t.groupId) {
+          if (t.defaultColor === true) target.defaultColor = true;
+          else if (rgb(t.color)) {target.color = t.color;target.defaultColor = false;}
+        }
     return;
   }
   if (kind === 'rotate' && t.duration !== undefined) {
@@ -855,8 +1049,10 @@ function executeTrigger(state, trigger) {
       target.angle = ((target.angle + degrees) % 360 + 360) % 360;break;
     }
     case 'recolor':
-      if (target.type !== 'trigger' && canManuallyRecolorType(target.type))
-        target.color = t.color;
+      if (target.type !== 'trigger' && canManuallyRecolorType(target.type)) {
+        if (t.defaultColor === true) target.defaultColor = true;
+        else {target.color = t.color;target.defaultColor = false;}
+      }
       break;
     case 'number': target.number = clamp(Math.trunc(t.value), 0, 9999);break;
     }
@@ -875,23 +1071,69 @@ function stepGroupRotations(state, dt) {
     else i++;
   }
 }
-function runTriggers(state, event) {
+function runTriggers(state, event, dt = 0) {
+  const player = event === 'touch' ? state.objects.find(o => o.type === 'player') : null;
+  const box = player ? playerVisibleHitbox(state, player) : null;
   for (const trigger of state.objects) {
-    if (!trigger.visible || trigger.type !== 'trigger' ||
-        state.noCollision.includes(trigger.id) || trigger.trigger?.event !== event) continue;
-    const kind = TRIGGER_KINDS.includes(trigger.trigger.kind) ? trigger.trigger.kind : 'move';
+    if (trigger.type !== 'trigger' || trigger.trigger?.event !== event) continue;
+    const inside = event === 'touch' && trigger.visible !== false && box &&
+      !state.noCollision.includes(trigger.id) &&
+      playerObjectContact(box.x, box.y, box.w, box.h, trigger, state.vx, state.vy);
+    const wasInside = state.triggerTouchInside.has(trigger.id);
+    if (event === 'touch') {
+      if (inside) state.triggerTouchInside.add(trigger.id);
+      else state.triggerTouchInside.delete(trigger.id);
+    }
+    if (!trigger.visible || state.noCollision.includes(trigger.id)) {
+      state.triggerTouchTimers[trigger.id] = 0;
+      continue;
+    }
+    const t = trigger.trigger || {};
+    const kind = TRIGGER_KINDS.includes(t.kind) ? t.kind : 'move';
     const completed = state.triggerFired.includes(trigger.id);
-    const legacyLoop = kind === 'forever' && !Number.isInteger(trigger.trigger?.groupId);
+    const legacyLoop = kind === 'forever' && !Number.isInteger(t.groupId);
     const active = state.triggerActive.includes(trigger.id);
-    if (legacyLoop ? active : completed) continue;
-    const player = state.objects.find(o => o.type === 'player');
-    const box = player ? playerVisibleHitbox(state, player) : null;
-    if (event === 'touch' && (!box ||
-        !playerObjectContact(box.x, box.y, box.w, box.h, trigger, state.vx, state.vy))) continue;
+    if (event !== 'touch' && (legacyLoop ? active : completed) &&
+        kind !== 'toggle' && kind !== 'count') continue;
+    let activated = true;
+    if (event === 'touch') {
+      const mode = TOUCH_MODES.has(t.touchMode) ? t.touchMode : 'enter';
+      if (mode === 'enter') activated = !!inside && !wasInside;
+      else if (mode === 'exit') activated = !inside && wasInside;
+      else if (!inside) {
+        activated = false;state.triggerTouchTimers[trigger.id] = 0;
+      } else if (!wasInside) {
+        activated = true;state.triggerTouchTimers[trigger.id] = 0;
+      } else {
+        const elapsed = (state.triggerTouchTimers[trigger.id] || 0) + dt;
+        activated = elapsed >= TRIGGER_STAY_INTERVAL;
+        state.triggerTouchTimers[trigger.id] = activated ?
+          elapsed - TRIGGER_STAY_INTERVAL : elapsed;
+      }
+      if (activated && completed && kind !== 'toggle' && kind !== 'count')
+        activated = false;
+      if (legacyLoop && active) activated = false;
+    }
+    if (!activated) continue;
+    if (kind === 'count') {
+      if (completed) continue;
+      const count = (state.triggerCounts[trigger.id] || 0) + 1;
+      state.triggerCounts[trigger.id] = count;
+      if (count < (Number.isInteger(t.count) ? t.count : 3)) continue;
+      state.triggerFired.push(trigger.id);
+      executeTrigger(state, trigger);
+      continue;
+    }
+    if (kind === 'toggle') {
+      executeTrigger(state, trigger);
+      continue;
+    }
     if (legacyLoop) {
+      if (active) continue;
       state.triggerActive.push(trigger.id);
       state.triggerTimers[trigger.id] = 0;
     } else {
+      if (completed) continue;
       state.triggerFired.push(trigger.id);
       executeTrigger(state, trigger);
     }
@@ -957,30 +1199,54 @@ export function stepPreview(state, input = {}, dt = 1 / 60) {
   const vertical = clamp(Number(input.vertical) || 0, -1, 1);
   const jetpackVelocity = vertical === 0 ? 0 : -vertical * 250;
   const jumpPressed = !!input.jump && !state.jumpHeld;
-  state.jumpHeld = !!input.jump;
+  const dashPressed = !!input.dash && !state.dashHeld;
+  state.jumpHeld = !!input.jump;state.dashHeld = !!input.dash;
+  state.dashCooldown = Math.max(0, state.dashCooldown - dt);
+  if (state.grounded) state.jumpCount = 0;
+  if (state.abilities.dash && dashPressed && state.dashCooldown <= 0) {
+    state.dashDirection = horizontal || (state.facingLeft ? -1 : 1);
+    state.dashRemaining = .18;state.dashCooldown = .65;
+    state.vy = 0;
+  }
   if (state.jetpack) {
     state.vy = jetpackVelocity;
-  } else if (jumpPressed && !activatePreviewOrb(state, player) && state.grounded) {
-    state.vy = -570;state.grounded = false;
+  } else if (jumpPressed) {
+    const orb = activatePreviewOrb(state, player);
+    if (orb) state.jumpCount = 1;
+    else if (state.grounded) {
+      state.vy = -570;state.grounded = false;state.jumpCount = 1;
+    } else if (state.abilities.doubleJump && state.jumpCount < 2) {
+      state.vy = -520;state.jumpCount = 2;
+    }
+  }
+  if (state.dashRemaining > 0) {
+    state.vx = state.dashDirection * 650;state.vy = 0;
   }
   state.jetpackActive = state.jetpack &&
     (state.vx !== 0 || vertical !== 0);
   const gravity = Number.isFinite(state.gravity) ? state.gravity : 1450;
-  const predictedVy = state.jetpack ? state.vy : Math.min(780, state.vy + gravity * dt);
+  const predictedVy = state.jetpack || state.dashRemaining > 0 ? state.vy :
+    Math.min(780, state.vy + gravity * dt);
   const displacement = Math.max(Math.abs(state.vx * dt), Math.abs(predictedVy * dt));
   const substeps = clamp(Math.ceil(displacement / 4), 1, 16);
   const subDt = dt / substeps;
   state.grounded = false;
   for (let step = 0; step < substeps; step++) {
-    if (state.jetpack) state.vy = jetpackVelocity;
+    if (state.dashRemaining > 0) state.vy = 0;
+    else if (state.jetpack) state.vy = jetpackVelocity;
     else state.vy = Math.min(780, state.vy + gravity * subDt);
     state.x = clamp(state.x + state.vx * subDt,
       -WORLD_LIMIT * TILE_W, WORLD_LIMIT * TILE_W - pw);
     state.y += state.vy * subDt;
     if (playerCollisionEnabled) resolvePreviewPlayer(state, player, solids);
+    state.dashRemaining = Math.max(0, state.dashRemaining - subDt);
   }
+  if (state.grounded) state.jumpCount = 0;
   let playerRespawned = false;
-  if (state.y > WORLD_LIMIT * TILE_H) {
+  const playerBottom = state.y + player.h * TILE_H;
+  const fellBelowLevel = playerBottom > state.fallPlaneY;
+  const escapedWorldTop = playerBottom < -WORLD_LIMIT * TILE_H;
+  if (fellBelowLevel || escapedWorldTop) {
     resetPreviewPlayer(state);playerRespawned = true;
   }
   if (playerCollisionEnabled && !playerRespawned) {
@@ -1010,8 +1276,8 @@ export function stepPreview(state, input = {}, dt = 1 / 60) {
   }
   updatePreviewPortals(state, player, playerCollisionEnabled && !playerRespawned);
   state.jetpackActive = state.jetpack && (state.vx !== 0 || vertical !== 0);
-  runTriggers(state, 'touch');
-  if (input.trigger) runTriggers(state, 'manual');
+  runTriggers(state, 'touch', dt);
+  if (input.trigger) runTriggers(state, 'manual', dt);
   runForeverTriggers(state, dt);
   stepGroupRotations(state, dt);
   return state;
@@ -1023,7 +1289,10 @@ function triggerArtKey(kind) {
     kind === 'invisibility' ? 'triggerInvisibility' :
     kind === 'no-collision' ? 'triggerNoCollision' :
     kind === 'gravity' ? 'triggerGravity' :
-    kind === 'recolor' || kind === 'background' ? 'triggerColor' : 'triggerMove';
+    kind === 'recolor' || kind === 'background' ? 'triggerColor' :
+    kind === 'count' ? 'triggerCount' :
+    kind === 'toggle' ? 'triggerToggle' :
+    kind === 'spawn' ? 'triggerSpawn' : 'triggerMove';
 }
 const tintedWorkshopArt = new WeakMap();
 function tintWorkshopImage(image, tint) {
@@ -1081,7 +1350,7 @@ function drawWorkshopObject(ctx, art, object, x, y, w, h, checkpointActive = fal
   const flipX = object.type === 'player' && typeof playerFacingLeft === 'boolean' ?
     playerFacingLeft : objectFlipX(object);
   const flipY = object.flipY === true;
-  const tint = canManuallyRecolorType(object.type) ?
+  const tint = canManuallyRecolorType(object.type) && object.defaultColor !== true ?
     workshopObjectColor(object) : null;
   if (object.type === 'player' && drawWorkshopImage(
       ctx, playerArt, x, y, w, h, angle, flipX, flipY)) return true;
@@ -1111,7 +1380,23 @@ function drawParticleEmitterMarker(ctx, x, y, w, h, color, angle = 0) {
   ctx.restore();
 }
 
-export function drawEditorCanvas(canvas, level, selectedId = 0, _tool = 'build', art = {}, camera = {x: 0, y: 0}) {
+function drawTriggerGlyph(ctx, kind, x, y, w, h) {
+  const glyph = kind === 'count' ? '#' : kind === 'toggle' ? '↔' :
+    kind === 'spawn' ? '+' : '';
+  if (!glyph || w < 15 || h < 15) return;
+  const size = Math.max(15, Math.min(24, Math.min(w, h) * .42));
+  ctx.save();
+  ctx.fillStyle = 'rgba(18,34,52,.94)';
+  ctx.beginPath();ctx.arc(x + w - size * .63, y + size * .63, size * .62, 0,
+    Math.PI * 2);ctx.fill();
+  ctx.fillStyle = '#fffdf8';ctx.font = `bold ${Math.round(size * .82)}px PTSans, sans-serif`;
+  ctx.textAlign = 'center';ctx.textBaseline = 'middle';
+  ctx.fillText(glyph, x + w - size * .63, y + size * .63 + .5);
+  ctx.restore();
+}
+
+export function drawEditorCanvas(canvas, level, selectedId = 0, _tool = 'build',
+                                 art = {}, camera = {x: 0, y: 0}, time = 0) {
   const ctx = canvas.getContext('2d');
   const cameraX = clamp(Number(camera?.x) || 0, -WORLD_LIMIT, WORLD_LIMIT - LEVEL_WIDTH);
   const cameraY = clamp(Number(camera?.y) || 0, -WORLD_LIMIT, WORLD_LIMIT - LEVEL_HEIGHT);
@@ -1127,21 +1412,30 @@ export function drawEditorCanvas(canvas, level, selectedId = 0, _tool = 'build',
     const y = Math.round((r - cameraY) * TILE_H);
     ctx.beginPath();ctx.moveTo(0, y);ctx.lineTo(canvas.width, y);ctx.stroke();
   }
-  const drawObjects = [...level.objects].sort((a, b) => (a.layer || 0) - (b.layer || 0) ||
-      (a.zOrder || 0) - (b.zOrder || 0));
+  const drawObjects = [...level.objects].sort(compareObjectLayers);
   const selected = selectedId instanceof Set ? selectedId :
     new Set(Array.isArray(selectedId) ? selectedId : selectedId ? [selectedId] : []);
   for (const o of drawObjects) {
     if (o.visible === false) continue;
-    const x = (o.x - cameraX) * TILE_W + 3, y = (o.y - cameraY) * TILE_H + 3;
-    const w = o.w * TILE_W - 6, h = o.h * TILE_H - 6;
-    ctx.fillStyle = workshopObjectColor(o);
+    const baseX = (o.x - cameraX) * TILE_W + 3;
+    const baseY = (o.y - cameraY) * TILE_H + 3;
+    const baseW = o.w * TILE_W - 6, baseH = o.h * TILE_H - 6;
+    const effect = effectTransform(o, time);
+    const w = baseW * effect.pulse, h = baseH * effect.pulse;
+    const x = baseX + (baseW - w) / 2 + effect.shake;
+    const y = baseY + (baseH - h) / 2;
+    ctx.save();ctx.globalAlpha = (ctx.globalAlpha ?? 1) * effect.alpha;
+    ctx.fillStyle = usesDefaultArtwork(o) ? defaultObjectColor(o.type) :
+      workshopObjectColor(o);
     if (o.type === 'particle') {
-      drawParticleEmitterMarker(ctx, x, y, w, h, o.color || DEFAULT_COLORS.particle, o.angle);
+      drawParticleEmitterMarker(ctx, x, y, w, h,
+        usesDefaultArtwork(o) ? defaultObjectColor(o.type) :
+          o.color || DEFAULT_COLORS.particle, o.angle);
     } else {
+      const triggerKind = o.trigger?.kind || 'move';
       const triggerArt = o.type === 'trigger' &&
-        (art?.[triggerArtKey(o.trigger?.kind)]?.naturalWidth || art.trigger?.naturalWidth);
-      if (triggerArt) {ctx.globalAlpha = .2;ctx.fillRect(x, y, w, h);ctx.globalAlpha = 1;}
+        (art?.[triggerArtKey(triggerKind)]?.naturalWidth || art.trigger?.naturalWidth);
+      if (triggerArt) {ctx.globalAlpha *= .2;ctx.fillRect(x, y, w, h);ctx.globalAlpha /= .2;}
       const hasArt = drawWorkshopObject(ctx, art, o, x, y, w, h);
       if (!hasArt && o.type === 'coin') {
         ctx.beginPath();ctx.arc(x + w / 2, y + h / 2, Math.min(w, h) / 2, 0, Math.PI * 2);ctx.fill();
@@ -1156,30 +1450,32 @@ export function drawEditorCanvas(canvas, level, selectedId = 0, _tool = 'build',
           ctx.fillRect(x + w * .58, y + h * .25, w * .18, h * .12);
         }
       }
+      if (o.type === 'trigger') drawTriggerGlyph(ctx, triggerKind, x, y, w, h);
     }
+    ctx.restore();
     if (selected.has(o.id)) {
       const angle = ((o.angle || 0) % 360) * Math.PI / 180;
       const silhouette = o.type === 'slope' ? SLOPE_VERTICES :
         o.type === 'hazard' ? SPIKE_VERTICES : null;
-      ctx.save();ctx.translate(x + w / 2, y + h / 2);ctx.rotate(angle);
+      ctx.save();ctx.translate(baseX + baseW / 2, baseY + baseH / 2);ctx.rotate(angle);
       ctx.scale(objectFlipX(o) ? -1 : 1, o.flipY ? -1 : 1);
       ctx.strokeStyle = '#67b4c8';ctx.lineWidth = 4;
       if (silhouette) {
         ctx.beginPath();
         silhouette.forEach(([u, v], index) => {
-          const px = (u - .5) * w, py = (v - .5) * h;
+          const px = (u - .5) * baseW, py = (v - .5) * baseH;
           if (index) ctx.lineTo(px, py);else ctx.moveTo(px, py);
         });
         ctx.closePath();ctx.stroke();
       } else {
         const [left, top, right, bottom] = artBounds(o.type);
-        ctx.strokeRect(-w / 2 + left * w - 1, -h / 2 + top * h - 1,
-          (right - left) * w + 2, (bottom - top) * h + 2);
+        ctx.strokeRect(-baseW / 2 + left * baseW - 1, -baseH / 2 + top * baseH - 1,
+          (right - left) * baseW + 2, (bottom - top) * baseH + 2);
       }
       ctx.restore();
     }
     ctx.fillStyle = '#10131d';ctx.font = '14px PTSans, sans-serif';
-    ctx.fillText(String(o.id), x + 4, y + 17);
+    ctx.fillText(String(o.id), baseX + 4 + effect.shake, baseY + 17);
   }
 }
 
@@ -1187,7 +1483,7 @@ const PREVIEW_PARTICLE_COUNT = 5;
 function drawParticleDot(ctx, x, y, radius, color, alpha) {
   if (alpha <= 0) return;
   const previousAlpha = ctx.globalAlpha ?? 1;
-  ctx.globalAlpha = Math.min(1, alpha);ctx.fillStyle = color;
+  ctx.globalAlpha = previousAlpha * Math.min(1, alpha);ctx.fillStyle = color;
   ctx.beginPath();ctx.arc(x, y, radius, 0, Math.PI * 2);ctx.fill();
   ctx.globalAlpha = previousAlpha;
 }
@@ -1278,14 +1574,16 @@ export function drawParticleEmitterPreview(canvas, settings,
 function drawPreviewParticles(ctx, state, cameraX, cameraY, viewWidth, viewHeight) {
   const time = Number(state.time) || 0;
   let particleBudget = 4096;
-  for (const object of state.objects) {
+  for (const object of [...state.objects].sort(compareObjectLayers)) {
     if (object.visible === false ||
         (object.type !== 'particle' && object.type !== 'orb-yellow' &&
          object.type !== 'orb-orange') || state.invisible?.includes(object.id) ||
         (object.type === 'particle' &&
          (particleBudget <= 0 || object.emitter?.enabled === false))) continue;
-    const width = object.w * TILE_W, height = object.h * TILE_H;
-    const centerX = (object.x + object.w / 2) * TILE_W - cameraX;
+    const effect = effectTransform(object, time);
+    const width = object.w * TILE_W * effect.pulse;
+    const height = object.h * TILE_H * effect.pulse;
+    const centerX = (object.x + object.w / 2) * TILE_W - cameraX + effect.shake;
     const centerY = (object.y + object.h / 2) * TILE_H - cameraY;
     const emitter = object.type === 'particle' ?
       normalizeParticleEmitter(object.emitter) : null;
@@ -1294,6 +1592,7 @@ function drawPreviewParticles(ctx, state, cameraX, cameraY, viewWidth, viewHeigh
       (emitter.gravityEnabled ? .5 * emitter.gravity * emitter.lifetime ** 2 : 0) : 0);
     if (centerX + extent < 0 || centerX - extent > viewWidth ||
         centerY + extent < 0 || centerY - extent > viewHeight) continue;
+    ctx.save();ctx.globalAlpha = (ctx.globalAlpha ?? 1) * effect.alpha;
     const angle = (Number(object.angle) || 0) * Math.PI / 180;
     const cos = Math.cos(angle), sin = Math.sin(angle);
     if (object.type === 'orb-yellow' || object.type === 'orb-orange') {
@@ -1317,6 +1616,7 @@ function drawPreviewParticles(ctx, state, cameraX, cameraY, viewWidth, viewHeigh
         object.color || DEFAULT_COLORS.particle, object.angle,
         object.flipX === true, object.flipY === true, particleBudget);
     }
+    ctx.restore();
   }
 }
 
@@ -1327,7 +1627,8 @@ export function drawPreviewCanvas(canvas, state, _control = 'keyboard', art = {}
   const cameraX = player ? state.x + playerW / 2 - canvas.width * .4 : 0;
   const cameraY = player ? state.y + playerH / 2 - (canvas.height + 64) * .52 : 0;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = rgb(state.backgroundColor) ? state.backgroundColor : '#8bcce6';
+  ctx.fillStyle = rgb(state.backgroundColor) ? state.backgroundColor :
+    PREVIEW_BACKGROUND_COLOR;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = '#eff3d8';
   const cloudX = -((cameraX * .18) % (canvas.width + 300));
@@ -1341,50 +1642,74 @@ export function drawPreviewCanvas(canvas, state, _control = 'keyboard', art = {}
       Math.max(0, canvas.height - Math.max(64, grassY)));
     if (grassY >= 64) {ctx.fillStyle = '#344b60';ctx.fillRect(0, grassY, canvas.width, 3);}
   }
-  for (const o of state.objects) {
-    if (!o.visible || state.invisible?.includes(o.id) ||
-        o.type === 'player' || o.type === 'trigger' || o.type === 'particle') continue;
-    const x = o.x * TILE_W - cameraX, y = o.y * TILE_H - cameraY;
-    const w = o.w * TILE_W, h = o.h * TILE_H;
-    ctx.fillStyle = workshopObjectColor(o);
-    const triggerArt = o.type === 'trigger' &&
-      (art?.[triggerArtKey(o.trigger?.kind)]?.naturalWidth || art.trigger?.naturalWidth);
-    if (triggerArt) {ctx.globalAlpha = .18;ctx.fillRect(x, y, w, h);ctx.globalAlpha = 1;}
-    const hasArt = drawWorkshopObject(ctx, art, o, x, y, w, h,
-                                      state.checkpointId === o.id);
-    if (hasArt) continue;
-    if (o.type === 'hazard') {
-      ctx.beginPath();ctx.moveTo(x + w / 2, y);ctx.lineTo(x + w, y + h);ctx.lineTo(x, y + h);ctx.closePath();ctx.fill();
-    } else if (o.type === 'coin') {
-      ctx.beginPath();ctx.arc(x + w / 2, y + h / 2, Math.min(w, h) * .42, 0, Math.PI * 2);ctx.fill();
-    } else if (o.type === 'goal') {
-      ctx.fillRect(x, y, 8, h);ctx.fillRect(x, y, w, 8);ctx.fillRect(x, y + h - 8, w, 8);
-    } else if (o.type === 'trigger') {
-      ctx.globalAlpha = .35;ctx.fillRect(x, y, w, h);ctx.globalAlpha = 1;
-      ctx.strokeStyle = '#fff';ctx.lineWidth = 3;ctx.strokeRect(x + 2, y + 2, w - 4, h - 4);
-    } else ctx.fillRect(x, y, w, h);
+  for (const o of [...state.objects].sort(compareObjectLayers)) {
+    if (o.type === 'trigger' || o.type === 'particle' ||
+        state.invisible?.includes(o.id) || o.visible === false) continue;
+    const effect = effectTransform(o, state.time);
+    let x, y, w, h;
+    if (o.type === 'player') {
+      if (!player || player.visible === false) continue;
+      w = playerW * effect.pulse;h = playerH * effect.pulse;
+      x = state.x - cameraX + (playerW - w) / 2 + effect.shake;
+      y = state.y - cameraY + (playerH - h) / 2;
+    } else {
+      const baseW = o.w * TILE_W, baseH = o.h * TILE_H;
+      w = baseW * effect.pulse;h = baseH * effect.pulse;
+      x = o.x * TILE_W - cameraX + (baseW - w) / 2 + effect.shake;
+      y = o.y * TILE_H - cameraY + (baseH - h) / 2;
+    }
+    ctx.save();ctx.globalAlpha = (ctx.globalAlpha ?? 1) * effect.alpha;
+    ctx.fillStyle = usesDefaultArtwork(o) ? defaultObjectColor(o.type) :
+      workshopObjectColor(o);
+    if (o.type === 'player') {
+      const jetpackArt = state.jetpack ?
+        art?.[state.jetpackActive ? 'jetpackActive' : 'jetpackInactive'] : null;
+      if (!drawWorkshopObject(ctx, art, o, x, y, w, h, false, jetpackArt,
+                              state.facingLeft)) {
+        ctx.fillStyle = workshopObjectColor(o);
+        ctx.fillRect(x, y, w, h);
+        ctx.fillStyle = '#fff';ctx.fillRect(x + w * .2, y + h * .22, 8, 9);
+        ctx.fillRect(x + w * .62, y + h * .22, 8, 9);
+        ctx.fillStyle = '#243b52';ctx.fillRect(x + w * .25, y + h * .24, 3, 5);
+        ctx.fillRect(x + w * .67, y + h * .24, 3, 5);
+      }
+    } else {
+      const hasArt = drawWorkshopObject(ctx, art, o, x, y, w, h,
+                                        state.checkpointId === o.id);
+      if (!hasArt && o.type === 'hazard') {
+        ctx.beginPath();ctx.moveTo(x + w / 2, y);ctx.lineTo(x + w, y + h);ctx.lineTo(x, y + h);ctx.closePath();ctx.fill();
+      } else if (!hasArt && o.type === 'coin') {
+        ctx.beginPath();ctx.arc(x + w / 2, y + h / 2, Math.min(w, h) * .42, 0, Math.PI * 2);ctx.fill();
+      } else if (!hasArt && o.type === 'goal') {
+        ctx.fillRect(x, y, 8, h);ctx.fillRect(x, y, w, 8);ctx.fillRect(x, y + h - 8, w, 8);
+      } else if (!hasArt) ctx.fillRect(x, y, w, h);
+    }
+    ctx.restore();
   }
   drawPreviewParticles(ctx, state, cameraX, cameraY, canvas.width, canvas.height);
-  if (player && player.visible !== false && !state.invisible?.includes(player.id)) {
-    const x = state.x - cameraX, y = state.y - cameraY;
-    const w = playerW, h = playerH;
-    const jetpackArt = state.jetpack ?
-      art?.[state.jetpackActive ? 'jetpackActive' : 'jetpackInactive'] : null;
-    if (!drawWorkshopObject(ctx, art, player, x, y, w, h, false, jetpackArt,
-                            state.facingLeft)) {
-      ctx.fillStyle = workshopObjectColor(player);
-      ctx.fillRect(x, y, w, h);
-      ctx.fillStyle = '#fff';ctx.fillRect(x + w * .2, y + h * .22, 8, 9);ctx.fillRect(x + w * .62, y + h * .22, 8, 9);
-      ctx.fillStyle = '#243b52';ctx.fillRect(x + w * .25, y + h * .24, 3, 5);ctx.fillRect(x + w * .67, y + h * .24, 3, 5);
-    }
-  }
   ctx.fillStyle = '#172c40';ctx.fillRect(0, 0, canvas.width, 64);
-  ctx.fillStyle = '#fff';ctx.font = '22px PTSans, sans-serif';
-  ctx.fillText(`Монеты: ${state.coins}`, 24, 41);
+  const hud = previewHudSnapshot(state);
+  const english = typeof document !== 'undefined' &&
+    document.documentElement?.lang?.toLowerCase().startsWith('en');
+  const elapsed = Math.floor(hud?.elapsedSeconds || 0);
+  const timeText = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`;
+  const labels = english ?
+    [`Progress ${hud?.progressPercent ?? 0}%`, `Attempt ${hud?.attempts ?? 1}`,
+      `Time ${timeText}`, `Coins ${hud?.coins ?? 0}/${hud?.totalCoins ?? 0}`] :
+    [`Прогресс ${hud?.progressPercent ?? 0}%`, `Попытка ${hud?.attempts ?? 1}`,
+      `Время ${timeText}`, `Монеты ${hud?.coins ?? 0}/${hud?.totalCoins ?? 0}`];
+  ctx.fillStyle = '#fff';ctx.font = 'bold 19px PTSans, sans-serif';
+  ctx.textBaseline = 'middle';
+  const positions = [24, 320, 565, 830];
+  labels.forEach((text, index) => ctx.fillText(text, positions[index], 28));
+  const progressWidth = Math.min(260, canvas.width * .22);
+  ctx.fillStyle = 'rgba(255,255,255,.25)';ctx.fillRect(24, 49, progressWidth, 6);
+  ctx.fillStyle = '#f7c85b';ctx.fillRect(24, 49,
+    progressWidth * (hud?.progressPercent ?? 0) / 100, 6);
   if (state.won) {
     ctx.fillStyle = 'rgba(0,0,0,.62)';ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = '#fff';ctx.font = 'bold 48px PTSans, sans-serif';ctx.textAlign = 'center';
-    ctx.fillText('Уровень пройден!', canvas.width / 2, canvas.height / 2);
+    ctx.fillText(english ? 'Level complete!' : 'Уровень пройден!', canvas.width / 2, canvas.height / 2);
     ctx.textAlign = 'left';
   }
 }

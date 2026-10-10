@@ -4,6 +4,9 @@
 #define _POSIX_C_SOURCE 200809L
 #include "online_net.h"
 
+#include "online_account.h"
+#include "preferences.h"
+
 #include <pthread.h>
 #include <stdint.h>
 #include <limits.h>
@@ -30,12 +33,18 @@
 
 #define RESPONSE_BASE_CAP (1024u * 1024u + 1u)
 #define RESPONSE_CAP ON_LEVEL_JSON_CAP
+#define RESPONSE_STATS_CAP RESPONSE_CAP
 
 enum { A_NONE, A_CREATE, A_JOIN, A_ROLE, A_LEAVE, A_REFRESH };
 enum { T_IDLE, T_CREATE, T_JOIN, T_ROLE, T_LEAVE, T_REFRESH,
        T_LIST, T_POLL, T_HEARTBEAT, T_COMMAND, T_PUBLISH,
-       T_LEVEL_LIST, T_LEVEL_GET, T_LEVEL_PUBLISH };
+       T_LEVEL_LIST, T_LEVEL_GET, T_LEVEL_PUBLISH, T_LEVEL_STAT_WRITE,
+       T_SIGN_IN, T_CREATE_ACCOUNT, T_TOKEN_ROTATE,
+       T_COMMENTS, T_COMMENT_POST, T_COMMENT_HIDE, T_BAN, T_OFFICIAL };
+/* Account work queued for the worker thread. */
+enum { ACCOUNT_NONE, ACCOUNT_SIGN_IN, ACCOUNT_CREATE, ACCOUNT_ROTATE };
 
+typedef struct {char id[ON_LEVEL_ID_SIZE]; int kind, value;} LevelStatJob;
 typedef struct {
     OnNetView view;
     pthread_t worker;
@@ -44,6 +53,7 @@ typedef struct {
     int action, action_map, action_role, leave_slot;
     char action_id[ON_ROOM_ID_SIZE], leave_id[ON_ROOM_ID_SIZE];
     char player_id[ON_PLAYER_ID_SIZE];
+    char catalog_client_id[ON_PLAYER_ID_SIZE];
     int queued_command;
     OnCommand command;
     OnMatch published;
@@ -51,6 +61,10 @@ typedef struct {
     int next_seq;
     int64_t next_list, next_room, next_ping, next_publish;
     int level_list_requested, level_fetch_requested;
+    LevelStatJob level_stat_queue[ON_LEVEL_LIST_CAP * 2];
+    int level_stat_count;
+    LevelStatJob level_stat_inflight;
+    int level_stat_inflight_valid;
     unsigned level_generation;
     char level_fetch_id[ON_LEVEL_ID_SIZE];
     OnPublishedLevel loaded_level;
@@ -59,6 +73,24 @@ typedef struct {
     int level_publish_requested;
     unsigned level_publish_generation;
     OnPublishedLevel level_to_publish;
+    /* Accounts, comments and moderation. */
+    int account_job;
+    unsigned account_generation;
+    char account_login[ON_LOGIN_SIZE];
+    char account_password[ON_PASSWORD_SIZE];
+    int comments_requested;
+    char comments_level[ON_LEVEL_ID_SIZE];
+    int comment_post_requested;
+    char comment_post_level[ON_LEVEL_ID_SIZE];
+    char comment_text[ON_COMMENT_TEXT_SIZE];
+    int comment_hide_requested;
+    char comment_hide_level[ON_LEVEL_ID_SIZE];
+    char comment_hide_id[ON_COMMENT_ID_SIZE];
+    int ban_requested, ban_value;
+    char ban_login[ON_LOGIN_SIZE];
+    char ban_reason[ON_REASON_SIZE];
+    int official_requested, official_value;
+    char official_level[ON_LEVEL_ID_SIZE];
 } Net;
 static Net net;
 static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
@@ -114,6 +146,16 @@ static void make_id(char id[ON_PLAYER_ID_SIZE]) {
     }
     id[32] = 0;
 }
+void on_net_random_hex(char out[ON_TOKEN_SIZE]) {
+    static const char digits[] = "0123456789abcdef";
+    unsigned char bytes[32];
+    random_bytes(bytes, sizeof bytes);
+    for (int i = 0; i < 32; i++) {
+        out[i * 2] = digits[bytes[i] >> 4];
+        out[i * 2 + 1] = digits[bytes[i] & 15];
+    }
+    out[64] = 0;
+}
 static void room_code(char id[ON_ROOM_ID_SIZE]) {
     const char alphabet[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     unsigned char bytes[6];random_bytes(bytes, sizeof bytes);
@@ -152,7 +194,10 @@ static int request(const char *path, const char *method, const char *body,
     if (!net.response) return -1;
     int large_level = path && !strncmp(path, "levels/", 7);
     int large_level_get = large_level && method && !strcmp(method, "GET");
-    size_t needed = large_level_get ? RESPONSE_CAP : RESPONSE_BASE_CAP;
+    int large_stats_get = path && !strcmp(path, "level-stats.json") &&
+                          method && !strcmp(method, "GET");
+    size_t needed = large_level_get ? RESPONSE_CAP :
+                    large_stats_get ? RESPONSE_STATS_CAP : RESPONSE_BASE_CAP;
     if (net.response_cap < needed) {
         char *larger = (char *)realloc(net.response, needed);
         if (!larger) return -1;
@@ -162,7 +207,8 @@ static int request(const char *path, const char *method, const char *body,
     int code = on_http_request(path, method, body, if_match, net.response,
                                net.response_cap);
     /* PUT responses are only status-checked; don't retain their echoed level. */
-    if (large_level && method && strcmp(method, "GET")) compact_response();
+    if ((large_level && method && strcmp(method, "GET")) || large_stats_get)
+        compact_response();
     return code;
 }
 #ifndef ON_NET_MANUAL
@@ -184,8 +230,30 @@ static void *worker(void *arg) {
     return NULL;
 }
 #endif
+/* The saved session comes back on launch: only the nick, the stretched hash and
+ * the token the database issued — never the password. */
+static void load_saved_account_locked(void) {
+    char login[ON_LOGIN_SIZE], token[ON_TOKEN_SIZE], hash[ON_HASH_SIZE];
+    if (net.view.account.signed_in) return;
+    if (!preferences_account_login(login, sizeof login)) return;
+    if (!preferences_account_token(token, sizeof token)) return;
+    if (!preferences_account_hash(hash, sizeof hash)) return;
+    net.view.account.signed_in = 1;
+    net.view.account.admin = preferences_account_admin();
+    snprintf(net.view.account.login, sizeof net.view.account.login, "%s", login);
+    snprintf(net.view.account.token, sizeof net.view.account.token, "%s", token);
+    snprintf(net.view.account.hash, sizeof net.view.account.hash, "%s", hash);
+}
 static int ensure_transport_locked(void) {
+    load_saved_account_locked();
     if (!net.player_id[0]) make_id(net.player_id);
+    if (!net.catalog_client_id[0]) {
+        if (!preferences_catalog_client_id(net.catalog_client_id,
+                                          sizeof net.catalog_client_id)) {
+            make_id(net.catalog_client_id);
+            preferences_set_catalog_client_id(net.catalog_client_id);
+        }
+    }
     if (!net.response) {
         net.response = (char *)malloc(RESPONSE_BASE_CAP);
         if (net.response) net.response_cap = RESPONSE_BASE_CAP;
@@ -249,6 +317,8 @@ void on_net_shutdown(void) {
     net.action = A_NONE;
     net.level_publish_requested = 0;
     net.view.level_publish_busy = 0;
+    net.level_stat_count = 0;
+    net.level_stat_inflight_valid = 0;
     net.generation++;
     free(net.response);net.response = NULL;net.response_cap = 0;
     pthread_mutex_unlock(&mu);
@@ -297,6 +367,54 @@ void on_net_level_fetch(const char *id) {
     net.view.levels_notice[0] = 0;
     pthread_mutex_unlock(&mu);
 }
+static int level_stat_already_recorded_locked(const char *id, int kind) {
+    for (int i = 0; i < net.view.level_count; ++i)
+        if (!strcmp(net.view.levels[i].id, id))
+            return kind == 1 ? net.view.levels[i].liked :
+                   net.view.levels[i].downloaded;
+    return 0;
+}
+static int level_stat_value_locked(const char *id, int kind) {
+    int value = level_stat_already_recorded_locked(id, kind);
+    if (net.level_stat_inflight_valid && net.level_stat_inflight.kind == kind &&
+        !strcmp(net.level_stat_inflight.id, id))
+        value = net.level_stat_inflight.value;
+    for (int i = 0; i < net.level_stat_count; ++i) {
+        const LevelStatJob *job = &net.level_stat_queue[i];
+        if (job->kind == kind && !strcmp(job->id, id)) value = job->value;
+    }
+    return value;
+}
+static int queue_level_stat_locked(const char *id, int kind, int value) {
+    for (int i = 0; i < net.level_stat_count; ++i) {
+        LevelStatJob *job = &net.level_stat_queue[i];
+        if (job->kind == kind && !strcmp(job->id, id)) {
+            job->value = !!value;
+            return 1;
+        }
+    }
+    if (net.level_stat_count >= ON_LEVEL_LIST_CAP * 2) return 0;
+    LevelStatJob *job = &net.level_stat_queue[net.level_stat_count++];
+    snprintf(job->id, sizeof job->id, "%s", id);
+    job->kind = kind;job->value = !!value;
+    return 1;
+}
+void on_net_level_like(const char *id) {
+    if (!on_protocol_valid_level_id(id)) return;
+    pthread_mutex_lock(&mu);
+    if (!ensure_transport_locked()) {pthread_mutex_unlock(&mu);return;}
+    (void)queue_level_stat_locked(id, 1, !level_stat_value_locked(id, 1));
+    pthread_mutex_unlock(&mu);
+}
+void on_net_level_download(const char *id) {
+    if (!on_protocol_valid_level_id(id)) return;
+    pthread_mutex_lock(&mu);
+    if (level_stat_value_locked(id, 2) || !ensure_transport_locked()) {
+        pthread_mutex_unlock(&mu);return;
+    }
+    (void)queue_level_stat_locked(id, 2, 1);
+    pthread_mutex_unlock(&mu);
+}
 int on_net_level_publish(const OnPublishedLevel *level) {
     if (!level) return 0;
     pthread_mutex_lock(&mu);
@@ -310,7 +428,23 @@ int on_net_level_publish(const OnPublishedLevel *level) {
                  "НЕ УДАЛОСЬ ЗАПУСТИТЬ ПУБЛИКАЦИЮ");
         pthread_mutex_unlock(&mu);return 0;
     }
+    if (!net.view.account.signed_in ||
+        !on_account_valid_login(net.view.account.login) ||
+        !on_account_valid_token(net.view.account.token)) {
+        net.view.level_publish_busy = 0;
+        snprintf(net.view.level_publish_notice,
+                 sizeof net.view.level_publish_notice, "%s",
+                 "Сначала войди в аккаунт.");
+        pthread_mutex_unlock(&mu);return 0;
+    }
     net.level_to_publish = *level;
+    /* A published level proves who owns it. Its short-lived session token is
+     * rotated as soon as the level and index card have both been written. */
+    snprintf(net.level_to_publish.author, sizeof net.level_to_publish.author,
+             "%s", net.view.account.login);
+    snprintf(net.level_to_publish.author_token,
+             sizeof net.level_to_publish.author_token, "%s",
+             net.view.account.token);
     net.level_publish_requested = 1;
     net.level_publish_generation++;
     net.view.level_publish_busy = 1;
@@ -324,6 +458,113 @@ void on_net_level_cancel(void) {
     net.level_generation++;
     net.view.levels_busy = 0;
     net.view.level_loaded = 0;
+    pthread_mutex_unlock(&mu);
+}
+void on_net_account_sign_in(const char *login, const char *password, int create) {
+    if (!ensure_transport_locked()) {
+        pthread_mutex_lock(&mu);
+        snprintf(net.view.account_notice, sizeof net.view.account_notice,
+                 "%s", net.view.notice[0] ? net.view.notice :
+                 "Не удалось запустить сеть.");
+        net.view.account_busy = 0;
+        pthread_mutex_unlock(&mu);
+        return;
+    }
+    pthread_mutex_lock(&mu);
+    if (net.account_job || net.view.account_busy) {
+        pthread_mutex_unlock(&mu);return; /* one request at a time */
+    }
+    snprintf(net.account_login, sizeof net.account_login, "%s", login ? login : "");
+    snprintf(net.account_password, sizeof net.account_password, "%s",
+             password ? password : "");
+    net.account_job = create ? ACCOUNT_CREATE : ACCOUNT_SIGN_IN;
+    net.account_generation++;
+    net.view.account_busy = 1;
+    net.view.account_notice[0] = 0;
+    pthread_mutex_unlock(&mu);
+}
+void on_net_account_restore(void) {
+    pthread_mutex_lock(&mu);
+    load_saved_account_locked();
+    pthread_mutex_unlock(&mu);
+}
+void on_net_account_sign_out(void) {
+    pthread_mutex_lock(&mu);
+    memset(&net.view.account, 0, sizeof net.view.account);
+    net.view.comment_count = 0;
+    net.view.comment_level[0] = 0;
+    net.account_generation++;
+    net.view.account_busy = 0;
+    snprintf(net.view.account_notice, sizeof net.view.account_notice, "%s",
+             "Вы вышли из аккаунта.");
+    pthread_mutex_unlock(&mu);
+    preferences_set_account(NULL, NULL, NULL, 0);
+}
+void on_net_comments_load(const char *level_id) {
+    if (!on_protocol_valid_level_id(level_id)) return;
+    if (!ensure_transport_locked()) return;
+    pthread_mutex_lock(&mu);
+    net.comments_requested = 1;
+    net.account_generation++;
+    snprintf(net.comments_level, sizeof net.comments_level, "%s", level_id);
+    net.view.comments_busy = 1;
+    net.view.account_notice[0] = 0;
+    pthread_mutex_unlock(&mu);
+}
+void on_net_comment_post(const char *level_id, const char *text) {
+    if (!on_protocol_valid_level_id(level_id)) return;
+    if (!ensure_transport_locked()) return;
+    pthread_mutex_lock(&mu);
+    if (net.comment_post_requested || net.comment_hide_requested) {
+        pthread_mutex_unlock(&mu);return;
+    }
+    net.comment_post_requested = 1;
+    net.account_generation++;
+    snprintf(net.comment_post_level, sizeof net.comment_post_level, "%s", level_id);
+    snprintf(net.comment_text, sizeof net.comment_text, "%s", text ? text : "");
+    net.view.comments_busy = 1;
+    net.view.account_notice[0] = 0;
+    pthread_mutex_unlock(&mu);
+}
+void on_net_comment_hide(const char *level_id, const char *comment_id) {
+    if (!on_protocol_valid_level_id(level_id) || !comment_id || !comment_id[0]) return;
+    if (!ensure_transport_locked()) return;
+    pthread_mutex_lock(&mu);
+    if (net.comment_post_requested || net.comment_hide_requested) {
+        pthread_mutex_unlock(&mu);return;
+    }
+    net.comment_hide_requested = 1;
+    net.account_generation++;
+    snprintf(net.comment_hide_level, sizeof net.comment_hide_level, "%s", level_id);
+    snprintf(net.comment_hide_id, sizeof net.comment_hide_id, "%s", comment_id);
+    net.view.comments_busy = 1;
+    net.view.account_notice[0] = 0;
+    pthread_mutex_unlock(&mu);
+}
+void on_net_account_ban(const char *login, const char *reason, int banned) {
+    if (!ensure_transport_locked()) return;
+    pthread_mutex_lock(&mu);
+    if (net.ban_requested) {pthread_mutex_unlock(&mu);return;}
+    net.ban_requested = 1;
+    net.ban_value = banned ? 1 : 0;
+    net.account_generation++;
+    snprintf(net.ban_login, sizeof net.ban_login, "%s", login ? login : "");
+    snprintf(net.ban_reason, sizeof net.ban_reason, "%s", reason ? reason : "");
+    net.view.account_busy = 1;
+    net.view.account_notice[0] = 0;
+    pthread_mutex_unlock(&mu);
+}
+void on_net_level_set_official(const char *level_id, int official) {
+    if (!on_protocol_valid_level_id(level_id)) return;
+    if (!ensure_transport_locked()) return;
+    pthread_mutex_lock(&mu);
+    if (net.official_requested) {pthread_mutex_unlock(&mu);return;}
+    net.official_requested = 1;
+    net.official_value = official ? 1 : 0;
+    net.account_generation++;
+    snprintf(net.official_level, sizeof net.official_level, "%s", level_id);
+    net.view.account_busy = 1;
+    net.view.account_notice[0] = 0;
     pthread_mutex_unlock(&mu);
 }
 void on_net_level_consumed(void) {
@@ -408,6 +649,10 @@ int on_net_send(OnCommand command) {
     return good;
 }
 
+/* Defined below, with the rest of the account work: a publish that credits its
+ * author has to retire the token the public record now carries. */
+static void account_rotate_token(void);
+
 static void finish_level_publish(unsigned publish_gen, const char *id,
                                  const char *notice) {
     pthread_mutex_lock(&mu);
@@ -466,6 +711,7 @@ static void publish_level_record(unsigned publish_gen, OnPublishedLevel *record)
     if (!on_protocol_level_summary_json(record, summary, sizeof summary,
                                         clock_ms(NET_CLOCK_REALTIME))) {
         free(body);
+        account_rotate_token();
         finish_level_publish(publish_gen, saved_id,
             "УРОВЕНЬ ЗАПИСАН, НО НЕ УДАЛОСЬ ПОДГОТОВИТЬ КАТАЛОГ.");
         return;
@@ -474,6 +720,9 @@ static void publish_level_record(unsigned publish_gen, OnPublishedLevel *record)
                                  "levels-index/%s.json", saved_id);
     code = request(index_path, "PUT", summary, "null_etag");
     free(body);
+    /* The token is now public in the level record. Retire it even if the
+     * catalog write failed, so a failed index cannot leak a live session. */
+    account_rotate_token();
     if (code != 200) {
         finish_level_publish(publish_gen, saved_id, code == 401 || code == 403 ?
             "УРОВЕНЬ ЗАПИСАН, НО FIREBASE ЗАПРЕТИЛ /LEVELS-INDEX. ПРОВЕРЬ ПРАВИЛА." :
@@ -491,11 +740,375 @@ static void publish_level_record(unsigned publish_gen, OnPublishedLevel *record)
     pthread_mutex_unlock(&mu);
 }
 
+/* ------------------------------------------------ accounts and moderation */
+
+/* Every notice below is shown by the LVGL catalog, so it stays short and in
+ * the player's language: the UI translates the fixed labels, not these. */
+static void account_notice(unsigned gen, const char *text) {
+    pthread_mutex_lock(&mu);
+    if (gen == net.account_generation) {
+        net.view.account_busy = 0;
+        snprintf(net.view.account_notice, sizeof net.view.account_notice,
+                 "%s", text ? text : "");
+    }
+    pthread_mutex_unlock(&mu);
+}
+static void comments_notice(unsigned gen, const char *text) {
+    pthread_mutex_lock(&mu);
+    if (gen == net.account_generation) {
+        net.view.comments_busy = 0;
+        snprintf(net.view.account_notice, sizeof net.view.account_notice,
+                 "%s", text ? text : "");
+    }
+    pthread_mutex_unlock(&mu);
+}
+static void trim_text(char *out, size_t cap, const char *text) {
+    const char *value = text ? text : "";
+    size_t length = strlen(value), first = 0, last = length;
+    while (first < last && (unsigned char)value[first] <= ' ') first++;
+    while (last > first && (unsigned char)value[last - 1] <= ' ') last--;
+    if (last - first >= cap) last = first + cap - 1;
+    memcpy(out, value + first, last - first);
+    out[last - first] = 0;
+}
+
+/* Signs in, or creates the account first. The password never leaves the
+ * device: PBKDF2-SHA256 turns it into the same 64-hex hash the website
+ * stores, and only the session token travels to the database. */
+static void account_sign_in(unsigned gen, int create) {
+    char login[ON_LOGIN_SIZE], password[ON_PASSWORD_SIZE];
+    char salt[ON_HASH_SIZE], hash[ON_HASH_SIZE], token[ON_TOKEN_SIZE];
+    char body[512], path[80];
+    OnAccount account = {0};
+    int64_t now = clock_ms(NET_CLOCK_REALTIME);
+    size_t need;
+    int code, admin = 0;
+
+    pthread_mutex_lock(&mu);
+    memcpy(login, net.account_login, sizeof login);
+    memcpy(password, net.account_password, sizeof password);
+    pthread_mutex_unlock(&mu);
+
+    if (!on_account_normalize(login, login) || !on_account_valid_login(login)) {
+        account_notice(gen, "Ник: только a-z, 0-9 и _, от 3 до 24 знаков.");
+        return;
+    }
+    if (!on_account_valid_password(password)) {
+        account_notice(gen, "Пароль: от 6 до 72 знаков без пробелов.");
+        return;
+    }
+    on_account_salt(login, salt);
+    on_account_hash(login, password, hash);
+
+    if (create) {
+        need = on_account_record_json(salt, hash, now, NULL, 0);
+        if (!need || need >= sizeof body ||
+            on_account_record_json(salt, hash, now, body, sizeof body) != need) {
+            account_notice(gen, "Не удалось подготовить аккаунт.");
+            return;
+        }
+        snprintf(path, sizeof path, "accounts/%s.json", login);
+        /* The account rule itself atomically allows only !data.exists().
+         * An ETag precondition is unnecessary on this unreadable branch. */
+        code = request(path, "PUT", body, NULL);
+        if (code != 200) {
+            account_notice(gen, code == 401 || code == 403 ?
+                "Аккаунт занят или Firebase отказал. Войди либо проверь правила." :
+                "Не удалось создать аккаунт. Проверь интернет.");
+            return;
+        }
+    }
+    on_net_random_hex(token);
+    need = on_account_token_json(token, hash, NULL, 0);
+    if (!need || need >= sizeof body ||
+        on_account_token_json(token, hash, body, sizeof body) != need) {
+        account_notice(gen, "Не удалось подготовить вход.");
+        return;
+    }
+    snprintf(path, sizeof path, "tokens/%s.json", login);
+    code = request(path, "PUT", body, NULL);
+    if (code != 200) {
+        account_notice(gen, code == 401 || code == 403 ?
+            "Неверный ник или пароль." : "Не удалось войти. Проверь интернет.");
+        return;
+    }
+    snprintf(path, sizeof path, "admins/%s.json", login);
+    if (request(path, "GET", NULL, NULL) == 200)
+        admin = on_account_parse_admin(net.response);
+
+    account.signed_in = 1;
+    account.admin = admin;
+    snprintf(account.login, sizeof account.login, "%s", login);
+    snprintf(account.token, sizeof account.token, "%s", token);
+    snprintf(account.hash, sizeof account.hash, "%s", hash);
+    pthread_mutex_lock(&mu);
+    if (gen == net.account_generation) net.view.account = account;
+    pthread_mutex_unlock(&mu);
+    preferences_set_account(account.login, account.token, account.hash, account.admin);
+    account_notice(gen, admin ? "Вход выполнен. Вы модератор." : "Вход выполнен.");
+}
+
+/* Retires the token that a publish or a moderation record made public. */
+static void account_rotate_token(void) {
+    char token[ON_TOKEN_SIZE], body[256], path[80];
+    OnAccount current;
+    size_t need;
+    int code;
+
+    pthread_mutex_lock(&mu);
+    current = net.view.account;
+    pthread_mutex_unlock(&mu);
+    if (!current.signed_in || !current.login[0] || !current.hash[0]) return;
+    on_net_random_hex(token);
+    need = on_account_token_json(token, current.hash, NULL, 0);
+    if (!need || need >= sizeof body ||
+        on_account_token_json(token, current.hash, body, sizeof body) != need) return;
+    snprintf(path, sizeof path, "tokens/%s.json", current.login);
+    code = request(path, "PUT", body, NULL);
+    if (code != 200) return;
+    pthread_mutex_lock(&mu);
+    /* Only refresh the session the player is still using. */
+    if (net.view.account.signed_in &&
+        !strcmp(net.view.account.login, current.login) &&
+        !strcmp(net.view.account.token, current.token)) {
+        snprintf(net.view.account.token, sizeof net.view.account.token, "%s", token);
+        current.token[0] = 0;
+        snprintf(current.token, sizeof current.token, "%s", token);
+    }
+    pthread_mutex_unlock(&mu);
+    preferences_set_account(current.login, current.token, current.hash, current.admin);
+}
+
+static void comments_load(unsigned gen, const char *level) {
+    char path[64];
+    OnComment list[ON_COMMENTS_CAP];
+    int count = 0, code;
+    snprintf(path, sizeof path, "comments/%s.json", level);
+    code = request(path, "GET", NULL, NULL);
+    if (code == 200)
+        count = on_account_parse_comments(net.response, list, ON_COMMENTS_CAP);
+    if (count < 0) count = 0; /* null or damaged data simply means «no comments» */
+    pthread_mutex_lock(&mu);
+    if (gen == net.account_generation) {
+        memcpy(net.view.comments, list, sizeof list);
+        net.view.comment_count = count;
+        snprintf(net.view.comment_level, sizeof net.view.comment_level, "%s", level);
+        net.view.comments_busy = 0;
+    }
+    pthread_mutex_unlock(&mu);
+    if (code != 200 && code != 404)
+        comments_notice(gen, code == 401 || code == 403 ?
+            "Firebase запретил чтение сообщений. Проверь правила." :
+            "Не удалось загрузить сообщения. Проверь интернет.");
+    compact_response();
+}
+
+static void comment_post(unsigned gen, const char *level, const char *text) {
+    char clean[ON_COMMENT_TEXT_SIZE], body[ON_COMMENT_TEXT_SIZE + 256];
+    char path[96], token[ON_TOKEN_SIZE], id[ON_COMMENT_ID_SIZE];
+    OnAccount session;
+    size_t need;
+    int code;
+
+    pthread_mutex_lock(&mu);
+    session = net.view.account;
+    pthread_mutex_unlock(&mu);
+    if (!session.signed_in) {comments_notice(gen, "Сначала войди в аккаунт.");return;}
+    trim_text(clean, sizeof clean, text);
+    if (!clean[0]) {comments_notice(gen, "Пустое сообщение.");return;}
+    on_net_random_hex(token);
+    memcpy(id, token, 16);
+    id[16] = 0;
+    need = on_account_comment_json(session.login, clean, session.token,
+                                   clock_ms(NET_CLOCK_REALTIME), NULL, 0);
+    if (!need || need >= sizeof body ||
+        on_account_comment_json(session.login, clean, session.token,
+                                clock_ms(NET_CLOCK_REALTIME), body,
+                                sizeof body) != need) {
+        comments_notice(gen, "Не удалось подготовить сообщение.");
+        return;
+    }
+    snprintf(path, sizeof path, "comments/%s/%s.json", level, id);
+    code = request(path, "PUT", body, NULL);
+    if (code != 200) {
+        comments_notice(gen, code == 401 || code == 403 ?
+            "База не приняла сообщение. Возможно, ник забанен." :
+            "Не удалось отправить сообщение. Проверь интернет.");
+        return;
+    }
+    comments_load(gen, level);
+}
+
+static void comment_hide(unsigned gen, const char *level, const char *id) {
+    char body[ON_COMMENT_TEXT_SIZE + 256], path[96];
+    OnAccount session;
+    OnComment found = {{0}, {0}, {0}, 0, 0};
+    int have = 0, code;
+    size_t need;
+
+    pthread_mutex_lock(&mu);
+    session = net.view.account;
+    if (!strcmp(net.view.comment_level, level))
+        for (int i = 0; i < net.view.comment_count && !have; i++)
+            if (!strcmp(net.view.comments[i].id, id)) {found = net.view.comments[i];have = 1;}
+    pthread_mutex_unlock(&mu);
+    if (!session.signed_in) {comments_notice(gen, "Сначала войди в аккаунт.");return;}
+    if (!have) {comments_notice(gen, "Сообщение не найдено. Обнови список.");return;}
+    need = on_account_comment_hide_json(&found, session.login, session.token, NULL, 0);
+    if (!need || need >= sizeof body ||
+        on_account_comment_hide_json(&found, session.login, session.token, body,
+                                     sizeof body) != need) {
+        comments_notice(gen, "Не удалось подготовить скрытие.");
+        return;
+    }
+    snprintf(path, sizeof path, "comments/%s/%s.json", level, id);
+    code = request(path, "PUT", body, NULL);
+    if (code != 200) {
+        comments_notice(gen, code == 401 || code == 403 ?
+            "Скрыть сообщение может только его автор или модератор." :
+            "Не удалось скрыть сообщение. Проверь интернет.");
+        return;
+    }
+    comments_load(gen, level);
+    account_rotate_token();
+}
+
+static void account_ban(unsigned gen, const char *login, const char *reason,
+                        int banned) {
+    char name[ON_LOGIN_SIZE], body[ON_REASON_SIZE + 256], path[80];
+    OnAccount session;
+    size_t need;
+    int code;
+
+    pthread_mutex_lock(&mu);
+    session = net.view.account;
+    pthread_mutex_unlock(&mu);
+    if (!session.signed_in) {account_notice(gen, "Сначала войди в аккаунт.");return;}
+    if (!session.admin) {account_notice(gen, "Банить может только модератор.");return;}
+    if (!on_account_normalize(name, login) || !on_account_valid_login(name)) {
+        account_notice(gen, "Ник: только a-z, 0-9 и _, от 3 до 24 знаков.");
+        return;
+    }
+    need = on_account_ban_json(banned, reason ? reason : "", session.login,
+                               session.token, clock_ms(NET_CLOCK_REALTIME), NULL, 0);
+    if (!need || need >= sizeof body ||
+        on_account_ban_json(banned, reason ? reason : "", session.login,
+                            session.token, clock_ms(NET_CLOCK_REALTIME), body,
+                            sizeof body) != need) {
+        account_notice(gen, "Не удалось подготовить бан.");
+        return;
+    }
+    snprintf(path, sizeof path, "bans/%s.json", name);
+    code = request(path, "PUT", body, NULL);
+    if (code != 200) {
+        account_notice(gen, code == 401 || code == 403 ?
+            "База не приняла бан. Проверь правила /bans." :
+            "Не удалось забанить. Проверь интернет.");
+        return;
+    }
+    account_notice(gen, banned ? "Игрок забанен." : "Игрок разбанен.");
+    account_rotate_token();
+}
+
+/* The «ОФИЦИАЛЬНЫЙ» badge is stored in the database, not in the client: the
+ * record and its index card are both written, so the browser workshop and the
+ * APK agree on which levels are official. Refresh the public author token on
+ * every flag change, including unmarking an already-official level. */
+static void level_set_official(unsigned gen, const char *level, int official) {
+    char body[256], path[80];
+    OnAccount session;
+    size_t need;
+    int code, token_may_be_public = 0, refresh = 0;
+    const char *notice = NULL;
+
+    pthread_mutex_lock(&mu);
+    session = net.view.account;
+    pthread_mutex_unlock(&mu);
+    if (!session.signed_in) {account_notice(gen, "Сначала войди в аккаунт.");return;}
+    if (!session.admin) {account_notice(gen, "Метку ставит только модератор.");return;}
+    if (!on_protocol_valid_level_id(level)) {account_notice(gen, "Неверный ID уровня.");return;}
+
+    need = on_account_author_json(session.login, session.token, NULL, 0);
+    if (!need || need >= sizeof body ||
+        on_account_author_json(session.login, session.token, body,
+                               sizeof body) != need) {
+        account_notice(gen, "Не удалось подготовить автора.");
+        return;
+    }
+    snprintf(path, sizeof path, "levels/%s/author.json", level);
+    token_may_be_public = 1;
+    code = request(path, "PUT", body, NULL);
+    if (code != 200) {
+        notice = code == 401 || code == 403 ?
+            "База не приняла автора уровня. Проверь правила /levels." :
+            "Не удалось пометить уровень. Проверь интернет.";
+        goto done;
+    }
+
+    need = on_account_text_json(session.login, NULL, 0);
+    if (!need || need >= sizeof body ||
+        on_account_text_json(session.login, body, sizeof body) != need) {
+        notice = "Не удалось подготовить каталог.";
+        goto done;
+    }
+    snprintf(path, sizeof path, "levels-index/%s/author.json", level);
+    code = request(path, "PUT", body, NULL);
+    if (code != 200) {
+        notice = code == 401 || code == 403 ?
+            "База не приняла автора каталога. Проверь правила." :
+            "Не удалось обновить каталог.";
+        goto done;
+    }
+
+    need = on_account_flag_json(official, NULL, 0);
+    if (!need || need >= sizeof body ||
+        on_account_flag_json(official, body, sizeof body) != need) {
+        notice = "Не удалось подготовить метку.";
+        goto done;
+    }
+    snprintf(path, sizeof path, "levels/%s/official.json", level);
+    code = request(path, "PUT", body, NULL);
+    if (code != 200) {
+        notice = code == 401 || code == 403 ?
+            "База не приняла метку. Проверь правила /levels." :
+            "Не удалось пометить уровень. Проверь интернет.";
+        goto done;
+    }
+    snprintf(path, sizeof path, "levels-index/%s/official.json", level);
+    code = request(path, "PUT", body, NULL);
+    if (code != 200) {
+        notice = code == 401 || code == 403 ?
+            "База не приняла метку каталога. Проверь правила." :
+            "Уровень помечен, но каталог не обновился.";
+        goto done;
+    }
+
+    notice = official ? "Уровень стал официальным." : "Метка снята.";
+    refresh = 1;
+done:
+    if (notice) account_notice(gen, notice);
+    if (refresh) {
+        pthread_mutex_lock(&mu);
+        net.level_list_requested = 1;
+        net.view.levels_busy = 1;
+        net.view.level_loaded = 0;
+        net.level_generation++;
+        pthread_mutex_unlock(&mu);
+    }
+    if (token_may_be_public) account_rotate_token();
+}
+
 void on_net_pump_once(void) {
     int task = T_IDLE, map = 1, role = 0, slot = 0;
-    unsigned gen, level_gen, publish_gen;
+    int ban_value = 0, official_value = 0;
+    LevelStatJob stat_job = {0};
+    unsigned gen, level_gen, publish_gen, account_gen;
     char id[ON_ROOM_ID_SIZE] = {0}, player[ON_PLAYER_ID_SIZE] = {0};
+    char client_id[ON_PLAYER_ID_SIZE] = {0};
     char level_id[ON_LEVEL_ID_SIZE] = {0};
+    char text[ON_COMMENT_TEXT_SIZE] = {0};
+    char comment_id[ON_COMMENT_ID_SIZE] = {0};
+    char reason[ON_REASON_SIZE] = {0};
     OnCommand command = {0};
     OnMatch state;
     unsigned revision = 0;
@@ -504,16 +1117,60 @@ void on_net_pump_once(void) {
     if (net.stopping || !net.response ||
         (net.view.mode == ON_NET_CLOSED && net.action != A_LEAVE &&
          !net.level_publish_requested && !net.level_fetch_requested &&
-         !net.level_list_requested)) {
+         !net.level_list_requested && !net.level_stat_count && !net.account_job &&
+         !net.comments_requested && !net.comment_post_requested &&
+         !net.comment_hide_requested && !net.ban_requested &&
+         !net.official_requested)) {
         pthread_mutex_unlock(&mu);return;
     }
     gen = net.generation;level_gen = net.level_generation;
     publish_gen = net.level_publish_generation;
+    account_gen = net.account_generation;
     memcpy(player, net.player_id, sizeof(player));
-    if (net.level_fetch_requested) {
+    memcpy(client_id, net.catalog_client_id, sizeof(client_id));
+    if (net.account_job) {
+        task = net.account_job == ACCOUNT_SIGN_IN ? T_SIGN_IN :
+               net.account_job == ACCOUNT_CREATE ? T_CREATE_ACCOUNT : T_TOKEN_ROTATE;
+        net.account_job = ACCOUNT_NONE;
+    } else if (net.comments_requested) {
+        task = T_COMMENTS;
+        memcpy(level_id, net.comments_level, sizeof(level_id));
+        net.comments_requested = 0;
+    } else if (net.comment_post_requested) {
+        task = T_COMMENT_POST;
+        memcpy(level_id, net.comment_post_level, sizeof(level_id));
+        memcpy(text, net.comment_text, sizeof(text));
+        net.comment_post_requested = 0;
+    } else if (net.comment_hide_requested) {
+        task = T_COMMENT_HIDE;
+        memcpy(level_id, net.comment_hide_level, sizeof(level_id));
+        memcpy(comment_id, net.comment_hide_id, sizeof(comment_id));
+        net.comment_hide_requested = 0;
+    } else if (net.ban_requested) {
+        task = T_BAN;
+        ban_value = net.ban_value;
+        memcpy(comment_id, net.ban_login, sizeof(comment_id));
+        memcpy(reason, net.ban_reason, sizeof(reason));
+        net.ban_requested = 0;
+    } else if (net.official_requested) {
+        task = T_OFFICIAL;
+        official_value = net.official_value;
+        memcpy(level_id, net.official_level, sizeof(level_id));
+        net.official_requested = 0;
+    } else if (net.level_fetch_requested) {
         task = T_LEVEL_GET;
         memcpy(level_id, net.level_fetch_id, sizeof(level_id));
         net.level_fetch_requested = 0;
+    } else if (net.level_stat_count) {
+        task = T_LEVEL_STAT_WRITE;
+        stat_job = net.level_stat_queue[0];
+        net.level_stat_count--;
+        if (net.level_stat_count)
+            memmove(net.level_stat_queue, net.level_stat_queue + 1,
+                    (size_t)net.level_stat_count * sizeof net.level_stat_queue[0]);
+        net.level_stat_inflight = stat_job;
+        net.level_stat_inflight_valid = 1;
+        memcpy(level_id, stat_job.id, sizeof(level_id));
     } else if (net.level_list_requested) {
         task = T_LEVEL_LIST;
         net.level_list_requested = 0;
@@ -550,9 +1207,62 @@ void on_net_pump_once(void) {
         /* The busy flag keeps this shared, large record immutable until done. */
         publish_level_record(publish_gen, &net.level_to_publish);return;
     }
-
+    if (task == T_SIGN_IN || task == T_CREATE_ACCOUNT) {
+        char login[ON_LOGIN_SIZE] = {0}, password[ON_PASSWORD_SIZE] = {0};
+        pthread_mutex_lock(&mu);
+        memcpy(login, net.account_login, sizeof login);
+        memcpy(password, net.account_password, sizeof password);
+        pthread_mutex_unlock(&mu);
+        account_sign_in(account_gen, task == T_CREATE_ACCOUNT);
+        return;
+    }
+    if (task == T_TOKEN_ROTATE) {account_rotate_token();return;}
+    if (task == T_COMMENTS) {comments_load(account_gen, level_id);return;}
+    if (task == T_COMMENT_POST) {comment_post(account_gen, level_id, text);return;}
+    if (task == T_COMMENT_HIDE) {comment_hide(account_gen, level_id, comment_id);return;}
+    if (task == T_BAN) {account_ban(account_gen, comment_id, reason, ban_value);return;}
+    if (task == T_OFFICIAL) {level_set_official(account_gen, level_id, official_value);return;}
     char path[96], body[256];
     int code;
+    if (task == T_LEVEL_STAT_WRITE) {
+        const char *kind = stat_job.kind == 1 ? "likes" : "downloads";
+        snprintf(path, sizeof path, "level-stats/%s/%s/%s.json",
+                 level_id, kind, client_id);
+        code = stat_job.value ? request(path, "PUT", "true", "null_etag") :
+                                request(path, "DELETE", NULL, NULL);
+        if (code == 412 && stat_job.kind == 2) code = 200;
+        pthread_mutex_lock(&mu);
+        if (net.level_stat_inflight_valid &&
+            net.level_stat_inflight.kind == stat_job.kind &&
+            !strcmp(net.level_stat_inflight.id, stat_job.id))
+            net.level_stat_inflight_valid = 0;
+        if (code == 200) {
+            for (int i = 0; i < net.view.level_count; ++i) {
+                OnPublishedLevelSummary *summary = &net.view.levels[i];
+                if (strcmp(summary->id, stat_job.id)) continue;
+                if (stat_job.kind == 1) {
+                    if (summary->liked != stat_job.value) {
+                        if (stat_job.value && summary->likes < UINT_MAX) ++summary->likes;
+                        else if (!stat_job.value && summary->likes) --summary->likes;
+                    }
+                    summary->liked = stat_job.value;
+                } else if (stat_job.value && !summary->downloaded) {
+                    if (summary->downloads < UINT_MAX) ++summary->downloads;
+                    summary->downloaded = 1;
+                }
+                break;
+            }
+        } else {
+            snprintf(net.view.levels_notice, sizeof net.view.levels_notice,
+                     "Не удалось обновить статистику уровня.");
+        }
+        net.level_list_requested = 1;
+        net.view.levels_busy = 1;
+        net.level_generation++;
+        pthread_mutex_unlock(&mu);
+        return;
+    }
+
     if (task == T_LEVEL_LIST) {
         code = request("levels-index.json", "GET", NULL, NULL);
         if (code != 200) {
@@ -568,6 +1278,11 @@ void on_net_pump_once(void) {
         }
         OnPublishedLevelSummary levels[ON_LEVEL_LIST_CAP];
         int count = on_protocol_level_index(net.response, levels, ON_LEVEL_LIST_CAP);
+        if (count >= 0) {
+            int stats_code = request("level-stats.json", "GET", NULL, NULL);
+            if (stats_code == 200)
+                (void)on_protocol_level_stats(net.response, levels, count, client_id);
+        }
         pthread_mutex_lock(&mu);
         if (level_gen == net.level_generation) {
             net.view.levels_busy = 0;
@@ -607,7 +1322,9 @@ void on_net_pump_once(void) {
                     "Не удалось загрузить уровень. Проверь интернет.");
             }
         }
-        pthread_mutex_unlock(&mu);compact_response();return;
+        pthread_mutex_unlock(&mu);compact_response();
+        if (valid) on_net_level_download(level_id);
+        return;
     }
     if (task == T_REFRESH) {on_net_refresh();return;}
     if (task == T_LIST) {
