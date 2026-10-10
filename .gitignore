@@ -15,6 +15,11 @@ staging/
 build/
 shots/
 node_modules/
+# Build-time Firebase configuration (generated from CI secrets, see
+# firebase/README.md). The committed *.example files stay in git.
+src/online_config_secret.h
+online/firebase-secret.js
+
 # Never commit Android signing material.
 *.jks
 *.keystore

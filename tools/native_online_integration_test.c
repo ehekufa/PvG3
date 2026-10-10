@@ -4,20 +4,22 @@
 #define _POSIX_C_SOURCE 200809L
 #include "game.h"
 #include "online_net.h"
+#include "preferences.h"
 #ifdef PVG3_LVGL_TEST
 #include "lvgl_ui.h"
 #include "game_view.h"
 #include "font.h"
-#include "preferences.h"
 #endif
 
 #include <assert.h>
 #include <math.h>
 #include <inttypes.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #ifdef PVG3_LVGL_TEST
 #undef assert
@@ -39,6 +41,8 @@ static struct {
 } db;
 static char uploaded_level_id[ON_LEVEL_ID_SIZE];
 static char uploaded_level_body[ON_LEVEL_JSON_CAP];
+typedef struct {char level[ON_LEVEL_ID_SIZE], kind[16], client[ON_PLAYER_ID_SIZE]; int active;} FakeLevelStat;
+static FakeLevelStat level_stats[256];
 static OnPublishedLevel fake_level_record;
 static char uploaded_index_body[1024];
 static const char *FAKE_GUEST = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -95,6 +99,46 @@ static const char *build_room(void) {
     assert(n > 0 && (size_t)n < sizeof room_body);
     return room_body;
 }
+/* A tiny stand-in for the account branches of the database. It mirrors the
+ * decisions firebase/database.rules.json makes, so the native client is tested
+ * against the same contract as the website. */
+typedef struct {
+    int account_written, account_if_match_present, token_written;
+    int ban_written, ban_value;
+    int comment_written, official_written, official_value;
+    int author_written, index_official_written, index_author_written;
+    char account_login[ON_LOGIN_SIZE], account_body[512];
+    char token_login[ON_LOGIN_SIZE], token_body[256];
+    char current_token[ON_TOKEN_SIZE];
+    char ban_login[ON_LOGIN_SIZE], ban_body[ON_REASON_SIZE + 256];
+    char comments[8192];
+    char official_level[ON_LEVEL_ID_SIZE], official_body[32];
+    char author_login[ON_LOGIN_SIZE], author_level[ON_LEVEL_ID_SIZE];
+    int comment_count;
+} AccountDb;
+static AccountDb accounts;
+static const char *const TEST_ADMIN_LOGIN = "qwertyuiopaj1234";
+
+static int read_author_token(const char *body, char login[ON_LOGIN_SIZE],
+                             char token[ON_TOKEN_SIZE]) {
+    const char *author = body ? strstr(body, "\"author\":{\"login\":\"") : NULL;
+    const char *login_start, *login_end, *token_start, *token_end;
+    if (!author) return 0;
+    login_start = strstr(author, "\"login\":\"") + strlen("\"login\":\"");
+    login_end = strchr(login_start, '\"');
+    token_start = strstr(login_end ? login_end : author, "\"tok\":\"");
+    if (!login_end || !token_start) return 0;
+    token_start += strlen("\"tok\":\"");
+    token_end = strchr(token_start, '\"');
+    size_t login_length = (size_t)(login_end - login_start);
+    size_t token_length = token_end ? (size_t)(token_end - token_start) : 0;
+    if (login_length == 0 || login_length >= ON_LOGIN_SIZE || token_length != 64)
+        return 0;
+    memcpy(login, login_start, login_length);login[login_length] = 0;
+    memcpy(token, token_start, token_length);token[token_length] = 0;
+    return on_account_valid_login(login) && on_account_valid_token(token);
+}
+
 static int answer(char *response, size_t cap, const char *text, int status) {
     size_t length = strlen(text);
     if (!response || length >= cap) return -2;
@@ -112,16 +156,322 @@ static int level_child_id(const char *path, const char *root,
     memcpy(id, path + n, id_length);id[id_length] = 0;
     return on_protocol_valid_level_id(id);
 }
+static int level_stat_path(const char *path, char level[ON_LEVEL_ID_SIZE],
+                           char kind[16], char client[ON_PLAYER_ID_SIZE]) {
+    if (!path || strncmp(path, "level-stats/", 12)) return 0;
+    const char *first = path + 12, *slash = strchr(first, '/');
+    if (!slash || (size_t)(slash - first) >= ON_LEVEL_ID_SIZE) return 0;
+    memcpy(level, first, (size_t)(slash - first));
+    level[slash - first] = 0;
+    const char *second = slash + 1, *slash2 = strchr(second, '/');
+    if (!slash2 || (size_t)(slash2 - second) >= 16) return 0;
+    memcpy(kind, second, (size_t)(slash2 - second));
+    kind[slash2 - second] = 0;
+    const char *client_start = slash2 + 1;
+    size_t length = strlen(client_start);
+    if (length < 6 || strcmp(client_start + length - 5, ".json") ||
+        length - 5 >= ON_PLAYER_ID_SIZE) return 0;
+    memcpy(client, client_start, length - 5);client[length - 5] = 0;
+    return on_protocol_valid_level_id(level) &&
+        (!strcmp(kind, "likes") || !strcmp(kind, "dislikes")) &&
+        on_protocol_valid_player_id(client);
+}
+static FakeLevelStat *find_level_stat(const char *level, const char *kind,
+                                      const char *client, int create) {
+    FakeLevelStat *empty = NULL;
+    for (size_t i = 0; i < sizeof level_stats / sizeof level_stats[0]; ++i) {
+        FakeLevelStat *item = &level_stats[i];
+        if (item->level[0] && !strcmp(item->level, level) &&
+            !strcmp(item->kind, kind) && !strcmp(item->client, client)) return item;
+        if (!item->level[0] && !empty) empty = item;
+    }
+    if (!create || !empty) return NULL;
+    snprintf(empty->level, sizeof empty->level, "%s", level);
+    snprintf(empty->kind, sizeof empty->kind, "%s", kind);
+    snprintf(empty->client, sizeof empty->client, "%s", client);
+    return empty;
+}
+static int stats_append(char *out, size_t cap, size_t *at,
+                        const char *format, ...) {
+    va_list args;va_start(args, format);
+    int n = vsnprintf(out + *at, cap - *at, format, args);
+    va_end(args);
+    if (n < 0 || (size_t)n >= cap - *at) return 0;
+    *at += (size_t)n;
+    return 1;
+}
+static int build_level_stats(char *out, size_t cap) {
+    static const char *const kinds[] = {"likes", "dislikes"};
+    size_t at = 0;
+    int levels_written = 0;
+    if (!cap) return -1;
+    out[0] = 0;
+    if (!stats_append(out, cap, &at, "{")) return -1;
+    for (size_t i = 0; i < sizeof level_stats / sizeof level_stats[0]; ++i) {
+        const FakeLevelStat *item = &level_stats[i];
+        if (!item->active) continue;
+        int earlier_level = 0;
+        for (size_t j = 0; j < i; ++j)
+            if (level_stats[j].active && !strcmp(level_stats[j].level, item->level))
+                earlier_level = 1;
+        if (earlier_level) continue;
+        if (!stats_append(out, cap, &at,
+                          levels_written++ ? ",\"%s\":{" : "\"%s\":{",
+                          item->level)) return -1;
+        int kinds_written = 0;
+        for (size_t k = 0; k < sizeof kinds / sizeof kinds[0]; ++k) {
+            int has_kind = 0;
+            for (size_t j = 0; j < sizeof level_stats / sizeof level_stats[0]; ++j)
+                if (level_stats[j].active && !strcmp(level_stats[j].level, item->level) &&
+                    !strcmp(level_stats[j].kind, kinds[k])) has_kind = 1;
+            if (!has_kind) continue;
+            if (!stats_append(out, cap, &at,
+                              kinds_written++ ? ",\"%s\":{" : "\"%s\":{",
+                              kinds[k])) return -1;
+            int votes_written = 0;
+            for (size_t j = 0; j < sizeof level_stats / sizeof level_stats[0]; ++j) {
+                const FakeLevelStat *vote = &level_stats[j];
+                if (!vote->active || strcmp(vote->level, item->level) ||
+                    strcmp(vote->kind, kinds[k])) continue;
+                if (!stats_append(out, cap, &at,
+                                  votes_written++ ? ",\"%s\":true" : "\"%s\":true",
+                                  vote->client)) return -1;
+            }
+            if (!stats_append(out, cap, &at, "}")) return -1;
+        }
+        if (!stats_append(out, cap, &at, "}")) return -1;
+    }
+    if (!stats_append(out, cap, &at, "}")) return -1;
+    return (int)at;
+}
+/* Splits "<branch>/<key>.json" or "<branch>/<key>/<sub>.json". */
+static int branch_key(const char *path, char branch[32], char key[ON_LOGIN_SIZE],
+                      char sub[ON_COMMENT_ID_SIZE + 8]) {
+    size_t length = path ? strlen(path) : 0;
+    char copy[192];
+    char *slash;
+    if (length < 6 || length >= sizeof copy || strcmp(path + length - 5, ".json"))
+        return 0;
+    memcpy(copy, path, length - 5);
+    copy[length - 5] = 0;
+    slash = strchr(copy, '/');
+    if (!slash) return 0;
+    *slash = 0;
+    if (strlen(copy) >= 32) return 0;
+    strcpy(branch, copy);
+    char *second = strchr(slash + 1, '/');
+    if (second) {
+        *second = 0;
+        if (strlen(slash + 1) >= ON_LOGIN_SIZE) return 0;
+        strcpy(key, slash + 1);
+        if (strlen(second + 1) >= ON_COMMENT_ID_SIZE + 8) return 0;
+        strcpy(sub, second + 1);
+    } else {
+        if (strlen(slash + 1) >= ON_LOGIN_SIZE) return 0;
+        strcpy(key, slash + 1);
+        sub[0] = 0;
+    }
+    return 1;
+}
+
+/* Adds one field to an entry of a /levels-index payload, so the catalog sees
+ * what a moderator just wrote: "official":true or "author":"login". */
+static int inject_field(const char *json, const char *id, const char *field,
+                        const char *value, int quoted, char *out, size_t cap) {
+    char key[32];
+    char addition[128];
+    const char *at, *brace, *end;
+    int depth = 0;
+    size_t head;
+    snprintf(key, sizeof key, "\"%s\":", id);
+    snprintf(addition, sizeof addition, ",\"%s\":%s%s%s", field,
+             quoted ? "\"" : "", value, quoted ? "\"" : "");
+    at = strstr(json, key);
+    if (!at) return 0;
+    brace = strchr(at + strlen(key) - 1, '{');
+    if (!brace) return 0;
+    end = NULL;
+    for (const char *p = brace; *p; ++p) {
+        if (*p == '{') depth++;
+        else if (*p == '}') {if (--depth == 0) {end = p;break;}}
+    }
+    if (!end) return 0;
+    head = (size_t)(end - json);
+    if (head + strlen(addition) + strlen(end) + 1 >= cap) return 0;
+    memcpy(out, json, head);
+    out[head] = 0;
+    strcat(out, addition);
+    strcat(out, end);
+    return 1;
+}
+
 int on_http_request(const char *path, const char *method, const char *body,
                     const char *if_match, char *response, size_t cap) {
+    if (!strcmp(path, "level-stats.json") && !strcmp(method, "GET")) {
+        int any = 0;
+        for (size_t i = 0; i < sizeof level_stats / sizeof level_stats[0]; ++i)
+            any |= level_stats[i].active;
+        if (!any) return answer(response, cap, "null", 200);
+        char json[32768];
+        int length = build_level_stats(json, sizeof json);
+        return length > 0 ? answer(response, cap, json, 200) : -2;
+    }
+    char stat_level[ON_LEVEL_ID_SIZE], stat_kind[16], stat_client[ON_PLAYER_ID_SIZE];
+    if (level_stat_path(path, stat_level, stat_kind, stat_client)) {
+        FakeLevelStat *item = find_level_stat(stat_level, stat_kind, stat_client,
+                                               !strcmp(method, "PUT"));
+        if (!strcmp(method, "GET"))
+            return answer(response, cap,
+                item && item->active ? "true" : "null", 200);
+        if (!strcmp(method, "PUT")) {
+            if (!item) return answer(response, cap, "null", 507);
+            if (if_match && !strcmp(if_match, "null_etag") && item->active)
+                return answer(response, cap, "null", 412);
+            const char *other_kind = !strcmp(stat_kind, "likes") ?
+                "dislikes" : "likes";
+            FakeLevelStat *other = find_level_stat(stat_level, other_kind,
+                                                    stat_client, 0);
+            if (body && !strcmp(body, "true") && other && other->active)
+                return answer(response, cap, "null", 403);
+            item->active = body && !strcmp(body, "true");
+            return answer(response, cap, "true", 200);
+        }
+        if (!strcmp(method, "DELETE")) {
+            if (!item || !item->active)
+                return answer(response, cap, "null", 403);
+            item->active = 0;
+            return answer(response, cap, "null", 200);
+        }
+    }
     if (!strcmp(path, "levels-index.json") && !strcmp(method, "GET")) {
-        if (!uploaded_index_body[0]) return answer(response, cap, TEST_LEVEL_INDEX, 200);
-        char combined[4096];size_t n = strlen(TEST_LEVEL_INDEX);
-        int used = snprintf(combined, sizeof combined, "%.*s,\"%s\":%s}",
-                            (int)n - 1, TEST_LEVEL_INDEX, uploaded_level_id,
-                            uploaded_index_body);
-        if (used < 0 || (size_t)used >= sizeof combined) return -2;
-        return answer(response, cap, combined, 200);
+        char index_body[4096];
+        if (!uploaded_index_body[0])
+            snprintf(index_body, sizeof index_body, "%s", TEST_LEVEL_INDEX);
+        else {
+            size_t n = strlen(TEST_LEVEL_INDEX);
+            int used = snprintf(index_body, sizeof index_body, "%.*s,\"%s\":%s}",
+                                (int)n - 1, TEST_LEVEL_INDEX, uploaded_level_id,
+                                uploaded_index_body);
+            if (used < 0 || (size_t)used >= sizeof index_body) return -2;
+        }
+        char step[4096];
+        if (accounts.official_written && accounts.index_official_written &&
+            accounts.official_value &&
+            inject_field(index_body, accounts.official_level, "official", "true",
+                         0, step, sizeof step))
+            snprintf(index_body, sizeof index_body, "%s", step);
+        if (accounts.index_author_written && accounts.author_login[0] &&
+            inject_field(index_body, accounts.author_level, "author",
+                         accounts.author_login, 1, step, sizeof step))
+            snprintf(index_body, sizeof index_body, "%s", step);
+        return answer(response, cap, index_body, 200);
+    }
+    {
+        char branch[32], key[ON_LOGIN_SIZE], sub[ON_COMMENT_ID_SIZE + 8];
+        if (branch_key(path, branch, key, sub)) {
+            if (!strcmp(branch, "accounts") && !strcmp(method, "PUT")) {
+                accounts.account_if_match_present = if_match && if_match[0];
+                if (accounts.account_written &&
+                    !strcmp(accounts.account_login, key) &&
+                    (!body || !strstr(body, "\"proof\":")))
+                    return answer(response, cap, "null", 403);
+                if (!body || !strstr(body, "\"hash\":")) return -1;
+                accounts.account_written = 1;
+                snprintf(accounts.account_login, sizeof accounts.account_login,
+                         "%s", key);
+                snprintf(accounts.account_body, sizeof accounts.account_body,
+                         "%s", body);
+                return answer(response, cap, "null", 200);
+            }
+            if (!strcmp(branch, "tokens") && !strcmp(method, "PUT")) {
+                if (!body || !strstr(body, "\"token\":") ||
+                    !accounts.account_written || strcmp(accounts.account_login, key))
+                    return answer(response, cap, "null", 403);
+                char token[ON_TOKEN_SIZE];
+                const char *start = strstr(body, "\"token\":\"");
+                if (!start) return answer(response, cap, "null", 400);
+                start += strlen("\"token\":\"");
+                const char *end = strchr(start, '\"');
+                if (!end || (size_t)(end - start) != 64) return answer(response, cap, "null", 400);
+                memcpy(token, start, 64);token[64] = 0;
+                if (!on_account_valid_token(token)) return answer(response, cap, "null", 400);
+                accounts.token_written = 1;
+                snprintf(accounts.token_login, sizeof accounts.token_login, "%s", key);
+                snprintf(accounts.token_body, sizeof accounts.token_body, "%s", body);
+                snprintf(accounts.current_token, sizeof accounts.current_token, "%s", token);
+                return answer(response, cap, "null", 200);
+            }
+            if (!strcmp(branch, "admins") && !strcmp(method, "GET"))
+                return answer(response, cap,
+                    !strcmp(key, TEST_ADMIN_LOGIN) ? "true" : "null", 200);
+            if (!strcmp(branch, "bans") && !strcmp(method, "PUT")) {
+                if (!body || !strstr(body, "\"banned\":")) return -1;
+                accounts.ban_written = 1;
+                accounts.ban_value = strstr(body, "\"banned\":true") ? 1 : 0;
+                snprintf(accounts.ban_login, sizeof accounts.ban_login, "%s", key);
+                snprintf(accounts.ban_body, sizeof accounts.ban_body, "%s", body);
+                return answer(response, cap, "null", 200);
+            }
+            if (!strcmp(branch, "comments")) {
+                if (!strcmp(method, "GET"))
+                    return answer(response, cap,
+                        accounts.comments[0] ? accounts.comments : "null", 200);
+                if (!strcmp(method, "PUT") && key[0] && sub[0]) {
+                    if (!body || !strstr(body, "\"login\":") ||
+                        !strstr(body, "\"text\":"))
+                        return answer(response, cap, "null", 400);
+                    size_t used = strlen(accounts.comments);
+                    int written = snprintf(accounts.comments + (used ? used - 1 : 0),
+                        sizeof accounts.comments - (used ? used - 1 : 0),
+                        "%s\"%s\":%s}", used ? "," : "{", sub, body);
+                    if (written <= 0) return -2;
+                    accounts.comment_written = 1;
+                    accounts.comment_count++;
+                    return answer(response, cap, "null", 200);
+                }
+            }
+        }
+    }
+    /* Child writes such as levels/<id>/official.json: the flag lives on the
+     * record, so the client never has to re-upload a 20k-object level. */
+    {
+        char branch[32], key[ON_LOGIN_SIZE], sub[ON_COMMENT_ID_SIZE + 8];
+        if (branch_key(path, branch, key, sub) && sub[0] &&
+            (!strcmp(branch, "levels") || !strcmp(branch, "levels-index")) &&
+            !strcmp(method, "PUT")) {
+            int official = !strcmp(sub, "official");
+            int author = !strcmp(sub, "author");
+            if (!official && !author) return -1;
+            if (!body) return answer(response, cap, "null", 400);
+            if (!on_protocol_valid_level_id(key)) return -1;
+            if (official) {
+                if (!strcmp(branch, "levels")) {
+                    accounts.official_written = 1;
+                    accounts.official_value = strstr(body, "true") ? 1 : 0;
+                    strcpy(accounts.official_level, key);
+                } else accounts.index_official_written = 1;
+                snprintf(accounts.official_body, sizeof accounts.official_body,
+                         "%s", body);
+            } else {
+                accounts.author_written = 1;
+                if (strcmp(branch, "levels")) {
+                    /* The catalog card carries a plain login, the level
+                     * record carries login plus token. */
+                    accounts.index_author_written = 1;
+                    strcpy(accounts.author_level, key);
+                    /* The body is a bare JSON string: "login". */
+                    size_t body_length = strlen(body);
+                    if (body_length > 2 && body_length < ON_LOGIN_SIZE + 2 &&
+                        body[0] == '"' && body[body_length - 1] == '"') {
+                        memcpy(accounts.author_login, body + 1, body_length - 2);
+                        accounts.author_login[body_length - 2] = 0;
+                        if (!on_account_valid_login(accounts.author_login))
+                            accounts.author_login[0] = 0;
+                    }
+                }
+            }
+            return answer(response, cap, "null", 200);
+        }
     }
     char level_id[ON_LEVEL_ID_SIZE];
     if (level_child_id(path, "levels", level_id)) {
@@ -137,6 +487,11 @@ int on_http_request(const char *path, const char *method, const char *body,
                 return answer(response, cap, "null", 412);
             if (!body || !on_protocol_published_level(body, level_id, &fake_level_record))
                 return answer(response, cap, "null", 400);
+            char author_login[ON_LOGIN_SIZE], author_token[ON_TOKEN_SIZE];
+            if (!read_author_token(body, author_login, author_token) ||
+                strcmp(author_login, accounts.account_login) ||
+                strcmp(author_token, accounts.current_token))
+                return answer(response, cap, "null", 403);
             if (strlen(body) >= sizeof uploaded_level_body) return -2;
             strcpy(uploaded_level_id, level_id);strcpy(uploaded_level_body, body);
             /* The native HTTP adapters deliberately discard Firebase's
@@ -151,6 +506,11 @@ int on_http_request(const char *path, const char *method, const char *body,
                 return answer(response, cap, "null", 412);
             if (!uploaded_level_body[0] || strcmp(level_id, uploaded_level_id) || !body)
                 return answer(response, cap, "null", 400);
+            char author_login[ON_LOGIN_SIZE], author_token[ON_TOKEN_SIZE];
+            if (!read_author_token(uploaded_level_body, author_login, author_token) ||
+                strcmp(author_login, accounts.account_login) ||
+                strcmp(author_token, accounts.current_token))
+                return answer(response, cap, "null", 403);
             char wrapper[1300];
             int n = snprintf(wrapper, sizeof wrapper, "{\"%s\":%s}", level_id, body);
             OnPublishedLevelSummary summary[1];
@@ -268,6 +628,76 @@ static void sample_level(OnPublishedLevel *level) {
         .x=14,.y=6,.w=1,.h=2,.color=0xffffffu,.visible=1};
     snprintf(level->objects[2].name, sizeof level->objects[2].name, "%s", "Финиш");
 }
+static void stable_catalog_client_id_preferences(void) {
+    char path[] = "/tmp/pvg3-catalog-preferences-XXXXXX";
+    int fd = mkstemp(path);assert(fd >= 0);close(fd);
+    const char *expected = "0123456789abcdef0123456789abcdef";
+    char id[ON_PLAYER_ID_SIZE] = {0};
+    preferences_set_path(path);
+    preferences_set_catalog_client_id(expected);
+    assert(preferences_catalog_client_id(id, sizeof id) && !strcmp(id, expected));
+    preferences_set_path(path);
+    memset(id, 0, sizeof id);
+    assert(preferences_catalog_client_id(id, sizeof id) && !strcmp(id, expected));
+    preferences_set_path(NULL);
+    unlink(path);
+}
+static OnPublishedLevelSummary *catalog_level(OnNetView *snapshot, const char *id) {
+    for (int i = 0; i < snapshot->level_count; ++i)
+        if (!strcmp(snapshot->levels[i].id, id)) return &snapshot->levels[i];
+    return NULL;
+}
+static void catalog_stats_round_trip(void) {
+    on_net_open();
+    on_net_levels_refresh();tick_pump(1);
+    OnNetView snapshot = view();
+    assert(snapshot.level_count >= 2 && !snapshot.levels_busy);
+    OnPublishedLevelSummary *summary = catalog_level(&snapshot, "104");
+    assert(summary && summary->likes == 0 && summary->dislikes == 0 &&
+           !summary->liked && !summary->disliked);
+
+    /* Rapid duplicate taps coalesce back to no reaction before the worker runs. */
+    on_net_level_react("104", ON_LEVEL_REACTION_LIKE);
+    on_net_level_react("104", ON_LEVEL_REACTION_LIKE);
+    tick_pump(1);on_net_levels_refresh();tick_pump(1);
+    snapshot = view();summary = catalog_level(&snapshot, "104");
+    assert(summary && summary->likes == 0 && summary->dislikes == 0 &&
+           !summary->liked && !summary->disliked);
+
+    on_net_level_fetch("104");tick_pump(1);
+    snapshot = view();
+    assert(snapshot.level_loaded && !strcmp(snapshot.loaded_level_id, "104"));
+    on_net_levels_refresh();tick_pump(1);
+    snapshot = view();summary = catalog_level(&snapshot, "104");
+    assert(summary && summary->likes == 0 && summary->dislikes == 0 &&
+           !summary->liked && !summary->disliked);
+
+    on_net_level_react("104", ON_LEVEL_REACTION_LIKE);tick_pump(1);
+    on_net_levels_refresh();tick_pump(1);
+    snapshot = view();summary = catalog_level(&snapshot, "104");
+    assert(summary && summary->likes == 1 && summary->dislikes == 0 &&
+           summary->liked && !summary->disliked);
+
+    on_net_level_react("104", ON_LEVEL_REACTION_DISLIKE);tick_pump(2);
+    on_net_levels_refresh();tick_pump(1);
+    snapshot = view();summary = catalog_level(&snapshot, "104");
+    assert(summary && summary->likes == 0 && summary->dislikes == 1 &&
+           !summary->liked && summary->disliked);
+
+    on_net_level_react("104", ON_LEVEL_REACTION_DISLIKE);tick_pump(1);
+    on_net_levels_refresh();tick_pump(1);
+    snapshot = view();summary = catalog_level(&snapshot, "104");
+    assert(summary && summary->likes == 0 && summary->dislikes == 0 &&
+           !summary->liked && !summary->disliked);
+
+    on_net_level_react("104", ON_LEVEL_REACTION_LIKE);tick_pump(1);
+    on_net_level_react("104", ON_LEVEL_REACTION_DISLIKE);tick_pump(2);
+    on_net_levels_refresh();tick_pump(1);
+    snapshot = view();summary = catalog_level(&snapshot, "104");
+    assert(summary && summary->likes == 0 && summary->dislikes == 1 &&
+           !summary->liked && summary->disliked);
+    on_net_close();
+}
 static void large_level_transport_round_trip(void) {
     static OnPublishedLevel source, loaded;
     memset(&source, 0, sizeof source);
@@ -332,13 +762,17 @@ static void assert_platformer_art(void) {
                        PV_ART_LEVEL_PORTAL_JETPACK,
                        PV_ART_JETPACK_ACTIVE, PV_ART_JETPACK_INACTIVE,
                        PV_ART_LEVEL_TRIGGER_COLOR, PV_ART_WORKSHOP_ROTATE,
-                       PV_ART_COLOR_WHEEL};
+                       PV_ART_COLOR_WHEEL, PV_ART_LEVEL_TRIGGER_COUNT,
+                       PV_ART_LEVEL_TRIGGER_TOGGLE, PV_ART_LEVEL_TRIGGER_SPAWN,
+                       PV_ART_LIKE, PV_ART_DISLIKE};
     const int widths[] = {100, 100, 100, 100, 100, 100, 100, 100, 50,
                           100, 100, 100, 100, 100, 100,
-                          100, 100, 100, 100, 100, 100, 256};
+                          100, 100, 100, 100, 100, 100, 256,
+                          100, 100, 100, 100, 100};
     const int heights[] = {100, 50, 100, 100, 100, 100, 100, 100, 100,
                            100, 100, 100, 100, 100, 100,
-                           100, 100, 100, 100, 100, 100, 256};
+                           100, 100, 100, 100, 100, 100, 256,
+                           100, 100, 100, 100, 100};
     for (size_t i = 0; i < sizeof ids / sizeof ids[0]; ++i) {
         int width = 0, height = 0, visible = 0;
         const uint32_t *pixels = game_art_rgba(ids[i], &width, &height);
@@ -394,6 +828,14 @@ static void ui_drag(int x0, int y0, int x1, int y1,
     assert(lvgl_ui_move(x1, y1));ui_snapshot(hover_shot);
     assert(lvgl_ui_pointer(x1, y1, 0));ui_snapshot("drag_drop");
 }
+static int native_preview_test_level(OnPublishedLevel *level) {
+    /* Old C test fixtures predate the new alpha field; a decoded legacy wire
+     * level defaults to fully opaque, so mirror that default here. */
+    if (level) for (int i = 0; i < level->object_count; ++i)
+        if (level->objects[i].alpha == 0) level->objects[i].alpha = 100;
+    return game_workshop_preview(level);
+}
+
 static void native_trigger_runtime_regression(void) {
     static OnPublishedLevel level;
     memset(&level, 0, sizeof level);
@@ -429,7 +871,7 @@ static void native_trigger_runtime_regression(void) {
     level.objects[7].trigger_action = ON_TRIGGER_UNACTIVATE;
 
     game_workshop_open();game_workshop_open_details();game_workshop_open_editor();
-    assert(game_workshop_preview(&level));
+    assert(native_preview_test_level(&level));
     game_custom_control(0, 0, 1);game_tick(.05f, NULL);game_custom_control(0, 0, 0);
     OnLevelObject first, second;
     assert(game_debug_custom_object(4, &first) && game_debug_custom_object(5, &second));
@@ -449,7 +891,7 @@ static void native_trigger_runtime_regression(void) {
 
     game_custom_level_exit();
     level.objects[7].trigger_action = ON_TRIGGER_ACTIVATE;
-    assert(game_workshop_preview(&level));
+    assert(native_preview_test_level(&level));
     game_custom_control(0, 0, 1);game_tick(.05f, NULL);game_custom_control(0, 0, 0);
     assert(game_debug_custom_object(4, &first) && first.visible &&
            first.x == 18 && first.y == -1 && first.angle > 17.9f &&
@@ -474,7 +916,7 @@ static void native_trigger_runtime_regression(void) {
         .trigger_kind=ON_TRIGGER_KIND_INVISIBILITY,
         .trigger_event=ON_TRIGGER_START,.trigger_action=ON_TRIGGER_INVISIBLE,
         .trigger_group_id=42,.trigger_has_group=1};
-    assert(game_workshop_preview(&level));
+    assert(native_preview_test_level(&level));
     assert(game_debug_custom_object(4, &first) && first.visible &&
            game_debug_custom_object_invisible(4));
     for (int i = 0; i < 20; ++i) game_tick(.05f, NULL);
@@ -485,12 +927,12 @@ static void native_trigger_runtime_regression(void) {
     /* Touch events need actual contact; merely pressing action never substitutes for touch. */
     level.objects[4].trigger_event = ON_TRIGGER_TOUCH;
     level.objects[4].x = 100;level.objects[4].y = 100;
-    assert(game_workshop_preview(&level));
+    assert(native_preview_test_level(&level));
     for (int i = 0; i < 20; ++i) game_tick(.05f, NULL);
     assert(!game_debug_custom_object_invisible(4));
     game_custom_level_exit();
     level.objects[4].x = 1;level.objects[4].y = 7;
-    assert(game_workshop_preview(&level));
+    assert(native_preview_test_level(&level));
     game_tick(.01f, NULL);
     assert(game_debug_custom_object_invisible(4));
     game_custom_level_exit();
@@ -500,7 +942,7 @@ static void native_trigger_runtime_regression(void) {
     level.objects[4].trigger_kind = ON_TRIGGER_KIND_NO_COLLISION;
     level.objects[4].trigger_event = ON_TRIGGER_MANUAL;
     level.objects[4].trigger_action = ON_TRIGGER_NO_COLLISION;
-    assert(game_workshop_preview(&level));
+    assert(native_preview_test_level(&level));
     game_custom_control(0, 0, 1);game_tick(.05f, NULL);game_custom_control(0, 0, 0);
     for (int i = 0; i < 20; ++i) game_tick(.05f, NULL);
     assert(game_debug_custom_object(4, &first) && first.visible);
@@ -517,7 +959,7 @@ static void native_trigger_runtime_regression(void) {
         .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
     level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_BLOCK,
         .x=4,.y=6,.w=2,.h=1,.angle=90,.visible=1,.number=42};
-    assert(game_workshop_preview(&level));
+    assert(native_preview_test_level(&level));
     for (int i = 0; i < 120; ++i) game_tick(1.0f / 60.0f, NULL);
     assert(game_debug_custom_player_y() > 315 && game_debug_custom_player_y() < 345);
     game_custom_level_exit();
@@ -531,7 +973,7 @@ static void native_trigger_runtime_regression(void) {
         .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
     level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_SLOPE,
         .x=3,.y=7,.w=1,.h=1,.visible=1,.number=42};
-    assert(game_workshop_preview(&level));
+    assert(native_preview_test_level(&level));
     float spawn_y = game_debug_custom_player_y();
     float highest_y = spawn_y;
     game_custom_control(1, 0, 0);
@@ -547,7 +989,7 @@ static void native_trigger_runtime_regression(void) {
     /* Horizontal mirroring reverses the slope, its climb direction and collision. */
     level.objects[1].x = 5;
     level.objects[3].flip_x = 1;
-    assert(game_workshop_preview(&level));
+    assert(native_preview_test_level(&level));
     screenshot("slope_mirrored_start");
     spawn_y = game_debug_custom_player_y();highest_y = spawn_y;
     game_custom_control(-1, 0, 0);
@@ -563,7 +1005,7 @@ static void native_trigger_runtime_regression(void) {
 
     /* The same slope remains climbable after a quarter-turn rotation. */
     level.objects[3].flip_x = 0;level.objects[3].angle = 90;
-    assert(game_workshop_preview(&level));
+    assert(native_preview_test_level(&level));
     spawn_y = game_debug_custom_player_y();highest_y = spawn_y;
     game_custom_control(-1, 0, 0);
     for (int i = 0; i < 24; ++i) {
@@ -588,13 +1030,13 @@ static void native_trigger_runtime_regression(void) {
         .trigger_kind=ON_TRIGGER_KIND_GRAVITY,.trigger_event=ON_TRIGGER_START,
         .trigger_action=ON_TRIGGER_SET_GRAVITY,.trigger_value=-100,
         .trigger_color=0xffc54eu};
-    assert(game_workshop_preview(&level));
+    assert(native_preview_test_level(&level));
     assert(game_debug_custom_gravity() == 450.0f);
     for (int i = 0; i < 10; ++i) game_tick(.05f, NULL);
     float weak_gravity_y = game_debug_custom_player_y();
     game_custom_level_exit();
     level.objects[3].trigger_value = 100;
-    assert(game_workshop_preview(&level));
+    assert(native_preview_test_level(&level));
     assert(game_debug_custom_gravity() == 2450.0f);
     for (int i = 0; i < 10; ++i) game_tick(.05f, NULL);
     float strong_gravity_y = game_debug_custom_player_y();
@@ -611,7 +1053,7 @@ static void native_trigger_runtime_regression(void) {
         .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
     level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_ORB_YELLOW,
         .x=3,.y=4,.w=.7f,.h=.7f,.visible=1,.number=4};
-    assert(game_workshop_preview(&level));
+    assert(native_preview_test_level(&level));
     float orb_spawn_y = game_debug_custom_player_y();
     game_tick(.05f, NULL);
     assert(game_debug_custom_player_y() > orb_spawn_y &&
@@ -629,7 +1071,7 @@ static void native_trigger_runtime_regression(void) {
     float yellow_bounce_y = game_debug_custom_player_y();
     game_custom_level_exit();
     level.objects[3].type = ON_LEVEL_ORB_ORANGE;
-    assert(game_workshop_preview(&level));
+    assert(native_preview_test_level(&level));
     orb_spawn_y = game_debug_custom_player_y();
     game_tick(.05f, NULL);
     assert(game_debug_custom_player_y() > orb_spawn_y &&
@@ -660,7 +1102,7 @@ static void native_trigger_runtime_regression(void) {
         .x=4,.y=7,.w=1,.h=1,.visible=1,.number=5};
     level.objects[5] = (OnLevelObject){.id=6,.type=ON_LEVEL_HAZARD,
         .x=7,.y=7,.w=1,.h=1,.visible=1,.number=6};
-    assert(game_workshop_preview(&level));
+    assert(native_preview_test_level(&level));
     game_custom_control(1, 0, 0);
     int saw_first_checkpoint = 0, saw_latest_checkpoint = 0, died_at_latest = 0;
     float latest_spawn_x = (4.0f + .5f - .65f * .5f) * 80.0f;
@@ -686,33 +1128,65 @@ static void native_trigger_runtime_regression(void) {
            game_debug_custom_checkpoint_id() == 5);
     game_custom_level_exit();
 
-    /* Falling below the playable level is terminal: checkpoints do not revive. */
+    /* Falling below the level respawns at the player start if no checkpoint
+     * has been reached, and the player can immediately continue. */
     level.object_count = 2;
     level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_PLAYER,
         .x=1,.y=1,.w=.65f,.h=.85f,.visible=1,.number=1};
     level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_GOAL,
         .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
-    assert(game_workshop_preview(&level));
+    assert(native_preview_test_level(&level));
+    float start_x = game_debug_custom_player_x();
     float start_y = game_debug_custom_player_y();
-    int fell_and_died = 0;
+    int respawned_at_start = 0;
     for (int i = 0; i < 100; ++i) {
+        float previous_y = game_debug_custom_player_y();
         game_tick(.05f, NULL);
-        if (game_custom_player_dead()) {fell_and_died = 1;break;}
+        if (previous_y > start_y + 200.0f &&
+            fabsf(game_debug_custom_player_x() - start_x) < .001f &&
+            fabsf(game_debug_custom_player_y() - start_y) < .001f) {
+            respawned_at_start = 1;break;
+        }
     }
-    assert(fell_and_died && game_custom_player_dead() &&
-           game_debug_custom_player_y() > start_y + 200.0f);
-    float dead_x = game_debug_custom_player_x();
-    float dead_y = game_debug_custom_player_y();
-    game_custom_control(1, 1, 1);
-    for (int i = 0; i < 20; ++i) game_tick(.05f, NULL);
-    assert(game_custom_player_dead() &&
-           fabsf(game_debug_custom_player_x() - dead_x) < .001f &&
-           fabsf(game_debug_custom_player_y() - dead_y) < .001f &&
-           game_debug_custom_player_vx() == 0.0f &&
-           game_debug_custom_player_vy() == 0.0f);
+    assert(respawned_at_start && game_debug_custom_player_vx() == 0.0f &&
+           game_debug_custom_player_vy() == 0.0f &&
+           !game_debug_custom_player_grounded());
+    game_custom_control(1, 0, 0);
+    game_tick(.05f, NULL);
+    assert(game_debug_custom_player_x() > start_x);
+    game_custom_control(0, 0, 0);
     game_custom_level_exit();
 
-    /* Falling at the world's hard limit also stays dead despite a checkpoint. */
+    /* If a checkpoint has been activated, a fall returns to that marker. */
+    level.object_count = 3;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_PLAYER,
+        .x=1,.y=1,.w=.65f,.h=.85f,.visible=1,.number=1};
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_CHECKPOINT,
+        .x=1,.y=1,.w=1,.h=1,.visible=1,.number=3};
+    assert(native_preview_test_level(&level));
+    game_tick(0, NULL);
+    assert(game_debug_custom_checkpoint_id() == 3);
+    float checkpoint_x = (1.0f + .5f - .65f * .5f) * 80.0f;
+    float checkpoint_y = (1.0f + 1.0f - .85f) * 72.0f;
+    int respawned_at_checkpoint = 0;
+    for (int i = 0; i < 100; ++i) {
+        float previous_y = game_debug_custom_player_y();
+        game_tick(.05f, NULL);
+        if (previous_y > checkpoint_y + 200.0f &&
+            fabsf(game_debug_custom_player_x() - checkpoint_x) < .001f &&
+            fabsf(game_debug_custom_player_y() - checkpoint_y) < .001f) {
+            respawned_at_checkpoint = 1;break;
+        }
+    }
+    assert(respawned_at_checkpoint && game_debug_custom_checkpoint_id() == 3 &&
+           fabsf(game_debug_custom_player_vy()) < .001f &&
+           fabsf(game_debug_custom_player_vx()) < .001f &&
+           !game_debug_custom_player_grounded());
+    game_custom_level_exit();
+
+    /* The fall plane remains clamped to the world's hard limit. */
     level.object_count = 3;
     level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_PLAYER,
         .x=1,.y=99999.0f,.w=.65f,.h=.85f,.visible=1,.number=1};
@@ -720,18 +1194,25 @@ static void native_trigger_runtime_regression(void) {
         .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
     level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_CHECKPOINT,
         .x=1,.y=99999.0f,.w=1,.h=1,.visible=1,.number=3};
-    assert(game_workshop_preview(&level));
+    assert(native_preview_test_level(&level));
     game_tick(0, NULL);
     assert(game_debug_custom_checkpoint_id() == 3);
-    int fell_at_world_limit = 0;
+    float world_checkpoint_x = (1.0f + .5f - .65f * .5f) * 80.0f;
+    float world_checkpoint_y = (99999.0f + 1.0f - .85f) * 72.0f;
+    int respawned_at_world_limit = 0;
     for (int i = 0; i < 60; ++i) {
+        float previous_vy = game_debug_custom_player_vy();
         game_tick(.05f, NULL);
-        if (game_custom_player_dead()) {fell_at_world_limit = 1;break;}
+        if (previous_vy > 0.0f &&
+            fabsf(game_debug_custom_player_x() - world_checkpoint_x) < .001f &&
+            fabsf(game_debug_custom_player_y() - world_checkpoint_y) < .01f &&
+            fabsf(game_debug_custom_player_vy()) < .001f) {
+            respawned_at_world_limit = 1;break;
+        }
     }
-    assert(fell_at_world_limit && game_debug_custom_checkpoint_id() == 3 &&
-           fabsf(game_debug_custom_player_vy()) < .001f &&
+    assert(respawned_at_world_limit && game_debug_custom_checkpoint_id() == 3 &&
            fabsf(game_debug_custom_player_vx()) < .001f &&
-           !game_debug_custom_player_grounded());
+           fabsf(game_debug_custom_player_vy()) < .001f);
     game_custom_level_exit();
 
     /* The art-free particle emitter draws its own trail in the native runtime. */
@@ -746,7 +1227,7 @@ static void native_trigger_runtime_regression(void) {
         .x=1,.y=7,.w=.65f,.h=.85f,.visible=1,.number=1};
     level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
         .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
-    assert(game_workshop_preview(&level));
+    assert(native_preview_test_level(&level));
     game_tick(0, without_particles);
     game_custom_level_exit();
     level.object_count = 4;
@@ -755,18 +1236,18 @@ static void native_trigger_runtime_regression(void) {
         .emitter={.enabled=1,.continuous=1,.gravity_enabled=0,.glow=1,
             .rate=8,.lifetime=1.2f,.speed=90,.spread=40,.size=4,
             .direction=-90,.gravity=90}};
-    assert(game_workshop_preview(&level));
+    assert(native_preview_test_level(&level));
     game_tick(0, with_particles);
     assert(memcmp(with_particles, without_particles, sizeof with_particles));
     game_custom_level_exit();
     level.objects[3].emitter.enabled = 0;
-    assert(game_workshop_preview(&level));
+    assert(native_preview_test_level(&level));
     game_tick(0, disabled_particles);
     assert(!memcmp(disabled_particles, without_particles, sizeof disabled_particles));
     game_custom_level_exit();
     level.objects[3].emitter.enabled = 1;
     level.objects[3].emitter.speed = 0;
-    assert(game_workshop_preview(&level));
+    assert(native_preview_test_level(&level));
     game_tick(0, changed_particles);
     assert(memcmp(changed_particles, with_particles, sizeof changed_particles));
     game_custom_level_exit();
@@ -781,7 +1262,7 @@ static void native_trigger_runtime_regression(void) {
         .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
     level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_BLOCK,
         .x=2,.y=7,.w=1,.h=1,.visible=1,.number=4};
-    assert(game_workshop_preview(&level));
+    assert(native_preview_test_level(&level));
     game_custom_control(1, 0, 0);
     for (int i = 0; i < 3; ++i) game_tick(.05f, NULL);
     game_custom_control(0, 0, 0);
@@ -798,7 +1279,7 @@ static void native_trigger_runtime_regression(void) {
         .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
     level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_HAZARD,
         .x=3,.y=4,.w=1,.h=1,.visible=1,.number=4};
-    assert(game_workshop_preview(&level));
+    assert(native_preview_test_level(&level));
     float spike_graze_spawn = game_debug_custom_player_x();
     game_custom_control(1, 0, 0);game_tick(.001f, NULL);game_custom_control(0, 0, 0);
     assert(game_debug_custom_player_x() > spike_graze_spawn + .1f);
@@ -820,11 +1301,11 @@ static void native_trigger_runtime_regression(void) {
         .trigger_kind=ON_TRIGGER_KIND_INVISIBILITY,
         .trigger_event=ON_TRIGGER_MANUAL,.trigger_action=ON_TRIGGER_INVISIBLE,
         .target_id=3};
-    assert(game_workshop_preview(&level));
+    assert(native_preview_test_level(&level));
     game_tick(0, with_trigger);
     game_custom_level_exit();
     level.object_count = 3;
-    assert(game_workshop_preview(&level));
+    assert(native_preview_test_level(&level));
     game_tick(0, without_trigger);
     assert(!memcmp(with_trigger, without_trigger, sizeof with_trigger));
     game_custom_level_exit();
@@ -849,7 +1330,7 @@ static void native_recolor_background_regression(void) {
         .x=6,.y=6,.w=1,.h=1,.color=0x55c8eau,.visible=1,.number=42};
     level.objects[4] = (OnLevelObject){.id=5,.type=ON_LEVEL_BLOCK,
         .x=8,.y=6,.w=1,.h=1,.color=0x55c8eau,.visible=1,.number=43};
-    assert(game_workshop_preview(&level));
+    assert(native_preview_test_level(&level));
     game_tick(0, base_frame);
     assert(game_debug_custom_background_color() == 0x32465au);
     assert(base_frame[200 * GAME_W + 20] == 0xff5a4632u);
@@ -866,7 +1347,7 @@ static void native_recolor_background_regression(void) {
         .trigger_kind=ON_TRIGGER_KIND_BACKGROUND,.trigger_event=ON_TRIGGER_START,
         .trigger_action=ON_TRIGGER_SET_BACKGROUND,.target_id=0,
         .trigger_color=0x4c82d0u};
-    assert(game_workshop_preview(&level));
+    assert(native_preview_test_level(&level));
     OnLevelObject recolored, untouched, unchanged_player, unchanged_goal;
     assert(game_debug_custom_object(4, &recolored) &&
            recolored.color == 0xd02da6u);
@@ -895,6 +1376,63 @@ static void native_recolor_background_regression(void) {
     game_custom_level_exit();
 }
 
+/* «По умолчанию»: the object keeps the author's own colours, and a recolor
+ * trigger flagged the same way restores that look instead of tinting. */
+static void native_default_color_regression(void) {
+    preferences_set_neutral_background_enabled(1);
+    static OnPublishedLevel level;
+    static uint32_t frame[GAME_W * GAME_H];
+    memset(&level, 0, sizeof level);
+    snprintf(level.id, sizeof level.id, "%s", "4");
+    snprintf(level.title, sizeof level.title, "%s", "Default color test");
+    level.width = 16;level.height = 10;level.object_count = 5;
+    level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_GROUND,
+        .x=0,.y=8,.w=16,.h=2,.color=0x65a845u,.visible=1,.number=3};
+    level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_PLAYER,
+        .x=1,.y=7,.w=.65f,.h=.85f,.color=0xffffffu,.visible=1,.number=1};
+    level.objects[2] = (OnLevelObject){.id=3,.type=ON_LEVEL_GOAL,
+        .x=14,.y=6,.w=1,.h=2,.color=0xffffffu,.visible=1,.number=2};
+    level.objects[3] = (OnLevelObject){.id=4,.type=ON_LEVEL_BLOCK,
+        .x=6,.y=6,.w=1,.h=1,.color=0x55c8eau,.visible=1,.number=42};
+    level.objects[4] = (OnLevelObject){.id=5,.type=ON_LEVEL_BLOCK,
+        .x=8,.y=6,.w=1,.h=1,.color=0x55c8eau,.visible=1,.number=43,
+        .color_default=1};
+    assert(native_preview_test_level(&level));
+    game_tick(0, frame);
+    int tinted_pixels = 0;
+    for (int y = 285; y < 390; ++y)
+        for (int x = 0; x < 105; ++x)
+            tinted_pixels += frame[y * GAME_W + 875 + x] !=
+                             frame[y * GAME_W + 1035 + x];
+    assert(tinted_pixels > 100); /* the chosen color still tints the artwork */
+    OnLevelObject tinted, plain;
+    assert(game_debug_custom_object(4, &tinted) && !tinted.color_default);
+    assert(game_debug_custom_object(5, &plain) && plain.color_default == 1);
+    game_custom_level_exit();
+
+    level.object_count = 6;
+    level.objects[5] = (OnLevelObject){.id=6,.type=ON_LEVEL_TRIGGER,
+        .x=100,.y=100,.w=1,.h=1,.visible=1,.color_default=1,
+        .trigger_kind=ON_TRIGGER_KIND_RECOLOR,.trigger_event=ON_TRIGGER_START,
+        .trigger_action=ON_TRIGGER_RECOLOR,.target_id=0,
+        .trigger_group_id=42,.trigger_has_group=1,.trigger_color=0xd02da6u,
+        .trigger_color_default=1};
+    assert(native_preview_test_level(&level));
+    assert(game_debug_custom_object(4, &tinted) && tinted.color_default == 1 &&
+           tinted.color == 0xd02da6u);
+    assert(game_debug_custom_object(5, &plain) && plain.color_default == 1 &&
+           plain.color == 0x55c8eau);
+    game_tick(0, frame);
+    int restored_pixels = 0;
+    for (int y = 285; y < 390; ++y)
+        for (int x = 0; x < 105; ++x)
+            restored_pixels += frame[y * GAME_W + 875 + x] !=
+                               frame[y * GAME_W + 1035 + x];
+    assert(restored_pixels == 0); /* both blocks show the author's picture */
+    game_custom_level_exit();
+    preferences_set_neutral_background_enabled(0);
+}
+
 static void native_jetpack_portal_regression(void) {
     static OnPublishedLevel level;
     memset(&level, 0, sizeof level);
@@ -915,7 +1453,7 @@ static void native_jetpack_portal_regression(void) {
         .x=4,.y=7,.w=1,.h=1,.visible=1,.number=6};
 
     game_workshop_open();game_workshop_open_details();game_workshop_open_editor();
-    assert(game_workshop_preview(&level));
+    assert(native_preview_test_level(&level));
     assert(!game_custom_jetpack_mode());
     game_tick(.01f, NULL);
     assert(game_custom_jetpack_mode() && game_debug_custom_jetpack_mode());
@@ -1000,30 +1538,38 @@ static void native_jetpack_portal_regression(void) {
     game_custom_level_exit();
 }
 
-static void native_terminal_fall_ui_regression(void) {
+static void native_fall_respawn_ui_regression(void) {
     static OnPublishedLevel level;
     memset(&level, 0, sizeof level);
     snprintf(level.id, sizeof level.id, "%s", "fall-ui");
-    snprintf(level.title, sizeof level.title, "%s", "Terminal fall test");
+    snprintf(level.title, sizeof level.title, "%s", "Fall respawn test");
     level.width = 16;level.height = 10;level.object_count = 2;
     level.objects[0] = (OnLevelObject){.id=1,.type=ON_LEVEL_PLAYER,
         .x=1,.y=1,.w=.65f,.h=.85f,.visible=1,.number=1};
     level.objects[1] = (OnLevelObject){.id=2,.type=ON_LEVEL_GOAL,
         .x=14,.y=6,.w=1,.h=2,.visible=1,.number=2};
     game_workshop_open();game_workshop_open_details();game_workshop_open_editor();
-    assert(game_workshop_preview(&level));
-    for (int i = 0; i < 100 && !game_custom_player_dead(); ++i)
+    assert(native_preview_test_level(&level));
+    float start_x = game_debug_custom_player_x();
+    float start_y = game_debug_custom_player_y();
+    int respawned = 0;
+    for (int i = 0; i < 100; ++i) {
+        float previous_y = game_debug_custom_player_y();
         game_tick(.05f, NULL);
-    assert(game_custom_player_dead());
-    ui_snapshot("custom_dead");
+        if (previous_y > start_y + 200.0f &&
+            fabsf(game_debug_custom_player_x() - start_x) < .001f &&
+            fabsf(game_debug_custom_player_y() - start_y) < .001f) {
+            respawned = 1;break;
+        }
+    }
+    assert(respawned);
+    ui_snapshot("custom_fall_respawn");
     assert(lvgl_ui_test_label_present("К уровням") &&
            lvgl_ui_test_label_present("Настройки") &&
-           !lvgl_ui_test_label_present("ТЫ УПАЛ!") &&
-           !lvgl_ui_test_label_present("ТЫ УМЕР") &&
-           !lvgl_ui_test_label_present("Падение завершило уровень. Возрождения нет.") &&
-           !lvgl_ui_test_label_present("ПРЫЖОК") &&
-           !lvgl_ui_test_label_present("ВПЕРЁД"));
-    ui_tap(1140, 55); /* the only gameplay exit remains available after death */
+           lvgl_ui_test_label_present("ПРЫЖОК") &&
+           lvgl_ui_test_label_present("НАЗАД") &&
+           lvgl_ui_test_label_present("ВПЕРЁД"));
+    ui_tap(1140, 55); /* controls remain live after respawn; leave the preview */
     assert(game_phase() == GAME_WORKSHOP_EDIT);
 }
 
@@ -1037,6 +1583,7 @@ static int run_lvgl_test(void) {
     static uint8_t before[20000], after[20000];
     lvgl_trace("start");
     size_t bytes = game_save_size();assert(bytes < sizeof before);
+    on_net_account_sign_out(); /* begin on the guest path for the publish gate */
     game_init();assert(game_save_export(before, bytes));
     lvgl_trace("initial game state");
     assert_platformer_art();
@@ -1046,10 +1593,12 @@ static int run_lvgl_test(void) {
     lvgl_trace("trigger runtime regression complete");
     native_recolor_background_regression();
     lvgl_trace("recolor/background regression complete");
+    native_default_color_regression();
+    lvgl_trace("default color regression complete");
     native_jetpack_portal_regression();
     lvgl_trace("portal regression complete");
-    native_terminal_fall_ui_regression();
-    lvgl_trace("terminal fall UI regression complete");
+    native_fall_respawn_ui_regression();
+    lvgl_trace("fall respawn UI regression complete");
     game_init();assert(game_save_export(after, bytes) && !memcmp(before, after, bytes));
     lvgl_trace("save integrity check complete");
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER));
@@ -1059,6 +1608,11 @@ static int run_lvgl_test(void) {
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_NO_COLLISION));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_GRAVITY));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_COLOR));
+    assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_COUNT));
+    assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_TOGGLE));
+    assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_SPAWN));
+    assert(lvgl_ui_test_art_loaded(PV_ART_LIKE));
+    assert(lvgl_ui_test_art_loaded(PV_ART_DISLIKE));
     assert(lvgl_ui_test_art_loaded(PV_ART_WORKSHOP_ROTATE));
     assert(lvgl_ui_test_art_loaded(PV_ART_COLOR_WHEEL));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_ORB_ORANGE));
@@ -1101,8 +1655,19 @@ static int run_lvgl_test(void) {
     assert(!preferences_neutral_background_enabled());
     ui_tap(487, 442); /* restore the requested plain neutral background */
     assert(preferences_neutral_background_enabled());
+    /* The tutorial mode owns the workshop hints and starts switched off. */
+    assert(!preferences_tutorial_hints_enabled() &&
+           lvgl_ui_test_label_present("Обучение: ВЫКЛ."));
+    ui_tap(640, 519); /* switch the tutorial mode on */
+    assert(preferences_tutorial_hints_enabled() &&
+           lvgl_ui_test_label_present("Обучение: ВКЛ."));
+    ui_tap(640, 519); /* and back off again */
+    assert(!preferences_tutorial_hints_enabled() &&
+           lvgl_ui_test_label_present("Обучение: ВЫКЛ."));
     ui_tap(792, 217); /* choose English and keep settings open */
     assert(font_language() == FONT_LANG_EN);
+    assert(!strcmp(font_translate("По умолчанию"), "Default") &&
+           !strcmp(font_translate("Обычная картинка"), "Original artwork"));
     assert(lvgl_ui_test_label_present("Interface language") &&
            lvgl_ui_test_label_present("Music") &&
            lvgl_ui_test_label_present("Level background") &&
@@ -1114,6 +1679,8 @@ static int run_lvgl_test(void) {
     ui_tap(1042, 687);
     ui_tap(487, 217); /* switch back to Russian */
     assert(font_language() == FONT_LANG_RU);
+    assert(!strcmp(font_translate("По умолчанию"), "По умолчанию") &&
+           !strcmp(font_translate("Обычная картинка"), "Обычная картинка"));
     ui_tap(640, 594);
 
     ui_tap(1080, 80);assert(game_phase() == GAME_CUSTOM_LEVELS);tick_pump(2);
@@ -1140,12 +1707,34 @@ static int run_lvgl_test(void) {
     ui_snapshot("workshop_details_named");
     ui_tap(964, 600);assert(game_phase() == GAME_WORKSHOP_EDIT);
     ui_snapshot("workshop_editor");
-    assert(lvgl_ui_test_label_present("ЗЕРКАЛО"));
+    /* «ЗЕРКАЛО», «ПОВОРОТ» and «ДВИГАТЬ ОБЪЕКТЫ» are tutorial captions:
+     * they are off until the player asks for them. */
+    assert(!lvgl_ui_test_label_present("ЗЕРКАЛО") &&
+           !lvgl_ui_test_label_present("ПОВОРОТ") &&
+           !lvgl_ui_test_label_present("ДВИГАТЬ ОБЪЕКТЫ") &&
+           lvgl_ui_test_label_present("Обучение: ВЫКЛ."));
+    ui_tap(605, 679); /* tutorial mode on */
+    assert(preferences_tutorial_hints_enabled() &&
+           lvgl_ui_test_label_present("ЗЕРКАЛО") &&
+           lvgl_ui_test_label_present("ПОВОРОТ") &&
+           lvgl_ui_test_label_present("ДВИГАТЬ ОБЪЕКТЫ") &&
+           lvgl_ui_test_label_present("Обучение: ВКЛ."));
+    ui_snapshot("workshop_tutorial_hints");
+    ui_tap(605, 679); /* tutorial mode off again */
+    assert(!preferences_tutorial_hints_enabled() &&
+           !lvgl_ui_test_label_present("ЗЕРКАЛО"));
     assert(!lvgl_ui_test_label_present("Зеркало: горизонтально или вертикально."));
     assert(!lvgl_ui_test_label_present(
         "Зелёные стрелки двигают на 0,5 блока; бирюзовые — окно карты."));
     assert(!lvgl_ui_test_label_present("Выбери категорию и клетку карты"));
     ui_tap(191, 205);ui_snapshot("workshop_block_added");
+#ifdef PVG3_LVGL_TEST
+    /* Nothing was picked, so a fresh block shows the author's own artwork. */
+    static OnPublishedLevel fresh_probe;
+    assert(lvgl_ui_test_workshop_level(&fresh_probe));
+    assert(fresh_probe.object_count > 0 &&
+           fresh_probe.objects[fresh_probe.object_count - 1].color_default == 1);
+#endif
 
     /* Multi-select, move as a group, copy/paste, and delete the temporary
      * copies without disturbing the earlier block used by trigger tests. */
@@ -1220,6 +1809,36 @@ static int run_lvgl_test(void) {
 #endif
     ui_snapshot("workshop_direct_transform");
 
+    /* The color dialog's «По умолчанию» turns the author's picture back on,
+     * and picking a swatch leaves the default mode again. */
+    ui_tap(1145, 361); /* color of the selected block */
+    ui_snapshot("workshop_color_dialog");
+    assert(lvgl_ui_test_label_present("Цвет объекта") &&
+           lvgl_ui_test_label_present("По умолчанию"));
+    /* The block was placed with nothing picked: its own picture is already
+     * on, and the dialog says so. */
+    assert(lvgl_ui_test_label_present("Обычная картинка"));
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[3].color_default == 1);
+#endif
+    ui_tap(520, 208); /* bright palette */
+    ui_tap(350, 320); /* first swatch: picking a color leaves the default */
+    ui_snapshot("workshop_color_picked");
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(!editor_probe.objects[3].color_default &&
+           editor_probe.objects[3].color == 0xf27652u);
+#endif
+    ui_tap(850, 520); /* and back to the default picture */
+    ui_snapshot("workshop_color_default");
+    assert(lvgl_ui_test_label_present("Обычная картинка"));
+#ifdef PVG3_LVGL_TEST
+    assert(lvgl_ui_test_workshop_level(&editor_probe));
+    assert(editor_probe.objects[3].color_default == 1);
+#endif
+    ui_tap(640, 598); /* close the color dialog */
+
     ui_tap(531, 596); /* trigger category; movement is the default */
     ui_tap(294, 247); /* place a movement trigger */
     ui_tap(835, 361); /* configure X and Y separately */
@@ -1234,7 +1853,7 @@ static int run_lvgl_test(void) {
     ui_tap(640, 505);ui_tap(640, 505);ui_tap(640, 505);ui_tap(640, 505);
     ui_tap(975, 390);ui_tap(640, 248); /* choose another target group */
     ui_tap(975, 505);ui_tap(417, 275);ui_tap(194, 390);ui_tap(975, 390);
-    ui_tap(640, 628); /* save movement settings */
+    ui_tap(640, 660); /* save movement settings */
     ui_tap(930, 439); /* rotation variant */
     ui_tap(338, 247); /* place the rotation trigger */
     ui_tap(835, 361); /* open rotation trigger settings */
@@ -1243,7 +1862,7 @@ static int run_lvgl_test(void) {
     ui_tap(640, 371); /* edit rotation angle */
     ui_tap(975, 505);ui_tap(975, 505);
     ui_tap(194, 275);ui_tap(640, 275);ui_tap(417, 390);ui_tap(975, 390);
-    ui_tap(640, 628);
+    ui_tap(640, 660);
     ui_tap(1046, 439); /* forever variant */
     ui_tap(380, 289); /* place the persistent group action */
     ui_tap(835, 361); /* open forever-trigger settings */
@@ -1252,7 +1871,7 @@ static int run_lvgl_test(void) {
     ui_tap(640, 248); /* group input */
     ui_tap(975, 505);ui_tap(417, 275);ui_tap(194, 390);ui_tap(975, 390);
     ui_tap(720, 371); /* unactivate forever */
-    ui_tap(640, 628); /* save trigger settings */
+    ui_tap(640, 660); /* save trigger settings */
     ui_tap(1162, 439); /* invisibility variant */
     ui_tap(422, 330); /* place invisibility trigger */
 #ifdef PVG3_LVGL_TEST
@@ -1276,7 +1895,7 @@ static int run_lvgl_test(void) {
     ui_tap(1015, 528); /* switch the selected trigger to invisibility */
     ui_tap(268, 572); /* and back to no-collision */
     ui_tap(878, 173);ui_tap(878, 173);ui_tap(878, 173); /* event: start */
-    ui_tap(640, 628); /* close trigger settings */
+    ui_tap(640, 660); /* close trigger settings */
 #ifdef PVG3_LVGL_TEST
     assert(lvgl_ui_test_workshop_level(&editor_probe));
     assert(editor_probe.objects[editor_probe.object_count - 1].trigger_kind ==
@@ -1315,7 +1934,7 @@ static int run_lvgl_test(void) {
            ON_TRIGGER_KIND_GRAVITY &&
            editor_probe.objects[editor_probe.object_count - 1].trigger_value == 100.0f);
 #endif
-    ui_tap(640, 628); /* save the slider value */
+    ui_tap(640, 660); /* save the slider value */
     ui_tap(1046, 480); /* recolor trigger */
     ui_tap(565, 370); /* place a recolor trigger on a new cell */
 #ifdef PVG3_LVGL_TEST
@@ -1466,7 +2085,25 @@ static int run_lvgl_test(void) {
     ui_tap(535, 208);ui_tap(351, 322);
     ui_snapshot("workshop_color_selected");
     ui_tap(640, 598); /* close the color dialog before using the toolbar */
-    ui_tap(820, 50);tick_pump(2);
+    /* Guests are routed to sign-in, then publication resumes on success. */
+    assert(!view().account.signed_in);
+    ui_tap(820, 50);
+    assert(lvgl_ui_test_label_present("Пароль") &&
+           lvgl_ui_test_label_present("Войди или создай аккаунт — уровень опубликуется сразу."));
+    lvgl_ui_test_set_account_input("qwertyuiopaj1234", "my-password");
+    ui_tap(1030, 286); /* Создать аккаунт */
+    tick_pump(12);     /* PBKDF2 and session requests */
+    ui_snapshot("account_auto_publish_started"); /* consumes the sign-in result */
+    tick_pump(8);      /* deferred publish and session-token rotation */
+    ui_snapshot("account_auto_publish_done");
+    OnNetView account_view = view();
+    assert(account_view.account.signed_in && account_view.account.admin == 1 &&
+           !strcmp(account_view.account.login, "qwertyuiopaj1234"));
+    assert(accounts.account_written && strstr(accounts.account_body, "\"hash\":"));
+    assert(!accounts.account_if_match_present);
+    assert(accounts.token_written && !strcmp(accounts.token_login,
+                                             "qwertyuiopaj1234"));
+    assert(!lvgl_ui_test_label_present("Войди или создай аккаунт — уровень опубликуется сразу."));
     OnNetView published = view();
     assert(!published.level_publish_busy && published.level_publish_id[0] &&
            strstr(published.level_publish_notice, "ОПУБЛИКОВАН") &&
@@ -1524,16 +2161,109 @@ static int run_lvgl_test(void) {
     ui_tap(1040, 620);assert(game_phase() == GAME_CUSTOM_LEVELS);
     tick_pump(2);ui_snapshot("custom_levels");
     OnNetView catalog = view();
-    assert(catalog.level_count == 3 && !strcmp(catalog.levels[0].id, "104") &&
-           !strcmp(catalog.levels[0].title,
+    int sample_level_index = -1, official_level_index = -1;
+    for (int i = 0; i < catalog.level_count; ++i) {
+        if (!strcmp(catalog.levels[i].id, "104")) sample_level_index = i;
+        if (!strcmp(catalog.levels[i].id, ON_LEVEL_OFFICIAL_ID))
+            official_level_index = i;
+    }
+    assert(catalog.level_count == 3 && sample_level_index >= 0 &&
+           official_level_index >= 0 &&
+           !strcmp(catalog.levels[sample_level_index].title,
                    "Невероятное приключение через тайный мост к финишу") &&
-           !strcmp(catalog.levels[0].description,
-                   "Найди скрытый мост и монеты, затем доберись до финиша по платформам.") &&
-           !strcmp(catalog.levels[1].id, ON_LEVEL_OFFICIAL_ID));
+           !strcmp(catalog.levels[sample_level_index].description,
+                   "Найди скрытый мост и монеты, затем доберись до финиша по платформам."));
     assert(lvgl_ui_test_label_present("ОФИЦИАЛЬНЫЙ"));
     assert(lvgl_ui_test_label_does_not_wrap("ОФИЦИАЛЬНЫЙ") &&
            lvgl_ui_test_label_does_not_wrap(ON_LEVEL_OFFICIAL_ID));
-    ui_tap(185, 318);tick_pump(3);
+    /* ---- account access, comments and moderation through the LVGL UI ---- */
+    ui_tap(950, 80); /* «Аккаунт» in the catalog header */
+    assert(lvgl_ui_test_label_present("qwertyuiopaj1234") &&
+           lvgl_ui_test_label_present("Модератор"));
+    ui_snapshot("account_signed_in");
+    ui_tap(410, 634); /* Закрыть */
+    assert(game_phase() == GAME_CUSTOM_LEVELS);
+
+    /* Select the stable sample ID rather than relying on popularity order. */
+    ui_tap(185, 410);tick_pump(3);
+    assert(lvgl_ui_test_label_present("Играть") &&
+           lvgl_ui_test_label_present("Сообщения") &&
+           lvgl_ui_test_label_present("Официальный"));
+    ui_tap(246, 678); /* Сообщения */
+    tick_pump(4);
+    ui_snapshot("comments_empty");
+    assert(lvgl_ui_test_label_present("Сообщений пока нет."));
+    lvgl_ui_test_set_comment_input("Уровень супер!");
+    ui_snapshot("comment_typed");
+    ui_tap(990, 580); /* Отправить */
+    tick_pump(6);
+    ui_snapshot("comments_posted");
+    assert(accounts.comment_written && accounts.comment_count == 1 &&
+           strstr(accounts.comments, "Уровень супер!"));
+    OnNetView commented = view();
+    assert(commented.comment_count == 1 &&
+           !strcmp(commented.comments[0].login, "qwertyuiopaj1234") &&
+           !strcmp(commented.comments[0].text, "Уровень супер!"));
+    assert(!commented.comments[0].hidden);
+    /* A moderator bans the author straight from the comment row. */
+    ui_tap(1035, 186);
+    tick_pump(8);
+    assert(accounts.ban_written && accounts.ban_value == 1 &&
+           !strcmp(accounts.ban_login, "qwertyuiopaj1234"));
+    /* The comment itself is hidden without touching its text. */
+    ui_tap(835, 186); /* Скрыть */
+    tick_pump(6);
+    assert(strstr(accounts.comments, "\"hidden\":true") &&
+           strstr(accounts.comments, "Уровень супер!"));
+    ui_tap(990, 646); /* Закрыть */
+    assert(game_phase() == GAME_CUSTOM_LEVELS);
+    /* The «ОФИЦИАЛЬНЫЙ» badge is written to the level and to its catalog card. */
+    ui_tap(620, 678); /* Официальный */
+    tick_pump(10);
+    assert(accounts.official_written && accounts.official_value == 1 &&
+           accounts.index_official_written && accounts.author_written &&
+           !strcmp(accounts.official_level, "104"));
+    /* Reload the catalog: the card now carries the badge and its author. */
+    ui_tap(1139, 179);tick_pump(4);ui_snapshot("catalog_flagged");
+    OnNetView official_view = view();
+    int official_now = 0;const char *level_author = "";
+    for (int i = 0; i < official_view.level_count; i++)
+        if (!strcmp(official_view.levels[i].id, "104")) {
+            official_now = on_level_is_official(official_view.levels[i].id,
+                                                official_view.levels[i].official);
+            level_author = official_view.levels[i].author;
+        }
+    assert(official_now && !strcmp(level_author, "qwertyuiopaj1234"));
+    assert(lvgl_ui_test_label_present("ОФИЦИАЛЬНЫЙ"));
+    /* «Забанить автора» punishes an impossible level even when its author
+     * never wrote a message. */
+    ui_tap(246, 678); /* Сообщения */
+    tick_pump(4);ui_snapshot("comments_author");
+    assert(lvgl_ui_test_label_present("Забанить автора") &&
+           lvgl_ui_test_label_present("Автор: qwertyuiopaj1234"));
+    ui_tap(1010, 82); /* Забанить автора */
+    tick_pump(8);
+    assert(accounts.ban_written && accounts.ban_value == 1 &&
+           !strcmp(accounts.ban_login, "qwertyuiopaj1234") &&
+           strstr(accounts.ban_body, "Уровень непроходимый"));
+    ui_tap(990, 646); /* Закрыть */
+    assert(game_phase() == GAME_CUSTOM_LEVELS);
+    char token_before_unmark[ON_TOKEN_SIZE];
+    snprintf(token_before_unmark, sizeof token_before_unmark, "%s",
+             view().account.token);
+    ui_tap(620, 678); /* снятие метки тоже обновляет автора и токен */
+    tick_pump(12);
+    assert(accounts.official_written && accounts.official_value == 0 &&
+           accounts.index_official_written && accounts.author_written &&
+           strcmp(token_before_unmark, view().account.token));
+    on_net_account_sign_out();
+    tick_pump(2);
+    assert(!view().account.signed_in);
+
+    ui_tap(185, 410);tick_pump(3); /* return to the stable sample ID 104 */
+    assert(lvgl_ui_test_label_present("Играть") &&
+           lvgl_ui_test_label_present("Сообщения"));
+    ui_tap(150, 678);tick_pump(3);
     assert(game_phase() == GAME_CUSTOM_PLAY);
     lvgl_ui_frame(.016f, ui_pixels);
     assert(!lvgl_ui_test_label_present("Кнопки · WASD"));
@@ -1543,7 +2273,12 @@ static int run_lvgl_test(void) {
            lvgl_ui_test_label_present("Фон уровня") &&
            !lvgl_ui_test_label_present("Весь экран игры отображается в оттенках серого."));
     ui_tap(792, 217); /* English */
-    assert(font_language() == FONT_LANG_EN);
+    assert(font_language() == FONT_LANG_EN &&
+           !strcmp(font_translate("Гость"), "Guest") &&
+           !strcmp(font_translate("Не удалось начать публикацию."),
+                   "Couldn't start publishing.") &&
+           !strcmp(font_translate("Аккаунт занят или Firebase отказал. Войди либо проверь правила."),
+                   "The nickname is taken or Firebase refused registration. Sign in or check the rules."));
     assert(!lvgl_ui_test_label_present("Controls · WASD") &&
            lvgl_ui_test_label_present("Back to levels") &&
            lvgl_ui_test_label_present("ACTION") &&
@@ -1554,7 +2289,9 @@ static int run_lvgl_test(void) {
     ui_tap(910, 55);ui_tap(487, 217); /* restore Russian for the other checks */
     assert(font_language() == FONT_LANG_RU);
     ui_tap(640, 594);
-    game_tick(.05f, NULL); /* settle on the ground before jumping */
+    for (int i = 0; i < 20 && !game_debug_custom_player_grounded(); ++i)
+        game_tick(.05f, NULL); /* settle even if the catalog load started airborne */
+    assert(game_debug_custom_player_grounded());
     float custom_x = game_debug_custom_player_x();
     float custom_y = game_debug_custom_player_y();
     assert(lvgl_ui_touch_pointer(17, 230, 591, 1)); /* forward */
@@ -1776,8 +2513,15 @@ int main(void) {
     static uint8_t before[20000], after[20000];
     size_t size = game_save_size();assert(size <= sizeof before);
     game_init();assert(game_save_export(before, size));
+    on_net_account_sign_out(); /* deterministic guest state, even across reruns */
     static OnPublishedLevel draft, decoded;
     sample_level(&draft);
+    assert(!on_net_level_publish(&draft)); /* guests cannot write levels */
+    assert(strstr(view().level_publish_notice, "Сначала войди"));
+    on_net_account_sign_in(TEST_ADMIN_LOGIN, "my-password", 1);
+    tick_pump(12);
+    assert(view().account.signed_in && view().account.admin);
+    assert(accounts.account_written && !accounts.account_if_match_present);
     assert(on_net_level_publish(&draft));tick_pump(1);
     OnNetView published = view();
     assert(!published.level_publish_busy && published.level_publish_id[0] &&
@@ -1909,8 +2653,10 @@ int main(void) {
                        v.state.coin_count == 0);
     game_input_press(1151, 49);tick_pump(2);
     game_input_press(1140, 50);isolate_saves(before, after, size);
+    stable_catalog_client_id_preferences();
+    catalog_stats_round_trip();
     large_level_transport_round_trip();
     on_net_shutdown();
-    puts("Native Firebase REST host/guest, both roles, coins, ACK and offline saves passed");
+    puts("Native Firebase REST host/guest, catalog statistics, both roles, coins, ACK and offline saves passed");
     return 0;
 }

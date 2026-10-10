@@ -29,7 +29,7 @@ static HBRUSH window_background_brush;
 static int running = 1, focused = 1, ui_ready;
 static int mouse_active, mouse_via_lvgl, legacy_down_phase = -1;
 static int legacy_down_x, legacy_down_y;
-static int key_left, key_right, key_space, key_up, key_down, key_trigger;
+static int key_left, key_right, key_space, key_up, key_down, key_trigger, key_dash;
 static uint32_t game_pixels[GAME_W * GAME_H];
 static uint32_t dib_pixels[GAME_W * GAME_H];
 static BITMAPINFO dib_info;
@@ -340,12 +340,14 @@ static void update_custom_keys(void) {
     if (game_phase() != GAME_CUSTOM_PLAY) {
         game_custom_control(0, 0, 0);
         game_custom_vertical_control(0);
+        game_custom_dash_control(0);
         return;
     }
     int horizontal = key_left == key_right ? 0 : key_left ? -1 : 1;
     int jetpack = game_custom_jetpack_mode();
     game_custom_control(horizontal, !jetpack && (key_space || key_up), key_trigger);
     game_custom_vertical_control(jetpack ? (key_up - key_down) : 0);
+    game_custom_dash_control(!jetpack && key_dash);
 }
 
 static void convert_pixels(void) {
@@ -454,7 +456,8 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
     case WM_KILLFOCUS:
         focused = 0;
         mouse_cancel();
-        key_left = key_right = key_space = key_up = key_down = key_trigger = 0;
+        key_left = key_right = key_space = key_up = key_down =
+            key_trigger = key_dash = 0;
         update_custom_keys();
         save_all();
         set_music(0);
@@ -478,7 +481,8 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
             if (wparam == VK_SPACE) key_space = 1;
             if (wparam == VK_UP || wparam == 'W') key_up = 1;
             if (wparam == VK_DOWN || wparam == 'S') key_down = 1;
-            if (wparam == 'E' || wparam == VK_SHIFT) key_trigger = 1;
+            if (wparam == 'E') key_trigger = 1;
+            if (wparam == 'X' || wparam == VK_SHIFT) key_dash = 1;
             update_custom_keys();
         }
         return 0;
@@ -488,7 +492,8 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
         if (wparam == VK_SPACE) key_space = 0;
         if (wparam == VK_UP || wparam == 'W') key_up = 0;
         if (wparam == VK_DOWN || wparam == 'S') key_down = 0;
-        if (wparam == 'E' || wparam == VK_SHIFT) key_trigger = 0;
+        if (wparam == 'E') key_trigger = 0;
+        if (wparam == 'X' || wparam == VK_SHIFT) key_dash = 0;
         update_custom_keys();
         return 0;
     case WM_CLOSE:

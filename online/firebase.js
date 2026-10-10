@@ -2,18 +2,26 @@
  * privileged service account is embedded in the website or the APK. Demo
  * rules must permit the relevant /rooms and public-level catalog operations. */
 import {isPublishedRecord, publishedRecord, validateDraft} from './workshop.js';
+import * as config from './firebase-config.js';
 
-export const DATABASE = 'https://pvg3-ae824-default-rtdb.firebaseio.com';
+/* Optional build-time override (online/firebase-secret.js, gitignored). */
+let secret = {};
+try {secret = await import('./firebase-secret.js');} catch { /* not generated */ }
+
+export const DATABASE_HOST = secret.DATABASE_HOST || config.DATABASE_HOST;
+export const DATABASE_AUTH = secret.DATABASE_AUTH || config.DATABASE_AUTH;
+export const DATABASE = `https://${DATABASE_HOST}`;
 const ROOM_PATH = 'rooms';
 const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const validId = id => typeof id === 'string' && /^[A-Z2-9]{6}$/.test(id);
 export const validLevelId = id => typeof id === 'string' && /^[1-9][0-9]{0,5}$/.test(id);
+const validClientId = id => typeof id === 'string' && /^[a-f0-9]{32}$/.test(id);
 
 class FirebaseError extends Error {
   constructor(status, message) {super(message);this.status = status;}
 }
 
-async function request(path, method = 'GET', body, ifMatch = '') {
+export async function request(path, method = 'GET', body, ifMatch = '') {
   const controller = new AbortController();
   // A 20k-object level is a multi-megabyte payload; keep normal room polls
   // snappy while allowing large level reads and writes to finish on mobile.
@@ -23,7 +31,10 @@ async function request(path, method = 'GET', body, ifMatch = '') {
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     if (ifMatch) headers['If-Match'] = ifMatch;
     const [node, query] = path.split('?');
-    const response = await fetch(`${DATABASE}/${node}.json${query ? `?${query}` : ''}`, {
+    const params = [];
+    if (DATABASE_AUTH) params.push(`auth=${encodeURIComponent(DATABASE_AUTH)}`);
+    if (query) params.push(query);
+    const response = await fetch(`${DATABASE}/${node}.json${params.length ? `?${params.join('&')}` : ''}`, {
       method, headers, body: body === undefined ? undefined : JSON.stringify(body),
       signal: controller.signal, cache: 'no-store', referrerPolicy: 'no-referrer',
     });
@@ -138,17 +149,74 @@ export async function leaveRoom(id, slot, playerId) {
   return request(`${ROOM_PATH}/${id}${slot === 'host' ? '' : '/guest'}`, 'DELETE');
 }
 
-export async function listPublishedLevels() {
-  const data = await request('levels-index');
+function countTrueEntries(map) {
+  if (!map || typeof map !== 'object' || Array.isArray(map)) return 0;
+  return Object.values(map).reduce((count, value) => count + (value === true ? 1 : 0), 0);
+}
+
+export async function listPublishedLevels(clientId = '') {
+  const indexPromise = request('levels-index');
+  const statsPromise = validClientId(clientId) ?
+    request('level-stats').catch(() => null) : Promise.resolve(null);
+  const [data, stats] = await Promise.all([indexPromise, statsPromise]);
   if (!data || typeof data !== 'object' || Array.isArray(data)) return [];
   return Object.entries(data)
     .filter(([id, entry]) => validLevelId(id) && entry?.id === id &&
       typeof entry.title === 'string' && entry.title.trim() && entry.title.length <= 80 &&
       (entry.description === undefined || typeof entry.description === 'string'))
-    .map(([id, entry]) => ({id, title: entry.title, description: entry.description || '',
-      updatedAt: Number.isFinite(entry.updatedAt) ? entry.updatedAt : 0}))
+    .map(([id, entry]) => {
+      const levelStats = stats?.[id] || {};
+      const likes = levelStats.likes || {}, dislikes = levelStats.dislikes || {};
+      return {id, title: entry.title, description: entry.description || '',
+        updatedAt: Number.isFinite(entry.updatedAt) ? entry.updatedAt : 0,
+        difficulty: ['easy', 'normal', 'hard', 'expert'].includes(entry.difficulty) ?
+          entry.difficulty : 'normal',
+        tags: Array.isArray(entry.tags) ? entry.tags.filter(tag =>
+          typeof tag === 'string' && tag.length <= 16).slice(0, 8) : [],
+        author: typeof entry.author === 'string' ? entry.author : '',
+        official: entry.official === true,
+        likes: countTrueEntries(likes), dislikes: countTrueEntries(dislikes),
+        liked: validClientId(clientId) && likes[clientId] === true,
+        disliked: validClientId(clientId) && dislikes[clientId] === true};
+    })
     .sort((a, b) => b.updatedAt - a.updatedAt || Number(b.id) - Number(a.id))
     .slice(0, 80);
+}
+
+export async function setLevelReaction(id, clientId, reaction) {
+  if (!validLevelId(id) || !validClientId(clientId) ||
+      ![null, 'like', 'dislike'].includes(reaction))
+    throw new Error('Неверный ID уровня, клиента или реакции.');
+
+  // Read this installation's current vote first. Firebase rules prohibit a
+  // like and dislike from coexisting, and deleting an absent child is denied.
+  const stats = await request(`level-stats/${id}`);
+  const likes = stats?.likes || {}, dislikes = stats?.dislikes || {};
+  const liked = likes[clientId] === true;
+  const disliked = dislikes[clientId] === true;
+  const likePath = `level-stats/${id}/likes/${clientId}`;
+  const dislikePath = `level-stats/${id}/dislikes/${clientId}`;
+
+  if (reaction === null) {
+    if (liked) await request(likePath, 'DELETE');
+    if (disliked) await request(dislikePath, 'DELETE');
+    return null;
+  }
+
+  const isLike = reaction === 'like';
+  const alreadyChosen = isLike ? liked : disliked;
+  const otherChosen = isLike ? disliked : liked;
+  const targetPath = isLike ? likePath : dislikePath;
+  const otherPath = isLike ? dislikePath : likePath;
+  if (otherChosen) await request(otherPath, 'DELETE');
+  if (alreadyChosen) return reaction;
+  try {
+    await request(targetPath, 'PUT', true, 'null_etag');
+    return reaction;
+  } catch (error) {
+    if (error.status !== 412) throw error;
+    return reaction; // Another tab already recorded this installation's vote.
+  }
 }
 
 export async function getPublishedLevel(id) {
@@ -165,28 +233,43 @@ function randomLevelId() {
   return String(value[0] % 999999 + 1);
 }
 
-export async function publishLevel(draft) {
+/* `author` is the required signed-in player: {login, tok}. It travels with the
+ * record so the rules can attribute the level and reject banned nicks. */
+export async function publishLevel(draft, author) {
   const check = validateDraft(draft);
   if (!check.ok) throw new Error(check.message);
+  const credited = author && /^[a-z0-9_]{3,24}$/.test(String(author.login || '')) &&
+      /^[a-f0-9]{64}$/.test(String(author.tok || '')) ?
+    {login: String(author.login), tok: String(author.tok)} : null;
+  if (!credited)
+    throw new Error('Для публикации войдите в аккаунт или создайте его.');
   let lastCollision;
   for (let attempt = 0; attempt < 5; attempt++) {
     const id = randomLevelId();
     const record = publishedRecord(id, draft);
+    if (credited) record.author = {...credited};
     try {
       await request(`levels/${id}`, 'PUT', record, 'null_etag');
     } catch (e) {
       if (e.status === 412) {lastCollision = e;continue;}
+      /* A timed-out PUT may have reached Firebase; retire the token just in
+       * case it was committed before the connection failed. */
+      e.levelWriteAttempted = true;e.levelId = id;
       throw e;
     }
     const summary = {id, title: record.title, description: record.description,
+      difficulty: record.difficulty, tags: record.tags,
       updatedAt: Date.now()};
+    if (credited) summary.author = credited.login;
     try {
       await request(`levels-index/${id}`, 'PUT', summary, 'null_etag');
     } catch (e) {
       const detail = e.status === 401 || e.status === 403 ?
         'Firebase запретил запись в /levels-index. Проверь правила Firebase.' : e.message;
-      throw new FirebaseError(e.status || 0,
+      const error = new FirebaseError(e.status || 0,
         `Уровень ${id} сохранён, но не появился в каталоге: ${detail} Повтори публикацию позже или проверь права базы.`);
+      error.levelWriteAttempted = true;error.levelWritten = true;error.levelId = id;
+      throw error;
     }
     return {id, record};
   }
