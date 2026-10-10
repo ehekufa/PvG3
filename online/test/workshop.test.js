@@ -203,14 +203,14 @@ test('the historic ID 338069 and a moderator flag both mark a level official', (
   assert.equal(isOfficialLevel('5150', null), false);
 });
 
-test('catalog filters search Russian and English fields and sort likes/downloads', () => {
+test('catalog filters search Russian and English fields and sort likes/dislikes', () => {
   const levels = [
     {id: '2', title: 'Быстрый маршрут', description: 'Прыжки через мост', author: 'Аня',
-      difficulty: 'hard', tags: ['мост', 'скорость'], likes: 2, downloads: 20, updatedAt: 4},
+      difficulty: 'hard', tags: ['мост', 'скорость'], likes: 2, dislikes: 20, updatedAt: 4},
     {id: '10', title: 'Alpha level', description: 'A quiet garden', author: 'Kai',
-      difficulty: 'easy', tags: ['forest'], likes: 7, downloads: 5, updatedAt: 4},
+      difficulty: 'easy', tags: ['forest'], likes: 7, dislikes: 5, updatedAt: 4},
     {id: '3', title: 'Тайный мост', description: 'Сложная дорога к финишу', author: 'Ира',
-      difficulty: 'hard', tags: ['мост'], likes: 7, downloads: 30, updatedAt: 9},
+      difficulty: 'hard', tags: ['мост'], likes: 7, dislikes: 30, updatedAt: 9},
   ];
   const originalOrder = levels.map(level => level.id);
   assert.deepEqual(filterPublishedLevels(levels, {query: 'МОСТ', language: 'ru'})
@@ -221,7 +221,7 @@ test('catalog filters search Russian and English fields and sort likes/downloads
     .map(level => level.id), ['3', '2']);
   assert.deepEqual(filterPublishedLevels(levels, {sort: 'likes'})
     .map(level => level.id), ['3', '10', '2']);
-  assert.deepEqual(filterPublishedLevels(levels, {sort: 'downloads'})
+  assert.deepEqual(filterPublishedLevels(levels, {sort: 'dislikes'})
     .map(level => level.id), ['3', '2', '10']);
   assert.deepEqual(filterPublishedLevels(levels, {sort: 'title', language: 'en'})
     .map(level => level.id), ['10', '2', '3']);
@@ -229,7 +229,7 @@ test('catalog filters search Russian and English fields and sort likes/downloads
     'sorting the catalog does not mutate its source records');
 });
 
-test('the browser catalog has Russian and English filters plus a true black like button', () => {
+test('the browser catalog renders exclusive Like and Dislike reactions with supplied art', () => {
   const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
   const app = readFileSync(new URL('../app.js', import.meta.url), 'utf8');
   const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
@@ -238,15 +238,40 @@ test('the browser catalog has Russian and English filters plus a true black like
                     'ws-catalog-tag', 'ws-catalog-sort'])
     assert(html.includes(`id="${id}"`), `${id} is part of the catalog`);
   assert.match(html, /data-ws-en="Most liked"/);
-  assert.match(html, /data-ws-en="Most downloaded"/);
+  assert.match(html, /data-ws-en="Most disliked"/);
   assert.match(app, /filterPublishedLevels\(wsCatalog/);
-  assert.match(app, /like\.className = `ws-like-button/);
-  assert.match(app, /aria-pressed', String\(level\.liked === true\)/);
+  assert.match(app, /ws-reaction-button/);
+  assert.match(app, /setLevelReaction\(level\.id, statsClientId, desired\)/);
+  assert.match(app, /Лайк\.png/);
+  assert.match(app, /Дизлайк\.png/);
+  const reactionStyle = styles.match(/\.ws-reaction-button\s*\{([^}]+)\}/)?.[1] || '';
   const likeStyle = styles.match(/\.ws-like-button\s*\{([^}]+)\}/)?.[1] || '';
-  assert.match(likeStyle, /border:\s*2px solid #000 !important/);
+  assert.match(reactionStyle, /border:\s*2px solid #000 !important/);
   assert.match(likeStyle, /background:\s*#000 !important/);
+  assert.match(styles, /\.ws-dislike-button\.is-disliked/);
   assert.match(native, /#define BUTTON_BLACK C\(000000\)/);
   assert.match(native, /case U_BOOK_BACK:[\s\S]*?case U_CUSTOM_LIKE:[\s\S]*?\*face = BUTTON_BLACK/);
+  assert.match(native, /PV_ART_LIKE/);
+  assert.match(native, /PV_ART_DISLIKE/);
+  assert.match(native, /U_CUSTOM_DISLIKE/);
+});
+
+test('Count, Toggle and Spawn use their supplied trigger art in both editors', () => {
+  const app = readFileSync(new URL('../app.js', import.meta.url), 'utf8');
+  const native = readFileSync(new URL('../../src/lvgl_ui.c', import.meta.url), 'utf8');
+  const packer = readFileSync(new URL('../../tools/pack_sprites.py', import.meta.url), 'utf8');
+  const roles = readFileSync(new URL('../../tools/check_art_roles.py', import.meta.url), 'utf8');
+  for (const [kind, file, sprite] of [
+    ['triggerCount', 'Триггер-счёта.png', 'PV_ART_LEVEL_TRIGGER_COUNT'],
+    ['triggerToggle', 'Триггер-переключатель.png', 'PV_ART_LEVEL_TRIGGER_TOGGLE'],
+    ['triggerSpawn', 'Триггер-появления.png', 'PV_ART_LEVEL_TRIGGER_SPAWN'],
+  ]) {
+    assert(app.includes(`${kind}: '${file}'`), `${kind} browser artwork is registered`);
+    assert(packer.includes(`("${sprite.replace('PV_ART_', '')}", "assets/art/${file}")`),
+      `${sprite} is packed from the supplied PNG`);
+    assert(roles.includes(`"${sprite.replace('PV_ART_', '')}": "assets/art/${file}"`));
+    assert(native.includes(sprite), `${sprite} is used by the native workshop`);
+  }
 });
 
 function recordingCanvas() {

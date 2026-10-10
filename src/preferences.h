@@ -20,7 +20,7 @@ int preferences_account_login(char *out, size_t cap);
 int preferences_account_token(char *out, size_t cap);
 int preferences_account_hash(char *out, size_t cap);
 int preferences_account_admin(void);
-/* Anonymous stable install key for idempotent level likes/downloads. */
+/* Anonymous stable install key for mutually exclusive level reactions. */
 int preferences_catalog_client_id(char *out, size_t cap);
 void preferences_set_catalog_client_id(const char *client_id);
 /* Passing login == NULL or an empty login signs the player out. */

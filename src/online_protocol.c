@@ -509,8 +509,8 @@ int on_protocol_level_stats(const char *json, OnPublishedLevelSummary *levels,
     if (!json || count < 0 || (count && !levels)) return -1;
     JD d;if (!doc_open(&d, json)) return -1;
     for (int i = 0; i < count; ++i) {
-        levels[i].likes = levels[i].downloads = 0;
-        levels[i].liked = levels[i].downloaded = 0;
+        levels[i].likes = levels[i].dislikes = 0;
+        levels[i].liked = levels[i].disliked = 0;
     }
     if (d.t[0].type == 'z') {free(d.t);return 0;}
     if (d.t[0].type != 'o') {free(d.t);return -1;}
@@ -523,11 +523,11 @@ int on_protocol_level_stats(const char *json, OnPublishedLevelSummary *levels,
                 if (!strcmp(levels[i].id, level_id)) {index = i;break;}
             if (index >= 0) {
                 int likes = field(&d, value, "likes");
-                int downloads = field(&d, value, "downloads");
+                int dislikes = field(&d, value, "dislikes");
                 levels[index].likes = level_stat_children(&d, likes, client_id,
                                                            &levels[index].liked);
-                levels[index].downloads = level_stat_children(&d, downloads,
-                    client_id, &levels[index].downloaded);
+                levels[index].dislikes = level_stat_children(&d, dislikes,
+                    client_id, &levels[index].disliked);
             }
         }
         key = d.t[value].after;

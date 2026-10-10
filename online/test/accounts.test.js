@@ -138,10 +138,14 @@ test('the shipped rules file covers every branch the clients use', () => {
     'the catalog index also requires an authenticated level author');
   assert.equal(rules['level-stats']['.read'], true,
     'catalog statistics are public');
-  assert.ok(rules['level-stats'].$levelId.likes.$clientId['.write'].includes('data.exists()'),
-    'likes can be created once or removed to toggle');
-  assert.ok(rules['level-stats'].$levelId.downloads.$clientId['.write'].includes('!data.exists()'),
-    'downloads are unique per installation');
+  const likeRule = rules['level-stats'].$levelId.likes.$clientId['.write'];
+  const dislikeRule = rules['level-stats'].$levelId.dislikes.$clientId['.write'];
+  assert.ok(likeRule.includes('data.exists()') && likeRule.includes("child('dislikes')"),
+    'likes can be toggled only while this installation has no dislike');
+  assert.ok(dislikeRule.includes('data.exists()') && dislikeRule.includes("child('likes')"),
+    'dislikes can be toggled only while this installation has no like');
+  assert.equal(rules['level-stats'].$levelId.downloads, undefined,
+    'the old download counter is no longer writable or displayed');
   assert.ok(rules.comments.$level.$cid['.write'].includes('300'), 'comments are bounded');
   assert.ok(rules.tokens.$login['.write'].includes('bans'),
     'a banned nick cannot even take a session token');

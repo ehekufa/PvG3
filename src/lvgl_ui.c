@@ -79,7 +79,7 @@ enum {
     U_WORKSHOP_ALPHA_DEC, U_WORKSHOP_ALPHA_INC,
     U_WORKSHOP_PULSE_TOGGLE, U_WORKSHOP_SHAKE_TOGGLE,
     U_CATALOG_SEARCH, U_CATALOG_DIFFICULTY, U_CATALOG_TAG, U_CATALOG_SORT,
-    U_CUSTOM_LIKE,
+    U_CUSTOM_LIKE, U_CUSTOM_DISLIKE,
     U_WORKSHOP_TRIGGER_ACTION,
     U_WORKSHOP_PARTICLE_PANEL,
     U_WORKSHOP_COLOR_DEFAULT,
@@ -350,7 +350,7 @@ static void button_palette(int action, lv_color_t *face, lv_color_t *text) {
         return;
     case U_MENU_LEVELS: case U_MENU_GARDEN:
     case U_MENU_BOOK: case U_MENU_ONLINE: case U_MENU_WORKSHOP:
-    case U_CUSTOM_WORKSHOP: case U_INTRO:
+    case U_CUSTOM_WORKSHOP: case U_INTRO: case U_CUSTOM_DISLIKE:
     case U_CREATE: case U_SEARCH_GO: case U_MATCH_BOOK: case U_MATCH_FINISH:
     case U_CUSTOM_CATALOG:
     case U_GARDEN_BOOK: case U_OFFLINE_MENU:
@@ -1027,13 +1027,13 @@ static int catalog_precedes(const OnPublishedLevelSummary *a,
                             const OnPublishedLevelSummary *b) {
     if (catalog_sort_mode == 1 && a->likes != b->likes)
         return a->likes > b->likes;
-    if (catalog_sort_mode == 2 && a->downloads != b->downloads)
-        return a->downloads > b->downloads;
+    if (catalog_sort_mode == 2 && a->dislikes != b->dislikes)
+        return a->dislikes > b->dislikes;
     if (a->updated_at != b->updated_at) return a->updated_at > b->updated_at;
     if (catalog_sort_mode != 1 && a->likes != b->likes)
         return a->likes > b->likes;
-    if (catalog_sort_mode != 2 && a->downloads != b->downloads)
-        return a->downloads > b->downloads;
+    if (catalog_sort_mode != 2 && a->dislikes != b->dislikes)
+        return a->dislikes > b->dislikes;
     return strcmp(a->id, b->id) > 0;
 }
 static const OnPublishedLevelSummary *catalog_find_selected(const OnNetView *view) {
@@ -1076,7 +1076,7 @@ static void custom_levels_screen(lv_obj_t *root, const OnNetView *v) {
                                   U_CATALOG_TAG);
     if (lv_obj_get_child(tag_button, 0))
         lv_label_set_long_mode(lv_obj_get_child(tag_button, 0), LV_LABEL_LONG_MODE_DOTS);
-    const char *sort_names[] = {"Новые", "Лайки", "Скачивания"};
+    const char *sort_names[] = {"Новые", "Лайки", "Дизлайки"};
     snprintf(filter_label, sizeof filter_label, "Сортировка: %s",
              font_translate(sort_names[catalog_sort_mode % 3]));
     lv_obj_t *sort = button(root, 832, 157, 218, 44, filter_label, 0,
@@ -1130,10 +1130,13 @@ static void custom_levels_screen(lv_obj_t *root, const OnNetView *v) {
         lv_obj_t *id_label = label(card, 15, 13, 86, 27,
               level->id, 1, BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
         lv_label_set_long_mode(id_label, LV_LABEL_LONG_MODE_CLIP);
-        char stats[40];
-        snprintf(stats, sizeof stats, "♡ %u  ↓ %u", level->likes,
-                 level->downloads);
-        label(card, 13, 40, 90, 23, stats, 0, MUTED, LV_TEXT_ALIGN_CENTER);
+        char likes[16], dislikes[16];
+        snprintf(likes, sizeof likes, "%u", level->likes);
+        snprintf(dislikes, sizeof dislikes, "%u", level->dislikes);
+        art(card, PV_ART_LIKE, 23, 54, 14);
+        label(card, 31, 44, 25, 20, likes, 0, MUTED, LV_TEXT_ALIGN_LEFT);
+        art(card, PV_ART_DISLIKE, 62, 54, 14);
+        label(card, 70, 44, 28, 20, dislikes, 0, MUTED, LV_TEXT_ALIGN_LEFT);
         int official = on_level_is_official(level->id, level->official);
         lv_obj_t *title_label = label(card, 117, 5, official ? 250 : 415,
               27, level->title, 1, BUTTON_TEXT, LV_TEXT_ALIGN_LEFT);
@@ -1195,24 +1198,40 @@ static void custom_levels_screen(lv_obj_t *root, const OnNetView *v) {
         box(root, 43, 650, 1195, 56, 16, PAPER, 1);
         button(root, 60, 656, 116, 43, "Играть", 1, U_CUSTOM_PLAY);
         button(root, 184, 656, 124, 43, "Сообщения", 0, U_COMMENTS_OPEN);
-        char like_label[48];
-        snprintf(like_label, sizeof like_label, "%s · %u",
-                 selected->liked ? "Убрать лайк" : "Нравится", selected->likes);
-        button(root, 316, 656, 208, 43, like_label, 1, U_CUSTOM_LIKE);
+        lv_obj_t *like_button = button(root, 316, 656, 92, 43, "", 1,
+                                       U_CUSTOM_LIKE);
+        if (selected->liked)
+            lv_obj_set_style_border_color(like_button, C(FF758C), 0);
+        lv_obj_t *like_icon = art(like_button, PV_ART_LIKE, 22, 21, 17);
+        if (like_icon) {
+            lv_obj_set_style_image_recolor(like_icon, BUTTON_LIGHT_TEXT, 0);
+            lv_obj_set_style_image_recolor_opa(like_icon, LV_OPA_COVER, 0);
+        }
+        char reaction_count[16];
+        snprintf(reaction_count, sizeof reaction_count, "%u", selected->likes);
+        label(like_button, 38, 8, 49, 26, reaction_count, 0,
+              BUTTON_LIGHT_TEXT, LV_TEXT_ALIGN_LEFT);
+
+        lv_obj_t *dislike_button = button(root, 414, 656, 92, 43, "", 1,
+                                          U_CUSTOM_DISLIKE);
+        if (selected->disliked) {
+            lv_obj_set_style_bg_color(dislike_button, C(F8E0D6), 0);
+            lv_obj_set_style_border_color(dislike_button, C(A74A54), 0);
+        }
+        art(dislike_button, PV_ART_DISLIKE, 22, 21, 17);
+        snprintf(reaction_count, sizeof reaction_count, "%u", selected->dislikes);
+        label(dislike_button, 38, 8, 49, 26, reaction_count, 0,
+              BUTTON_TEXT, LV_TEXT_ALIGN_LEFT);
         if (v->account.signed_in && v->account.admin) {
-            button(root, 534, 656, 178, 43,
+            button(root, 512, 656, 178, 43,
                    selected->official ? "Снять метку" : "Официальный", 1,
                    U_CUSTOM_OFFICIAL);
         }
-        char stats[90];
-        snprintf(stats, sizeof stats, "♡ %u  ↓ %u",
-                 selected->likes, selected->downloads);
-        label(root, 722, 661, 230, 34, stats, 1, MUTED, LV_TEXT_ALIGN_LEFT);
         if (selected->author[0]) {
             char author[ON_LOGIN_SIZE + 24];
             snprintf(author, sizeof author, "%s: %s",
                      font_translate("Автор"), selected->author);
-            lv_obj_t *author_label = label(root, 934, 662, 274, 32,
+            lv_obj_t *author_label = label(root, 702, 662, 506, 32,
                                            author, 1, MUTED,
                                            LV_TEXT_ALIGN_LEFT);
             lv_label_set_long_mode(author_label, LV_LABEL_LONG_MODE_DOTS);
@@ -2075,6 +2094,9 @@ static int workshop_object_art(int type, int trigger_kind) {
                trigger_kind == ON_TRIGGER_KIND_GRAVITY ? PV_ART_LEVEL_TRIGGER_GRAVITY :
                trigger_kind == ON_TRIGGER_KIND_RECOLOR ||
                trigger_kind == ON_TRIGGER_KIND_BACKGROUND ? PV_ART_LEVEL_TRIGGER_COLOR :
+               trigger_kind == ON_TRIGGER_KIND_COUNT ? PV_ART_LEVEL_TRIGGER_COUNT :
+               trigger_kind == ON_TRIGGER_KIND_TOGGLE ? PV_ART_LEVEL_TRIGGER_TOGGLE :
+               trigger_kind == ON_TRIGGER_KIND_SPAWN ? PV_ART_LEVEL_TRIGGER_SPAWN :
                PV_ART_LEVEL_TRIGGER;
     default: return -1;
     }
@@ -4743,7 +4765,13 @@ static void pressed(lv_event_t *ev) {
     }
     if (code == U_CUSTOM_DESELECT) {catalog_selected[0] = 0;dirty = 1;return;}
     if (code == U_CUSTOM_LIKE) {
-        if (catalog_selected[0]) on_net_level_like(catalog_selected);
+        if (catalog_selected[0])
+            on_net_level_react(catalog_selected, ON_LEVEL_REACTION_LIKE);
+        dirty = 1;return;
+    }
+    if (code == U_CUSTOM_DISLIKE) {
+        if (catalog_selected[0])
+            on_net_level_react(catalog_selected, ON_LEVEL_REACTION_DISLIKE);
         dirty = 1;return;
     }
     if (code == U_CATALOG_SEARCH) {
@@ -5260,6 +5288,10 @@ int lvgl_ui_init(void) {
                            PV_ART_LEVEL_TRIGGER_GRAVITY,
                            PV_ART_LEVEL_TRIGGER_COLOR,
                            PV_ART_WORKSHOP_ROTATE, PV_ART_COLOR_WHEEL,
+                           PV_ART_LEVEL_TRIGGER_COUNT,
+                           PV_ART_LEVEL_TRIGGER_TOGGLE,
+                           PV_ART_LEVEL_TRIGGER_SPAWN,
+                           PV_ART_LIKE, PV_ART_DISLIKE,
                            PV_ART_LEVEL_FLAG, PV_ART_LEVEL_SPIKE,
                            PV_ART_LEVEL_SLOPE, PV_ART_LEVEL_ORB_ORANGE,
                            PV_ART_LEVEL_ORB_YELLOW,

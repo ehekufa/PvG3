@@ -629,16 +629,17 @@ static void test_level_official_flag(void) {
     const char *sparse_stats =
         "{\"45122\":{\"likes\":{\"0123456789abcdef0123456789abcdef\":true,"
         "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\":true},"
+        "\"dislikes\":{\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\":true},"
         "\"downloads\":{\"0123456789abcdef0123456789abcdef\":true}},"
         "\"99999\":{\"likes\":{\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\":true}}}";
     assert(on_protocol_level_stats(sparse_stats, stats, 2, client) == 2);
-    assert(stats[0].likes == 2 && stats[0].downloads == 1 &&
-           stats[0].liked && stats[0].downloaded);
-    assert(stats[1].likes == 0 && stats[1].downloads == 0 &&
-           !stats[1].liked && !stats[1].downloaded);
+    assert(stats[0].likes == 2 && stats[0].dislikes == 1 &&
+           stats[0].liked && !stats[0].disliked);
+    assert(stats[1].likes == 0 && stats[1].dislikes == 0 &&
+           !stats[1].liked && !stats[1].disliked);
     assert(on_protocol_level_stats("null", stats, 2, client) == 0);
-    assert(stats[0].likes == 0 && stats[0].downloads == 0 &&
-           !stats[0].liked && !stats[0].downloaded);
+    assert(stats[0].likes == 0 && stats[0].dislikes == 0 &&
+           !stats[0].liked && !stats[0].disliked);
 }
 
 int main(int argc, char **argv) {

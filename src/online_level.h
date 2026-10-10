@@ -28,6 +28,7 @@ static inline int on_level_is_official(const char *id, int flagged) {
 enum { ON_LEVEL_DIFFICULTY_UNSPECIFIED, ON_LEVEL_DIFFICULTY_EASY,
        ON_LEVEL_DIFFICULTY_NORMAL, ON_LEVEL_DIFFICULTY_HARD,
        ON_LEVEL_DIFFICULTY_EXPERT };
+enum { ON_LEVEL_REACTION_LIKE = 1, ON_LEVEL_REACTION_DISLIKE = 2 };
 enum { ON_LEVEL_ABILITY_DOUBLE_JUMP = 1u, ON_LEVEL_ABILITY_DASH = 2u,
        ON_LEVEL_ABILITY_WALL_SLIDE = 4u };
 /* This is a total-per-level ceiling across every object type, not a per-type
@@ -69,8 +70,8 @@ typedef struct {
     int difficulty; /* ON_LEVEL_DIFFICULTY_*, 0 for unrated legacy entries */
     int tag_count;
     char tags[ON_LEVEL_TAG_CAP][ON_LEVEL_TAG_SIZE];
-    unsigned likes, downloads;
-    int liked, downloaded; /* this installation's votes */
+    unsigned likes, dislikes;
+    int liked, disliked; /* this installation's mutually exclusive reaction */
     int64_t updated_at; /* server timestamp in milliseconds; 0 for legacy */
 } OnPublishedLevelSummary;
 

@@ -211,6 +211,19 @@ static int request(const char *path, const char *method, const char *body,
         compact_response();
     return code;
 }
+static const char *level_stat_kind_name(int kind) {
+    return kind == ON_LEVEL_REACTION_LIKE ? "likes" : "dislikes";
+}
+static int read_level_vote(const char *id, int kind, const char *client_id) {
+    char path[96];
+    snprintf(path, sizeof path, "level-stats/%s/%s/%s.json",
+             id, level_stat_kind_name(kind), client_id);
+    int code = request(path, "GET", NULL, NULL);
+    if (code != 200) return -1;
+    if (!strcmp(net.response, "true")) return 1;
+    if (!strcmp(net.response, "null") || !net.response[0]) return 0;
+    return -1;
+}
 #ifndef ON_NET_MANUAL
 static void *worker(void *arg) {
     (void)arg;
@@ -370,8 +383,8 @@ void on_net_level_fetch(const char *id) {
 static int level_stat_already_recorded_locked(const char *id, int kind) {
     for (int i = 0; i < net.view.level_count; ++i)
         if (!strcmp(net.view.levels[i].id, id))
-            return kind == 1 ? net.view.levels[i].liked :
-                   net.view.levels[i].downloaded;
+            return kind == ON_LEVEL_REACTION_LIKE ? net.view.levels[i].liked :
+                   net.view.levels[i].disliked;
     return 0;
 }
 static int level_stat_value_locked(const char *id, int kind) {
@@ -399,20 +412,43 @@ static int queue_level_stat_locked(const char *id, int kind, int value) {
     job->kind = kind;job->value = !!value;
     return 1;
 }
-void on_net_level_like(const char *id) {
-    if (!on_protocol_valid_level_id(id)) return;
+static void level_stat_summary_set_locked(const char *id, int kind, int value) {
+    for (int i = 0; i < net.view.level_count; ++i) {
+        OnPublishedLevelSummary *summary = &net.view.levels[i];
+        if (strcmp(summary->id, id)) continue;
+        int *vote = kind == ON_LEVEL_REACTION_LIKE ?
+            &summary->liked : &summary->disliked;
+        unsigned *count = kind == ON_LEVEL_REACTION_LIKE ?
+            &summary->likes : &summary->dislikes;
+        value = !!value;
+        if (*vote != value) {
+            if (value && *count < UINT_MAX) ++*count;
+            else if (!value && *count) --*count;
+            *vote = value;
+        }
+        break;
+    }
+}
+void on_net_level_react(const char *id, int reaction) {
+    if (!on_protocol_valid_level_id(id) ||
+        (reaction != ON_LEVEL_REACTION_LIKE &&
+         reaction != ON_LEVEL_REACTION_DISLIKE)) return;
     pthread_mutex_lock(&mu);
     if (!ensure_transport_locked()) {pthread_mutex_unlock(&mu);return;}
-    (void)queue_level_stat_locked(id, 1, !level_stat_value_locked(id, 1));
-    pthread_mutex_unlock(&mu);
-}
-void on_net_level_download(const char *id) {
-    if (!on_protocol_valid_level_id(id)) return;
-    pthread_mutex_lock(&mu);
-    if (level_stat_value_locked(id, 2) || !ensure_transport_locked()) {
-        pthread_mutex_unlock(&mu);return;
-    }
-    (void)queue_level_stat_locked(id, 2, 1);
+    int was_liked = level_stat_value_locked(id, ON_LEVEL_REACTION_LIKE);
+    int was_disliked = level_stat_value_locked(id, ON_LEVEL_REACTION_DISLIKE);
+    int like_after = reaction == ON_LEVEL_REACTION_LIKE ? !was_liked : 0;
+    int dislike_after = reaction == ON_LEVEL_REACTION_DISLIKE ? !was_disliked : 0;
+    /* Queue removals first, so a switch clears the opposing vote before the
+     * target write. Firebase rules independently enforce the same invariant. */
+    if (was_liked && !like_after)
+        (void)queue_level_stat_locked(id, ON_LEVEL_REACTION_LIKE, 0);
+    if (was_disliked && !dislike_after)
+        (void)queue_level_stat_locked(id, ON_LEVEL_REACTION_DISLIKE, 0);
+    if (!was_liked && like_after)
+        (void)queue_level_stat_locked(id, ON_LEVEL_REACTION_LIKE, 1);
+    if (!was_disliked && dislike_after)
+        (void)queue_level_stat_locked(id, ON_LEVEL_REACTION_DISLIKE, 1);
     pthread_mutex_unlock(&mu);
 }
 int on_net_level_publish(const OnPublishedLevel *level) {
@@ -1225,37 +1261,47 @@ void on_net_pump_once(void) {
     char path[96], body[256];
     int code;
     if (task == T_LEVEL_STAT_WRITE) {
-        const char *kind = stat_job.kind == 1 ? "likes" : "downloads";
-        snprintf(path, sizeof path, "level-stats/%s/%s/%s.json",
-                 level_id, kind, client_id);
-        code = stat_job.value ? request(path, "PUT", "true", "null_etag") :
-                                request(path, "DELETE", NULL, NULL);
-        if (code == 412 && stat_job.kind == 2) code = 200;
+        int other_kind = stat_job.kind == ON_LEVEL_REACTION_LIKE ?
+            ON_LEVEL_REACTION_DISLIKE : ON_LEVEL_REACTION_LIKE;
+        const char *kind = level_stat_kind_name(stat_job.kind);
+        int own_vote = read_level_vote(level_id, stat_job.kind, client_id);
+        int other_vote = read_level_vote(level_id, other_kind, client_id);
+        if (own_vote < 0 || other_vote < 0) code = -1;
+        else if (stat_job.value) {
+            code = 200;
+            if (other_vote) {
+                snprintf(path, sizeof path, "level-stats/%s/%s/%s.json",
+                         level_id, level_stat_kind_name(other_kind), client_id);
+                code = request(path, "DELETE", NULL, NULL);
+                if (code == 200) {
+                    pthread_mutex_lock(&mu);
+                    level_stat_summary_set_locked(stat_job.id, other_kind, 0);
+                    pthread_mutex_unlock(&mu);
+                }
+            }
+            if (code == 200 && !own_vote) {
+                snprintf(path, sizeof path, "level-stats/%s/%s/%s.json",
+                         level_id, kind, client_id);
+                code = request(path, "PUT", "true", "null_etag");
+                if (code == 412) code = 200;
+            }
+        } else if (own_vote) {
+            snprintf(path, sizeof path, "level-stats/%s/%s/%s.json",
+                     level_id, kind, client_id);
+            code = request(path, "DELETE", NULL, NULL);
+        } else code = 200;
+
         pthread_mutex_lock(&mu);
         if (net.level_stat_inflight_valid &&
             net.level_stat_inflight.kind == stat_job.kind &&
             !strcmp(net.level_stat_inflight.id, stat_job.id))
             net.level_stat_inflight_valid = 0;
-        if (code == 200) {
-            for (int i = 0; i < net.view.level_count; ++i) {
-                OnPublishedLevelSummary *summary = &net.view.levels[i];
-                if (strcmp(summary->id, stat_job.id)) continue;
-                if (stat_job.kind == 1) {
-                    if (summary->liked != stat_job.value) {
-                        if (stat_job.value && summary->likes < UINT_MAX) ++summary->likes;
-                        else if (!stat_job.value && summary->likes) --summary->likes;
-                    }
-                    summary->liked = stat_job.value;
-                } else if (stat_job.value && !summary->downloaded) {
-                    if (summary->downloads < UINT_MAX) ++summary->downloads;
-                    summary->downloaded = 1;
-                }
-                break;
-            }
-        } else {
+        if (code == 200)
+            level_stat_summary_set_locked(stat_job.id, stat_job.kind,
+                                          stat_job.value);
+        else
             snprintf(net.view.levels_notice, sizeof net.view.levels_notice,
-                     "Не удалось обновить статистику уровня.");
-        }
+                     "Не удалось обновить реакцию уровня.");
         net.level_list_requested = 1;
         net.view.levels_busy = 1;
         net.level_generation++;
@@ -1323,7 +1369,6 @@ void on_net_pump_once(void) {
             }
         }
         pthread_mutex_unlock(&mu);compact_response();
-        if (valid) on_net_level_download(level_id);
         return;
     }
     if (task == T_REFRESH) {on_net_refresh();return;}

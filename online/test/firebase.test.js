@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {validId, listRooms, createRoom, getRoom, joinRoom, chooseRole,
         encodeState, decodeState, writeState, writeCommand, leaveRoom,
-        validLevelId, listPublishedLevels, getPublishedLevel, publishLevel} from '../firebase.js';
+        validLevelId, listPublishedLevels, getPublishedLevel, publishLevel,
+        setLevelReaction} from '../firebase.js';
 import {newDraft, addObject} from '../workshop.js';
 import {newMatch, validMatch, applyCommand} from '../rules.js';
 /* The address lives in the config (or in the gitignored build secret), so the
@@ -114,6 +115,73 @@ test('publishing creates an account-owned level and catalog entry using only the
     assert.deepEqual((await listPublishedLevels()).map(({id}) => id), [result.id]);
     assert.equal((await getPublishedLevel(result.id)).project.format, 'PVG3-MAKER');
     await assert.rejects(getPublishedLevel('0'), /ID/);
+  } finally {globalThis.fetch = originalFetch;}
+});
+
+test('level reactions switch exclusively between likes and dislikes and can be cleared', async () => {
+  const client = '0123456789abcdef0123456789abcdef';
+  const database = {
+    'levels-index': {'104': {id: '104', title: 'Reaction test'}},
+    'level-stats': {},
+  };
+  const mutations = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    const route = new URL(url);
+    assert.equal(route.hostname, CONFIGURED_HOST);
+    const segments = route.pathname.slice(1, -5).split('/');
+    const method = opts.method || 'GET';
+    const read = () => segments.reduce((node, part) => node?.[part], database) ?? null;
+    if (method === 'GET') return reply(200, read());
+    let parent = database;
+    for (const part of segments.slice(0, -1)) parent = parent[part] ||= {};
+    const key = segments.at(-1);
+    if (method === 'PUT') {
+      if (opts.headers['If-Match'] === 'null_etag' && parent[key] != null)
+        return reply(412, {error: 'already exists'});
+      const value = JSON.parse(opts.body);
+      if (segments[0] === 'level-stats' && segments.length === 4 && value === true) {
+        const opposite = segments[2] === 'likes' ? 'dislikes' : 'likes';
+        if (database['level-stats']?.[segments[1]]?.[opposite]?.[key] === true)
+          return reply(403, {error: 'opposite reaction exists'});
+      }
+      parent[key] = firebaseNormalize(value);
+      mutations.push(`${method} ${segments.join('/')}`);
+      return reply(200, parent[key] ?? null);
+    }
+    if (method === 'DELETE') {
+      if (segments[0] === 'level-stats' && parent[key] !== true)
+        return reply(403, {error: 'cannot delete missing vote'});
+      delete parent[key];mutations.push(`${method} ${segments.join('/')}`);
+      return reply(200, null);
+    }
+    throw new Error(`Unexpected mock method ${method}`);
+  };
+  try {
+    let [level] = await listPublishedLevels(client);
+    assert.equal(level.likes, 0);assert.equal(level.dislikes, 0);
+    assert.equal(level.liked, false);assert.equal(level.disliked, false);
+
+    assert.equal(await setLevelReaction('104', client, 'like'), 'like');
+    [level] = await listPublishedLevels(client);
+    assert.equal(level.likes, 1);assert.equal(level.dislikes, 0);
+    assert.equal(level.liked, true);assert.equal(level.disliked, false);
+
+    assert.equal(await setLevelReaction('104', client, 'dislike'), 'dislike');
+    [level] = await listPublishedLevels(client);
+    assert.equal(level.likes, 0);assert.equal(level.dislikes, 1);
+    assert.equal(level.liked, false);assert.equal(level.disliked, true);
+    assert.equal(database['level-stats']['104'].likes?.[client], undefined,
+      'switching to dislike removes the previous like before writing');
+
+    const beforeRepeat = mutations.length;
+    assert.equal(await setLevelReaction('104', client, 'dislike'), 'dislike');
+    assert.equal(mutations.length, beforeRepeat, 'repeating a reaction is idempotent');
+    assert.equal(await setLevelReaction('104', client, null), null);
+    [level] = await listPublishedLevels(client);
+    assert.equal(level.likes, 0);assert.equal(level.dislikes, 0);
+    assert.equal(level.liked, false);assert.equal(level.disliked, false);
+    await assert.rejects(setLevelReaction('0', client, 'like'), /ID/);
   } finally {globalThis.fetch = originalFetch;}
 });
 

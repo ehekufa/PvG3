@@ -77,7 +77,7 @@ static const FontTranslation translations[] = {
     {"Экспертная", "Expert"},
     {"Новые", "Newest"},
     {"Лайки", "Likes"},
-    {"Скачивания", "Downloads"},
+    {"Дизлайки", "Dislikes"},
     {"Вход", "Enter"},
     {"Выход", "Exit"},
     {"Удержание · 0,25с", "Stay · 0.25s"},

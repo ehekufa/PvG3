@@ -1401,28 +1401,43 @@ canvas { border: 1px solid rgba(48, 74, 96, .25); border-radius: 10px; }
   font-size: 13px;
   font-weight: 700;
 }
-.ws-like-button {
+.ws-reaction-button {
   display: inline-flex;
+  width: auto !important;
   min-width: 80px !important;
   min-height: 42px !important;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   gap: 8px;
   padding: 7px 12px !important;
   border: 2px solid #000 !important;
   border-radius: 12px !important;
-  color: #fff !important;
-  background: #000 !important;
-  box-shadow: 0 4px 0 rgba(0, 0, 0, .12);
   font-size: 16px;
   font-weight: 800;
   transition: transform .12s ease, box-shadow .12s ease;
 }
-.ws-like-button span:first-child { color: #fff; font-size: 19px; line-height: 1; }
-.ws-like-button.is-liked span:first-child { color: #ff758c; }
-.ws-like-button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 5px 0 rgba(0, 0, 0, .15); }
-.ws-like-button:active:not(:disabled) { transform: translateY(1px); box-shadow: none; }
-.ws-like-button:focus-visible { outline: 3px solid var(--accent-blue); outline-offset: 3px; }
+.ws-reaction-button img { width: 20px; height: 20px; object-fit: contain; }
+.ws-like-button {
+  color: #fff !important;
+  background: #000 !important;
+  box-shadow: 0 4px 0 rgba(0, 0, 0, .12);
+}
+.ws-like-button img { filter: brightness(0) invert(1); }
+.ws-like-button.is-liked { border-color: #ff758c !important; }
+.ws-dislike-button {
+  color: #000 !important;
+  background: var(--white) !important;
+  box-shadow: 0 4px 0 rgba(0, 0, 0, .08);
+}
+.ws-dislike-button.is-disliked {
+  border-color: #a74a54 !important;
+  color: #6e2931 !important;
+  background: #f8e0d6 !important;
+}
+.ws-reaction-button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 5px 0 rgba(0, 0, 0, .15); }
+.ws-reaction-button:active:not(:disabled) { transform: translateY(1px); box-shadow: none; }
+.ws-reaction-button:focus-visible { outline: 3px solid var(--accent-blue); outline-offset: 3px; }
 .ws-level-play { justify-self: end; }
 
 @media (max-width: 850px) {
@@ -1435,6 +1450,7 @@ canvas { border: 1px solid rgba(48, 74, 96, .25); border-radius: 10px; }
   .ws-movement-fields label { width: 100%; white-space: normal; }
   .ws-catalog-filters { grid-template-columns: 1fr; }
   .ws-catalog-search { grid-column: auto; }
-  .ws-level-stats { justify-content: space-between; }
+  .ws-level-stats { justify-content: flex-start; width: 100%; }
+  .ws-level-stats .ws-reaction-button { width: auto !important; }
   .ws-level-play { justify-self: stretch; }
 }

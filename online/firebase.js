@@ -166,7 +166,7 @@ export async function listPublishedLevels(clientId = '') {
       (entry.description === undefined || typeof entry.description === 'string'))
     .map(([id, entry]) => {
       const levelStats = stats?.[id] || {};
-      const likes = levelStats.likes || {}, downloads = levelStats.downloads || {};
+      const likes = levelStats.likes || {}, dislikes = levelStats.dislikes || {};
       return {id, title: entry.title, description: entry.description || '',
         updatedAt: Number.isFinite(entry.updatedAt) ? entry.updatedAt : 0,
         difficulty: ['easy', 'normal', 'hard', 'expert'].includes(entry.difficulty) ?
@@ -175,40 +175,47 @@ export async function listPublishedLevels(clientId = '') {
           typeof tag === 'string' && tag.length <= 16).slice(0, 8) : [],
         author: typeof entry.author === 'string' ? entry.author : '',
         official: entry.official === true,
-        likes: countTrueEntries(likes), downloads: countTrueEntries(downloads),
+        likes: countTrueEntries(likes), dislikes: countTrueEntries(dislikes),
         liked: validClientId(clientId) && likes[clientId] === true,
-        downloaded: validClientId(clientId) && downloads[clientId] === true};
+        disliked: validClientId(clientId) && dislikes[clientId] === true};
     })
     .sort((a, b) => b.updatedAt - a.updatedAt || Number(b.id) - Number(a.id))
     .slice(0, 80);
 }
 
-export async function setLevelLike(id, clientId, liked) {
-  if (!validLevelId(id) || !validClientId(clientId))
-    throw new Error('Неверный ID уровня или клиента.');
-  const path = `level-stats/${id}/likes/${clientId}`;
-  if (!liked) {
-    await request(path, 'DELETE');
-    return false;
+export async function setLevelReaction(id, clientId, reaction) {
+  if (!validLevelId(id) || !validClientId(clientId) ||
+      ![null, 'like', 'dislike'].includes(reaction))
+    throw new Error('Неверный ID уровня, клиента или реакции.');
+
+  // Read this installation's current vote first. Firebase rules prohibit a
+  // like and dislike from coexisting, and deleting an absent child is denied.
+  const stats = await request(`level-stats/${id}`);
+  const likes = stats?.likes || {}, dislikes = stats?.dislikes || {};
+  const liked = likes[clientId] === true;
+  const disliked = dislikes[clientId] === true;
+  const likePath = `level-stats/${id}/likes/${clientId}`;
+  const dislikePath = `level-stats/${id}/dislikes/${clientId}`;
+
+  if (reaction === null) {
+    if (liked) await request(likePath, 'DELETE');
+    if (disliked) await request(dislikePath, 'DELETE');
+    return null;
   }
+
+  const isLike = reaction === 'like';
+  const alreadyChosen = isLike ? liked : disliked;
+  const otherChosen = isLike ? disliked : liked;
+  const targetPath = isLike ? likePath : dislikePath;
+  const otherPath = isLike ? dislikePath : likePath;
+  if (otherChosen) await request(otherPath, 'DELETE');
+  if (alreadyChosen) return reaction;
   try {
-    await request(path, 'PUT', true, 'null_etag');
-    return true;
+    await request(targetPath, 'PUT', true, 'null_etag');
+    return reaction;
   } catch (error) {
     if (error.status !== 412) throw error;
-    return true; // Another request already recorded this installation's like.
-  }
-}
-
-export async function recordLevelDownload(id, clientId) {
-  if (!validLevelId(id) || !validClientId(clientId))
-    throw new Error('Неверный ID уровня или клиента.');
-  try {
-    await request(`level-stats/${id}/downloads/${clientId}`, 'PUT', true, 'null_etag');
-    return true;
-  } catch (error) {
-    if (error.status === 412) return false; // Downloads are unique per installation.
-    throw error;
+    return reaction; // Another tab already recorded this installation's vote.
   }
 }
 

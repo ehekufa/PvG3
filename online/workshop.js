@@ -700,8 +700,8 @@ export function filterPublishedLevels(source, filters = {}) {
   };
   if (sort === 'likes')
     levels.sort((a, b) => (Number(b.likes) || 0) - (Number(a.likes) || 0) || stable(a, b));
-  else if (sort === 'downloads')
-    levels.sort((a, b) => (Number(b.downloads) || 0) - (Number(a.downloads) || 0) || stable(a, b));
+  else if (sort === 'dislikes')
+    levels.sort((a, b) => (Number(b.dislikes) || 0) - (Number(a.dislikes) || 0) || stable(a, b));
   else if (sort === 'title')
     levels.sort((a, b) => String(a.title || '').localeCompare(
       String(b.title || ''), locale) || stable(a, b));

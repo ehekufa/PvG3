@@ -24,13 +24,13 @@
       "$levelId": {
         "likes": {
           "$clientId": {
-            ".write": "$levelId.matches(/^[1-9][0-9]{0,5}$/) && $clientId.matches(/^[a-f0-9]{32}$/) && root.child('levels').child($levelId).exists() && ((data.exists() && !newData.exists()) || (!data.exists() && newData.val() === true))",
+            ".write": "$levelId.matches(/^[1-9][0-9]{0,5}$/) && $clientId.matches(/^[a-f0-9]{32}$/) && root.child('levels').child($levelId).exists() && ((data.exists() && !newData.exists()) || (!data.exists() && newData.val() === true && !root.child('level-stats').child($levelId).child('dislikes').child($clientId).exists()))",
             ".validate": "newData.isBoolean() && newData.val() === true"
           }
         },
-        "downloads": {
+        "dislikes": {
           "$clientId": {
-            ".write": "$levelId.matches(/^[1-9][0-9]{0,5}$/) && $clientId.matches(/^[a-f0-9]{32}$/) && root.child('levels').child($levelId).exists() && !data.exists() && newData.val() === true",
+            ".write": "$levelId.matches(/^[1-9][0-9]{0,5}$/) && $clientId.matches(/^[a-f0-9]{32}$/) && root.child('levels').child($levelId).exists() && ((data.exists() && !newData.exists()) || (!data.exists() && newData.val() === true && !root.child('level-stats').child($levelId).child('likes').child($clientId).exists()))",
             ".validate": "newData.isBoolean() && newData.val() === true"
           }
         }

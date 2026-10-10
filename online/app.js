@@ -3,7 +3,7 @@ import {PLANTS, DUCKS, W, H, X, Y, CW, CH, ROWS, COLS,
 import {DATABASE, validId, randomPlayerId, listRooms, getRoom, createRoom,
         joinRoom, chooseRole, writeState, writeCommand, heartbeat, leaveRoom,
         listPublishedLevels, getPublishedLevel, publishLevel,
-        setLevelLike, recordLevelDownload} from './firebase.js';
+        setLevelReaction} from './firebase.js';
 import {rotateToken} from './accounts.js';
 import {preloadArtwork, drawGame} from './draw.js';
 import {LEVEL_WIDTH, LEVEL_HEIGHT, MAX_LEVEL_OBJECTS, WORLD_LIMIT,
@@ -83,6 +83,9 @@ const WS_ART_FILES = {
   triggerInvisibility: 'Триггер-невидимости.png',
   triggerNoCollision: 'Триггер-нет столкновения.png',
   triggerGravity: 'Триггер-гравитации.png', triggerColor: 'Триггер-цвет.png',
+  triggerCount: 'Триггер-счёта.png',
+  triggerToggle: 'Триггер-переключатель.png',
+  triggerSpawn: 'Триггер-появления.png',
   'orb-orange': 'Оранжевый opб.png', 'orb-yellow': 'Жёлтый орб.png',
   checkpoint: 'Чекпоинт-выключен.png', checkpointActive: 'Чекпоинт-включён.png',
   'portal-normal': 'Портал-обычный.png', 'portal-jetpack': 'Портал-джетпака.png',
@@ -826,27 +829,50 @@ function renderWorkshopCatalog(levels) {
     playButton.addEventListener('click', () => playPublishedLevel(level.id, playButton));
     const panel = document.createElement('div');panel.className = 'ws-comments hidden';
     const stats = document.createElement('div');stats.className = 'ws-level-stats';
-    const downloads = document.createElement('span');downloads.className = 'ws-download-count';
-    downloads.textContent = `${wsText('Скачивания', 'Downloads')}: ${level.downloads || 0}`;
-    const like = document.createElement('button');like.type = 'button';
-    like.className = `ws-like-button${level.liked ? ' is-liked' : ''}`;
-    like.setAttribute('aria-pressed', String(level.liked === true));
-    like.setAttribute('aria-label', level.liked ?
-      wsText('Убрать лайк', 'Remove like') : wsText('Поставить лайк', 'Like this level'));
-    like.innerHTML = `<span aria-hidden="true">♥</span><span>${level.likes || 0}</span>`;
-    like.addEventListener('click', () => toggleCatalogLike(level, like));
-    stats.append(downloads, like);
+    const like = catalogReactionButton(level, 'like');
+    const dislike = catalogReactionButton(level, 'dislike');
+    stats.append(like, dislike);
     card.append(content, playButton, stats, levelFooter(level, official, panel), panel);
     list.append(card);
   }
 }
-async function toggleCatalogLike(level, button) {
-  const wasLiked = level.liked === true;
+function catalogReactionButton(level, reaction) {
+  const isLike = reaction === 'like';
+  const active = isLike ? level.liked === true : level.disliked === true;
+  const count = isLike ? level.likes || 0 : level.dislikes || 0;
+  const button = document.createElement('button');button.type = 'button';
+  button.className = `ws-reaction-button ${isLike ? 'ws-like-button' : 'ws-dislike-button'}` +
+    (active ? isLike ? ' is-liked' : ' is-disliked' : '');
+  button.setAttribute('aria-pressed', String(active));
+  const action = isLike ?
+    (active ? wsText('Убрать лайк', 'Remove like') : wsText('Поставить лайк', 'Like this level')) :
+    (active ? wsText('Убрать дизлайк', 'Remove dislike') :
+      wsText('Поставить дизлайк', 'Dislike this level'));
+  const total = isLike ? wsText(`Лайков: ${count}`, `Likes: ${count}`) :
+    wsText(`Дизлайков: ${count}`, `Dislikes: ${count}`);
+  button.setAttribute('aria-label', `${action}. ${total}`);
+  const icon = document.createElement('img');
+  icon.src = new URL(`../assets/art/${isLike ? 'Лайк.png' : 'Дизлайк.png'}`, import.meta.url).href;
+  icon.alt = '';icon.setAttribute('aria-hidden', 'true');
+  const number = document.createElement('span');number.className = 'ws-reaction-count';
+  number.textContent = String(count);
+  button.append(icon, number);
+  button.addEventListener('click', () => toggleCatalogReaction(level, reaction, button));
+  return button;
+}
+async function toggleCatalogReaction(level, reaction, button) {
+  const wasLiked = level.liked === true, wasDisliked = level.disliked === true;
+  const current = wasLiked ? 'like' : wasDisliked ? 'dislike' : null;
+  const desired = current === reaction ? null : reaction;
   button.disabled = true;
   try {
-    const liked = await setLevelLike(level.id, statsClientId, !wasLiked);
-    level.liked = liked;
-    level.likes = Math.max(0, (level.likes || 0) + (liked ? 1 : -1));
+    const result = await setLevelReaction(level.id, statsClientId, desired);
+    level.likes = Math.max(0, (level.likes || 0) - (wasLiked ? 1 : 0) +
+      (result === 'like' ? 1 : 0));
+    level.dislikes = Math.max(0, (level.dislikes || 0) - (wasDisliked ? 1 : 0) +
+      (result === 'dislike' ? 1 : 0));
+    level.liked = result === 'like';
+    level.disliked = result === 'dislike';
     renderFilteredCatalog();
   } catch (error) {
     setCatalogMessage(error.message);
@@ -989,18 +1015,6 @@ async function playPublishedLevel(id, button) {
   button.disabled = true;setCatalogMessage('');
   try {
     const record = await getPublishedLevel(id);
-    const summary = wsCatalog.find(level => level.id === id);
-    if (summary && !summary.downloaded) {
-      try {
-        const counted = await recordLevelDownload(id, statsClientId);
-        summary.downloaded = true;
-        if (counted) summary.downloads = (summary.downloads || 0) + 1;
-      } catch (error) {
-        /* Statistics never block access to a successfully fetched level. */
-        setCatalogMessage(wsText('Не удалось обновить счётчик скачиваний.',
-          'Could not update the download counter.'));
-      }
-    }
     const level = draftFromPublished(record);
     startWorkshopPreview(level, record.title, 'catalog', isOfficialLevel(record.id, record));
   } catch (error) {

@@ -173,7 +173,7 @@ static int level_stat_path(const char *path, char level[ON_LEVEL_ID_SIZE],
         length - 5 >= ON_PLAYER_ID_SIZE) return 0;
     memcpy(client, client_start, length - 5);client[length - 5] = 0;
     return on_protocol_valid_level_id(level) &&
-        (!strcmp(kind, "likes") || !strcmp(kind, "downloads")) &&
+        (!strcmp(kind, "likes") || !strcmp(kind, "dislikes")) &&
         on_protocol_valid_player_id(client);
 }
 static FakeLevelStat *find_level_stat(const char *level, const char *kind,
@@ -201,7 +201,7 @@ static int stats_append(char *out, size_t cap, size_t *at,
     return 1;
 }
 static int build_level_stats(char *out, size_t cap) {
-    static const char *const kinds[] = {"likes", "downloads"};
+    static const char *const kinds[] = {"likes", "dislikes"};
     size_t at = 0;
     int levels_written = 0;
     if (!cap) return -1;
@@ -320,15 +320,26 @@ int on_http_request(const char *path, const char *method, const char *body,
     if (level_stat_path(path, stat_level, stat_kind, stat_client)) {
         FakeLevelStat *item = find_level_stat(stat_level, stat_kind, stat_client,
                                                !strcmp(method, "PUT"));
+        if (!strcmp(method, "GET"))
+            return answer(response, cap,
+                item && item->active ? "true" : "null", 200);
         if (!strcmp(method, "PUT")) {
             if (!item) return answer(response, cap, "null", 507);
             if (if_match && !strcmp(if_match, "null_etag") && item->active)
                 return answer(response, cap, "null", 412);
+            const char *other_kind = !strcmp(stat_kind, "likes") ?
+                "dislikes" : "likes";
+            FakeLevelStat *other = find_level_stat(stat_level, other_kind,
+                                                    stat_client, 0);
+            if (body && !strcmp(body, "true") && other && other->active)
+                return answer(response, cap, "null", 403);
             item->active = body && !strcmp(body, "true");
             return answer(response, cap, "true", 200);
         }
         if (!strcmp(method, "DELETE")) {
-            if (item) item->active = 0;
+            if (!item || !item->active)
+                return answer(response, cap, "null", 403);
+            item->active = 0;
             return answer(response, cap, "null", 200);
         }
     }
@@ -642,34 +653,49 @@ static void catalog_stats_round_trip(void) {
     OnNetView snapshot = view();
     assert(snapshot.level_count >= 2 && !snapshot.levels_busy);
     OnPublishedLevelSummary *summary = catalog_level(&snapshot, "104");
-    assert(summary && summary->likes == 0 && summary->downloads == 0 &&
-           !summary->liked && !summary->downloaded);
-    on_net_level_like("104");on_net_level_like("104");
+    assert(summary && summary->likes == 0 && summary->dislikes == 0 &&
+           !summary->liked && !summary->disliked);
+
+    /* Rapid duplicate taps coalesce back to no reaction before the worker runs. */
+    on_net_level_react("104", ON_LEVEL_REACTION_LIKE);
+    on_net_level_react("104", ON_LEVEL_REACTION_LIKE);
     tick_pump(1);on_net_levels_refresh();tick_pump(1);
     snapshot = view();summary = catalog_level(&snapshot, "104");
-    assert(summary && summary->likes == 0 && !summary->liked);
+    assert(summary && summary->likes == 0 && summary->dislikes == 0 &&
+           !summary->liked && !summary->disliked);
 
     on_net_level_fetch("104");tick_pump(1);
     snapshot = view();
     assert(snapshot.level_loaded && !strcmp(snapshot.loaded_level_id, "104"));
-    tick_pump(1); /* successful fetch queues an installation-unique download */
     on_net_levels_refresh();tick_pump(1);
     snapshot = view();summary = catalog_level(&snapshot, "104");
-    assert(summary && summary->downloads == 1 && summary->downloaded);
+    assert(summary && summary->likes == 0 && summary->dislikes == 0 &&
+           !summary->liked && !summary->disliked);
 
-    on_net_level_download("104");tick_pump(1); /* repeat is idempotent */
+    on_net_level_react("104", ON_LEVEL_REACTION_LIKE);tick_pump(1);
     on_net_levels_refresh();tick_pump(1);
     snapshot = view();summary = catalog_level(&snapshot, "104");
-    assert(summary && summary->downloads == 1 && summary->downloaded);
+    assert(summary && summary->likes == 1 && summary->dislikes == 0 &&
+           summary->liked && !summary->disliked);
 
-    on_net_level_like("104");tick_pump(1);
+    on_net_level_react("104", ON_LEVEL_REACTION_DISLIKE);tick_pump(2);
     on_net_levels_refresh();tick_pump(1);
     snapshot = view();summary = catalog_level(&snapshot, "104");
-    assert(summary && summary->likes == 1 && summary->liked);
-    on_net_level_like("104");tick_pump(1);
+    assert(summary && summary->likes == 0 && summary->dislikes == 1 &&
+           !summary->liked && summary->disliked);
+
+    on_net_level_react("104", ON_LEVEL_REACTION_DISLIKE);tick_pump(1);
     on_net_levels_refresh();tick_pump(1);
     snapshot = view();summary = catalog_level(&snapshot, "104");
-    assert(summary && summary->likes == 0 && !summary->liked);
+    assert(summary && summary->likes == 0 && summary->dislikes == 0 &&
+           !summary->liked && !summary->disliked);
+
+    on_net_level_react("104", ON_LEVEL_REACTION_LIKE);tick_pump(1);
+    on_net_level_react("104", ON_LEVEL_REACTION_DISLIKE);tick_pump(2);
+    on_net_levels_refresh();tick_pump(1);
+    snapshot = view();summary = catalog_level(&snapshot, "104");
+    assert(summary && summary->likes == 0 && summary->dislikes == 1 &&
+           !summary->liked && summary->disliked);
     on_net_close();
 }
 static void large_level_transport_round_trip(void) {
@@ -736,13 +762,17 @@ static void assert_platformer_art(void) {
                        PV_ART_LEVEL_PORTAL_JETPACK,
                        PV_ART_JETPACK_ACTIVE, PV_ART_JETPACK_INACTIVE,
                        PV_ART_LEVEL_TRIGGER_COLOR, PV_ART_WORKSHOP_ROTATE,
-                       PV_ART_COLOR_WHEEL};
+                       PV_ART_COLOR_WHEEL, PV_ART_LEVEL_TRIGGER_COUNT,
+                       PV_ART_LEVEL_TRIGGER_TOGGLE, PV_ART_LEVEL_TRIGGER_SPAWN,
+                       PV_ART_LIKE, PV_ART_DISLIKE};
     const int widths[] = {100, 100, 100, 100, 100, 100, 100, 100, 50,
                           100, 100, 100, 100, 100, 100,
-                          100, 100, 100, 100, 100, 100, 256};
+                          100, 100, 100, 100, 100, 100, 256,
+                          100, 100, 100, 100, 100};
     const int heights[] = {100, 50, 100, 100, 100, 100, 100, 100, 100,
                            100, 100, 100, 100, 100, 100,
-                           100, 100, 100, 100, 100, 100, 256};
+                           100, 100, 100, 100, 100, 100, 256,
+                           100, 100, 100, 100, 100};
     for (size_t i = 0; i < sizeof ids / sizeof ids[0]; ++i) {
         int width = 0, height = 0, visible = 0;
         const uint32_t *pixels = game_art_rgba(ids[i], &width, &height);
@@ -1578,6 +1608,11 @@ static int run_lvgl_test(void) {
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_NO_COLLISION));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_GRAVITY));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_COLOR));
+    assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_COUNT));
+    assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_TOGGLE));
+    assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_TRIGGER_SPAWN));
+    assert(lvgl_ui_test_art_loaded(PV_ART_LIKE));
+    assert(lvgl_ui_test_art_loaded(PV_ART_DISLIKE));
     assert(lvgl_ui_test_art_loaded(PV_ART_WORKSHOP_ROTATE));
     assert(lvgl_ui_test_art_loaded(PV_ART_COLOR_WHEEL));
     assert(lvgl_ui_test_art_loaded(PV_ART_LEVEL_ORB_ORANGE));
