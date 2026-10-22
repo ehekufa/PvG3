@@ -1071,16 +1071,16 @@ static int run_lvgl_test(void) {
     assert(lvgl_ui_test_art_loaded(PV_ART_JETPACK_INACTIVE));
     game_set_lvgl_ui(1);
     ui_snapshot("menu");
-    assert(ui_pixels[60 * GAME_W + 545] == 0xFFF8FDFFu); /* campaign */
-    assert(ui_pixels[60 * GAME_W + 848] == 0xFFF8FDFFu); /* garden */
-    assert(ui_pixels[70 * GAME_W + 970] == 0xFFF8FDFFu); /* player levels */
-    assert(ui_pixels[580 * GAME_W + 100] == 0xFFF8FDFFu); /* book */
-    assert(ui_pixels[560 * GAME_W + 420] == 0xFF708EE6u); /* start */
-    assert(ui_pixels[580 * GAME_W + 905] == 0xFFF8FDFFu); /* online */
+    assert(ui_pixels[60 * GAME_W + 545] == 0xFFFFFFFFu); /* campaign */
+    assert(ui_pixels[60 * GAME_W + 848] == 0xFFFFFFFFu); /* garden */
+    assert(ui_pixels[70 * GAME_W + 970] == 0xFFFFFFFFu); /* player levels */
+    assert(ui_pixels[580 * GAME_W + 100] == 0xFFFFFFFFu); /* book */
+    assert(ui_pixels[560 * GAME_W + 420] == 0xFF00AAFFu); /* start */
+    assert(ui_pixels[580 * GAME_W + 905] == 0xFFFFFFFFu); /* online */
     uint32_t settings_face = ui_pixels[680 * GAME_W + 910];
     assert(((settings_face >> 16) & 255u) > 180u &&
            ((settings_face >> 8) & 255u) > 180u &&
-           (settings_face & 255u) > 180u); /* light blue-gray settings button */
+           (settings_face & 255u) > 180u); /* soft paper settings button */
 
     assert(lvgl_ui_test_label_present("Настройки"));
     ui_tap(1042, 687);
@@ -1702,7 +1702,7 @@ static int run_lvgl_test(void) {
     ui_tap(352, 438);tick_pump(3);
     assert(game_phase() == GAME_ONLINE_MATCH && db.host_role == ON_ROLE_PLANTS);
     ui_snapshot("match_plants");
-    assert(ui_pixels[50 * GAME_W + 935] == 0xFFF8FDFFu); /* online book */
+    assert(ui_pixels[50 * GAME_W + 935] == 0xFFFFFFFFu); /* online book */
     ui_tap(120, 580);ui_board_tap(535, 288);
     OnMatch match;int role;
     game_online_ui_snapshot(&match, &role, NULL, NULL, 0, NULL);

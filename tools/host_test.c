@@ -205,16 +205,16 @@ int main(void) {
     game_init();
     game_tick(0.016f, fb);
     assert(game_phase() == GAME_MENU);
-    /* The menu sky is a soft blue, and the Queen's robot stays on level 5. */
-    assert(fb[365 * GAME_W + 1165] == 0xFFECE0C6u);
-    assert(fb[50 * GAME_W + 100] == 0xFFF8FDFFu); /* player-level tile restored */
-    assert(fb[50 * GAME_W + 480] == 0xFFF8FDFFu); /* campaign uses warm white */
-    assert(fb[70 * GAME_W + 900] == 0xFFF8FDFFu); /* no Zen Garden picture */
-    assert(fb[580 * GAME_W + 105] == 0xFFF8FDFFu); /* book uses warm white */
-    assert(fb[560 * GAME_W + 450] == 0xFF708EE6u); /* start uses coral */
-    assert(fb[580 * GAME_W + 900] == 0xFFF8FDFFu); /* online uses warm white */
-    assert(fb[538 * GAME_W + 1058] == 0xffb5d3e0u); /* no level-count caption */
-    assert(fb[689 * GAME_W + 640] == 0xffb5d3e0u); /* no autosave footer */
+    /* The menu sky is a marker blue, and the Queen's robot stays on level 5. */
+    assert(fb[365 * GAME_W + 1165] == 0xFFFFD079u); /* marker day sky */
+    assert(fb[50 * GAME_W + 100] == 0xFFFFFFFFu); /* player-level tile restored */
+    assert(fb[50 * GAME_W + 480] == 0xFFFFFFFFu); /* campaign uses paper white */
+    assert(fb[70 * GAME_W + 900] == 0xFFFFFFFFu); /* no Zen Garden picture */
+    assert(fb[580 * GAME_W + 105] == 0xFFFFFFFFu); /* book uses paper white */
+    assert(fb[560 * GAME_W + 450] == 0xFF00AAFFu); /* start uses coin orange */
+    assert(fb[580 * GAME_W + 900] == 0xFFFFFFFFu); /* online uses paper white */
+    assert(fb[538 * GAME_W + 1058] == 0xFFA0E0FFu); /* no level-count caption */
+    assert(fb[689 * GAME_W + 640] == 0xFFA0E0FFu); /* no autosave footer */
     test_campaign_background_preference();
     game_tick(0.016f, fb);
     write_bmp("shots/menu.bmp", GAME_W, GAME_H, fb);
@@ -257,8 +257,8 @@ int main(void) {
     game_tick(0, fb);
     assert(game_phase() == GAME_BOOK);
     /* The book spread uses warm white and blue-gray paper. */
-    assert(fb[350 * GAME_W + 125] == 0xFFF8FDFFu);
-    assert(fb[350 * GAME_W + 1155] == 0xFFF2ECE1u);
+    assert(fb[350 * GAME_W + 125] == 0xFFFFFFFFu);
+    assert(fb[350 * GAME_W + 1155] == 0xFFD6F1FFu);
     write_bmp("shots/book.bmp", GAME_W, GAME_H, fb);
     game_input_press(320, 160 + 2 * 99 + 44); /* sunflower's page */
     game_tick(0, fb);
@@ -289,7 +289,7 @@ int main(void) {
     game_input_press(640, 600);             /* first level */
     game_tick(0, fb);
     assert(game_phase() == GAME_PLAY);
-    assert(fb[35 * GAME_W + 930] == 0xFFF8FDFFu); /* shop's book button uses warm white */
+    assert(fb[35 * GAME_W + 930] == 0xFFFFFFFFu); /* shop's book button uses paper white */
     /* The first playable row starts immediately below the top HUD. */
     assert(fb[125 * GAME_W + 960] != fb[90 * GAME_W + 960]);
     write_bmp("shots/level1.bmp", GAME_W, GAME_H, fb);

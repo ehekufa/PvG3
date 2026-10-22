@@ -1,3 +1,4 @@
+import {t as tr, getLang, initLang, setLang, applyTranslations} from './i18n.js';
 import {PLANTS, DUCKS, W, H, X, Y, CW, CH, ROWS, COLS,
         newMatch, validMatch, applyCommand, stepMatch} from './rules.js';
 import {DATABASE, validId, randomPlayerId, listRooms, getRoom, createRoom,
@@ -129,7 +130,7 @@ function loadWorkshopDraft() {
   return newDraft();
 }
 function openWorkshopDb() {
-  if (!globalThis.indexedDB) return Promise.reject(new Error('IndexedDB недоступна'));
+  if (!globalThis.indexedDB) return Promise.reject(new Error(tr('IndexedDB недоступна')));
   if (!wsDbPromise) {
     wsDbPromise = new Promise((resolve, reject) => {
       const request = indexedDB.open(WS_DB_NAME, 1);
@@ -142,8 +143,8 @@ function openWorkshopDb() {
         db.onversionchange = () => {db.close();wsDbPromise = null;};
         resolve(db);
       };
-      request.onerror = () => reject(request.error || new Error('Не удалось открыть хранилище'));
-      request.onblocked = () => reject(new Error('Хранилище черновика занято другой вкладкой'));
+      request.onerror = () => reject(request.error || new Error(tr('Не удалось открыть хранилище')));
+      request.onblocked = () => reject(new Error(tr('Хранилище черновика занято другой вкладкой')));
     }).catch(error => {wsDbPromise = null;throw error;});
   }
   return wsDbPromise;
@@ -152,7 +153,7 @@ function readWorkshopDraftFromDb() {
   return openWorkshopDb().then(db => new Promise((resolve, reject) => {
     const request = db.transaction(WS_DB_STORE, 'readonly').objectStore(WS_DB_STORE).get(WS_DRAFT_KEY);
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error || new Error('Не удалось прочитать черновик'));
+    request.onerror = () => reject(request.error || new Error(tr('Не удалось прочитать черновик')));
   }));
 }
 function writeWorkshopDraftToDb(serialized) {
@@ -160,8 +161,8 @@ function writeWorkshopDraftToDb(serialized) {
     const transaction = db.transaction(WS_DB_STORE, 'readwrite');
     transaction.objectStore(WS_DB_STORE).put(serialized, WS_DRAFT_KEY);
     transaction.oncomplete = resolve;
-    transaction.onerror = () => reject(transaction.error || new Error('Не удалось сохранить черновик'));
-    transaction.onabort = () => reject(transaction.error || new Error('Сохранение черновика отменено'));
+    transaction.onerror = () => reject(transaction.error || new Error(tr('Не удалось сохранить черновик')));
+    transaction.onabort = () => reject(transaction.error || new Error(tr('Сохранение черновика отменено')));
   }));
 }
 async function loadWorkshopDraftFromDb() {
@@ -185,9 +186,9 @@ function setWorkshopPage(page) {
   if (page === 'preview') drawCurrentPreview();
 }
 function renderWorkshopHome() {
-  $('ws-draft-title').textContent = wsDraft.title.trim() || 'Новый уровень';
+  $('ws-draft-title').textContent = wsDraft.title.trim() || tr('Новый уровень');
   $('ws-draft-status').textContent = wsDraft.publishedId ?
-    `Последняя публикация: ID ${wsDraft.publishedId}` : '';
+    tr('Последняя публикация: ID {0}', wsDraft.publishedId) : '';
 }
 async function persistWorkshopDraft() {
   let serialized, localSaved = false;
@@ -208,7 +209,7 @@ function saveWorkshopDraft() {
     wsDraftSaveTimer = 0;
     void persistWorkshopDraft();
   }, 250);
-  $('ws-object-count').textContent = `${wsDraft.objects.length} / ${MAX_LEVEL_OBJECTS} объектов`;
+  $('ws-object-count').textContent = tr('{0} / {1} объектов', wsDraft.objects.length, MAX_LEVEL_OBJECTS);
   renderWorkshopHome();
 }
 function flushWorkshopDraft() {
@@ -288,7 +289,7 @@ function renderPaletteOptions() {
 function renderWorkshopEditor() {
   $('ws-title-input').value = wsDraft.title;
   $('ws-description-input').value = wsDraft.description;
-  $('ws-object-count').textContent = `${wsDraft.objects.length} / ${MAX_LEVEL_OBJECTS} объектов`;
+  $('ws-object-count').textContent = tr('{0} / {1} объектов', wsDraft.objects.length, MAX_LEVEL_OBJECTS);
   for (const button of document.querySelectorAll('[data-ws-tool]'))
     button.classList.toggle('active', button.dataset.wsTool === wsTool);
   renderPaletteOptions();
@@ -334,7 +335,7 @@ function renderSelectedObject() {
   const selected = [...wsSelectedIds].map(wsObject).filter(Boolean);
   const panel = $('ws-properties');
   panel.classList.toggle('hidden', !selected.length);
-  $('ws-selection-count').textContent = `${selected.length} выбрано`;
+  $('ws-selection-count').textContent = tr('{0} выбрано', selected.length);
   $('ws-single-properties').classList.toggle('hidden', selected.length !== 1);
   $('ws-particle-fields').classList.toggle('hidden',
     selected.length !== 1 || selected[0]?.type !== 'particle');
@@ -348,12 +349,12 @@ function renderSelectedObject() {
     button.disabled = !selected.length;
   if (!selected.length) return;
   if (selected.length > 1) {
-    $('ws-selected-label').textContent = `${selected.length} объектов`;
+    $('ws-selected-label').textContent = tr('{0} объектов', selected.length);
     return;
   }
   if (!object) return;
-  const triggerLabel = object.type === 'trigger' ? ` · ${TRIGGER_LABELS[object.trigger?.kind || 'move']}` : '';
-  $('ws-selected-label').textContent = `${TYPE_LABELS[object.type]}${triggerLabel} · ID ${object.id}`;
+  const triggerLabel = object.type === 'trigger' ? ` · ${tr(TRIGGER_LABELS[object.trigger?.kind || 'move'])}` : '';
+  $('ws-selected-label').textContent = `${tr(TYPE_LABELS[object.type])}${triggerLabel} · ID ${object.id}`;
   $('ws-object-x').value = Number(object.x.toFixed(2));
   $('ws-object-y').value = Number(object.y.toFixed(2));
   $('ws-object-width').value = Number(object.w.toFixed(2));
@@ -369,8 +370,8 @@ function renderSelectedObject() {
   triggerFields.classList.toggle('hidden', object.type !== 'trigger');
   if (object.type === 'particle') object.emitter = normalizeParticleEmitter(object.emitter);
   if (object.type !== 'trigger') return;
-  const t = object.trigger || {};
-  const kind = TRIGGER_KINDS.includes(t.kind) ? t.kind : 'move';
+  const trg = object.trigger || {};
+  const kind = TRIGGER_KINDS.includes(trg.kind) ? trg.kind : 'move';
   $('ws-trigger-kind').value = kind;
   const forever = kind === 'forever';
   const rotate = kind === 'rotate';
@@ -378,32 +379,32 @@ function renderSelectedObject() {
   const background = kind === 'background';
   const recolor = kind === 'recolor';
   const moving = kind === 'move';
-  const legacyTarget = wsDraft.objects.find(candidate => candidate.id === t.targetId);
-  const groupId = Number.isInteger(t.groupId) ? t.groupId :
+  const legacyTarget = wsDraft.objects.find(candidate => candidate.id === trg.targetId);
+  const groupId = Number.isInteger(trg.groupId) ? trg.groupId :
     Number.isInteger(legacyTarget?.number) ? legacyTarget.number : 0;
-  $('ws-trigger-event').value = t.event || 'touch';
+  $('ws-trigger-event').value = trg.event || 'touch';
   $('ws-trigger-motion-fields').classList.toggle('hidden', forever || gravity || background);
   $('ws-trigger-move-fields').classList.toggle('hidden', !moving);
   $('ws-trigger-rotate-field').classList.toggle('hidden', !rotate);
   $('ws-trigger-forever-fields').classList.toggle('hidden', !forever);
   $('ws-trigger-gravity-field').classList.toggle('hidden', !gravity);
   $('ws-trigger-color-field').classList.toggle('hidden', !recolor && !background);
-  $('ws-trigger-color-label').textContent = background ? 'Цвет фона' : 'Цвет объектов';
-  $('ws-trigger-color').value = /^#[0-9a-f]{6}$/i.test(t.color || '') ? t.color : '#ffc54e';
+  $('ws-trigger-color-label').textContent = tr(background ? 'Цвет фона' : 'Цвет объектов');
+  $('ws-trigger-color').value = /^#[0-9a-f]{6}$/i.test(trg.color || '') ? trg.color : '#ffc54e';
   $('ws-trigger-group').value = groupId;
   $('ws-trigger-forever-group').value = groupId;
-  $('ws-trigger-action').value = ['activate', 'unactivate'].includes(t.action) ? t.action : 'activate';
-  $('ws-trigger-x').value = t.valueX ?? t.value ?? 0;
-  $('ws-trigger-y').value = t.valueY ?? 0;
-  $('ws-trigger-duration').value = t.duration ?? 3;
-  const gravityValue = Number.isInteger(t.value) ? Math.max(-100, Math.min(100, t.value)) : 0;
+  $('ws-trigger-action').value = ['activate', 'unactivate'].includes(trg.action) ? trg.action : 'activate';
+  $('ws-trigger-x').value = trg.valueX ?? trg.value ?? 0;
+  $('ws-trigger-y').value = trg.valueY ?? 0;
+  $('ws-trigger-duration').value = trg.duration ?? 3;
+  const gravityValue = Number.isInteger(trg.value) ? Math.max(-100, Math.min(100, trg.value)) : 0;
   $('ws-trigger-gravity').value = gravityValue;
   $('ws-trigger-gravity-value').textContent = `${gravityValue > 0 ? '+' : ''}${gravityValue}`;
 }
 function wsRedrawEditor() {
   renderSelectedObject();
   drawEditorCanvas($('ws-editor-canvas'), wsDraft, wsSelectedIds, wsTool, wsArt, wsCamera);
-  $('ws-object-count').textContent = `${wsDraft.objects.length} / ${MAX_LEVEL_OBJECTS} объектов`;
+  $('ws-object-count').textContent = tr('{0} / {1} объектов', wsDraft.objects.length, MAX_LEVEL_OBJECTS);
 }
 function updateParticleDialogFields(emitter) {
   for (const input of document.querySelectorAll('[data-emitter-key]')) {
@@ -412,14 +413,14 @@ function updateParticleDialogFields(emitter) {
     else input.value = emitter[key];
   }
   $('ws-emitter-rate-value').textContent = String(emitter.rate);
-  $('ws-emitter-rate-label').textContent = emitter.continuous ? 'Частиц в секунду' :
-    'Частиц во всплеске';
-  $('ws-emitter-lifetime-value').textContent = `${emitter.lifetime.toFixed(1)} с`;
-  $('ws-emitter-speed-value').textContent = `${emitter.speed} px/с`;
+  $('ws-emitter-rate-label').textContent = tr(emitter.continuous ? 'Частиц в секунду' :
+    'Частиц во всплеске');
+  $('ws-emitter-lifetime-value').textContent = tr('{0} с', emitter.lifetime.toFixed(1));
+  $('ws-emitter-speed-value').textContent = tr('{0} px/с', emitter.speed);
   $('ws-emitter-spread-value').textContent = `${emitter.spread}°`;
   $('ws-emitter-direction-value').textContent = `${emitter.direction}°`;
   $('ws-emitter-size-value').textContent = `${emitter.size} px`;
-  $('ws-emitter-gravity-value').textContent = `${emitter.gravity} px/с²`;
+  $('ws-emitter-gravity-value').textContent = tr('{0} px/с²', emitter.gravity);
   $('ws-emitter-gravity').disabled = !emitter.gravityEnabled;
 }
 function openParticleDialog() {
@@ -488,7 +489,7 @@ function wsPointerDown(event) {
       wsType === 'portal' ? wsPortalType : wsType;
     const placed = addObject(wsDraft, objectType, Math.floor(point.x), Math.floor(point.y), wsTriggerKind);
     if (!placed) {
-      showWorkshopMessage(`Достигнут общий лимит ${MAX_LEVEL_OBJECTS} объектов. Удали лишние объекты перед добавлением новых.`);return;
+      showWorkshopMessage(tr('Достигнут общий лимит {0} объектов. Удали лишние объекты перед добавлением новых.', MAX_LEVEL_OBJECTS));return;
     }
     // Player and finish are singletons: addObject moves the existing object.
     setWorkshopSelection([placed.id], placed.id);
@@ -500,7 +501,7 @@ function wsPointerDown(event) {
   }
   if (wsTool === 'delete') {
     if (object && ['player', 'goal'].includes(object.type)) {
-      showWorkshopMessage('Игрок и финиш обязательны и не удаляются.');
+      showWorkshopMessage(tr('Игрок и финиш обязательны и не удаляются.'));
     } else if (object) {
       wsDraft.objects = wsDraft.objects.filter(o => o.id !== object.id);
       setWorkshopSelection([...wsSelectedIds].filter(id => id !== object.id));
@@ -614,18 +615,18 @@ function wsUpdateRotateLabels() {
 }
 function wsCopySelection() {
   wsClipboard = copyObjects(wsDraft, wsSelectedIds);
-  showWorkshopMessage(wsClipboard.length ? `Скопировано объектов: ${wsClipboard.length}.` : '');
+  showWorkshopMessage(wsClipboard.length ? tr('Скопировано объектов: {0}.', wsClipboard.length) : '');
   wsRedrawEditor();
 }
 function wsPasteSelection() {
   const pasted = pasteObjects(wsDraft, wsClipboard, 1, 1);
   if (!pasted.length) {
-    showWorkshopMessage(wsClipboard.length ? 'Нет места для вставки: достигнут лимит объектов.' :
-      'Сначала скопируй выбранные объекты.');
+    showWorkshopMessage(tr(wsClipboard.length ? 'Нет места для вставки: достигнут лимит объектов.' :
+      'Сначала скопируй выбранные объекты.'));
     wsRedrawEditor();return;
   }
   setWorkshopSelection(pasted.map(object => object.id), pasted.at(-1).id);
-  showWorkshopMessage(`Вставлено объектов: ${pasted.length}.`);
+  showWorkshopMessage(tr('Вставлено объектов: {0}.', pasted.length));
   saveWorkshopDraft();wsRedrawEditor();
 }
 function wsDeleteSelection() {
@@ -633,7 +634,7 @@ function wsDeleteSelection() {
   const removed = new Set([...wsSelectedIds].filter(id =>
     !['player', 'goal'].includes(wsObject(id)?.type)));
   if (!removed.size) {
-    showWorkshopMessage('Игрок и финиш обязательны и не удаляются.');
+    showWorkshopMessage(tr('Игрок и финиш обязательны и не удаляются.'));
     return;
   }
   wsDraft.objects = wsDraft.objects.filter(object => !removed.has(object.id));
@@ -643,41 +644,41 @@ function wsDeleteSelection() {
 function updateSelectedTrigger(property, value) {
   const object = wsObject(wsSelectedId);
   if (!object || object.type !== 'trigger') return;
-  const t = object.trigger ||= {kind: 'move', event: 'touch', action: 'move'};
+  const trg = object.trigger ||= {kind: 'move', event: 'touch', action: 'move'};
   if (property === 'kind') {
     if (!setTriggerKind(wsDraft, object.id, value)) return;
   } else if (property === 'event') {
-    t.event = value;
+    trg.event = value;
   } else if (property === 'groupId') {
     const n = Number(value);if (!Number.isFinite(n)) return;
-    t.groupId = Math.max(0, Math.min(9999, Math.trunc(n)));
-    if (t.kind === 'forever' && !['activate', 'unactivate'].includes(t.action))
-      t.action = 'activate';
+    trg.groupId = Math.max(0, Math.min(9999, Math.trunc(n)));
+    if (trg.kind === 'forever' && !['activate', 'unactivate'].includes(trg.action))
+      trg.action = 'activate';
   } else if (['valueX', 'valueY'].includes(property)) {
     const n = Number(value);if (!Number.isFinite(n)) return;
     t[property] = Math.max(-9999, Math.min(9999, Math.trunc(n)));
   } else if (property === 'duration') {
     const n = Number(value);if (!Number.isFinite(n)) return;
-    t.duration = Math.max(1, Math.min(9999, Math.trunc(n)));
-    t.action = 'rotate';
-    delete t.degrees;delete t.value;
+    trg.duration = Math.max(1, Math.min(9999, Math.trunc(n)));
+    trg.action = 'rotate';
+    delete trg.degrees;delete trg.value;
   } else if (property === 'gravity') {
     const n = Number(value);if (!Number.isFinite(n)) return;
-    t.value = Math.max(-100, Math.min(100, Math.trunc(n)));
-    t.action = 'set-gravity';
+    trg.value = Math.max(-100, Math.min(100, Math.trunc(n)));
+    trg.action = 'set-gravity';
   } else if (property === 'color') {
     if (!/^#[0-9a-f]{6}$/i.test(value)) return;
-    t.color = value;
-    if (t.kind === 'recolor') t.action = 'recolor';
-    if (t.kind === 'background') t.action = 'set-background';
+    trg.color = value;
+    if (trg.kind === 'recolor') trg.action = 'recolor';
+    if (trg.kind === 'background') trg.action = 'set-background';
   } else if (property === 'action') {
     if (!['activate', 'unactivate'].includes(value)) return;
-    t.action = value;
+    trg.action = value;
   }
   wsRedrawEditor();saveWorkshopDraft();
 }
 function beginNewDraft() {
-  if (!confirm('Создать новый уровень вместо текущего черновика? Опубликованные уровни не затрагиваются.')) return;
+  if (!confirm(tr('Создать новый уровень вместо текущего черновика? Опубликованные уровни не затрагиваются.'))) return;
   wsDraft = newDraft();setWorkshopSelection([]);wsClipboard = [];wsTool = 'build';wsType = 'block';
   wsTriggerKind = 'move';wsGoalType = 'goal';wsPortalType = 'portal-normal';
   wsPaletteSelected = true;
@@ -692,7 +693,7 @@ function renderWorkshopCatalog(levels) {
   const list = $('ws-catalog-list');list.replaceChildren();
   if (!levels.length) {
     const empty = document.createElement('p');empty.className = 'muted';
-    empty.textContent = 'В каталоге пока нет опубликованных уровней.';
+    empty.textContent = tr('В каталоге пока нет опубликованных уровней.');
     list.append(empty);return;
   }
   for (const level of levels) {
@@ -705,13 +706,13 @@ function renderWorkshopCatalog(levels) {
     meta.append(id);
     if (official) {
       const badge = document.createElement('span');badge.className = 'ws-official-badge';
-      badge.textContent = 'ОФИЦИАЛЬНЫЙ';badge.setAttribute('aria-label', 'Официальный уровень');
+      badge.textContent = tr('ОФИЦИАЛЬНЫЙ');badge.setAttribute('aria-label', tr('Официальный уровень'));
       meta.append(badge);
     }
     const title = document.createElement('h3');title.textContent = level.title;
-    const description = document.createElement('p');description.textContent = level.description || 'Авторский платформерный уровень.';
+    const description = document.createElement('p');description.textContent = level.description || tr('Авторский платформерный уровень.');
     content.append(meta, title, description);
-    const button = document.createElement('button');button.type = 'button';button.textContent = 'Играть';
+    const button = document.createElement('button');button.type = 'button';button.textContent = tr('Играть');
     button.addEventListener('click', () => playPublishedLevel(level.id, button));
     card.append(content, button);list.append(card);
   }
@@ -720,7 +721,7 @@ async function loadWorkshopCatalog() {
   const generationId = ++wsCatalogGeneration;
   setCatalogMessage('');
   const list = $('ws-catalog-list');list.replaceChildren();
-  const loading = document.createElement('p');loading.className = 'muted';loading.textContent = 'Загружаем каталог…';list.append(loading);
+  const loading = document.createElement('p');loading.className = 'muted';loading.textContent = tr('Загружаем каталог…');list.append(loading);
   try {
     const levels = await listPublishedLevels();
     if (generationId !== wsCatalogGeneration || wsPage !== 'catalog') return;
@@ -729,8 +730,8 @@ async function loadWorkshopCatalog() {
     if (generationId !== wsCatalogGeneration || wsPage !== 'catalog') return;
     list.replaceChildren();
     const message = error.status === 401 || error.status === 403 ?
-      'Firebase запретил чтение /levels-index. Для каталога в правилах базы нужно разрешить чтение этой ветки.' :
-      `Не удалось загрузить каталог: ${error.message}`;
+      tr('Firebase запретил чтение /levels-index. Для каталога в правилах базы нужно разрешить чтение этой ветки.') :
+      tr('Не удалось загрузить каталог: {0}', error.message);
     setCatalogMessage(message);
   }
 }
@@ -742,7 +743,7 @@ async function playPublishedLevel(id, button) {
     startWorkshopPreview(level, record.title, 'catalog', isOfficialLevel(record.id));
   } catch (error) {
     setCatalogMessage(error.status === 401 || error.status === 403 ?
-      'Firebase запретил чтение /levels. Проверь правила базы.' : error.message);
+      tr('Firebase запретил чтение /levels. Проверь правила базы.') : error.message);
   } finally {button.disabled = false;}
 }
 function startWorkshopPreview(level, title, returnPage, official = false) {
@@ -754,11 +755,11 @@ function startWorkshopPreview(level, title, returnPage, official = false) {
   previewTitle.replaceChildren(document.createTextNode(title || level.title));
   if (official) {
     const badge = document.createElement('span');badge.className = 'ws-official-badge ws-official-badge-heading';
-    badge.textContent = 'ОФИЦИАЛЬНЫЙ';badge.setAttribute('aria-label', 'Официальный уровень');
+    badge.textContent = tr('ОФИЦИАЛЬНЫЙ');badge.setAttribute('aria-label', tr('Официальный уровень'));
     previewTitle.append(' ', badge);
   }
   $('ws-preview-status').textContent = '';
-  $('ws-preview-back').textContent = returnPage === 'catalog' ? 'Назад · Каталог' : 'Назад · В редактор';
+  $('ws-preview-back').textContent = tr(returnPage === 'catalog' ? 'Назад · Каталог' : 'Назад · В редактор');
   clearWorkshopInput();applyWorkshopControl(wsControlPreference);
   setWorkshopPage('preview');
 }
@@ -812,11 +813,11 @@ function workshopFrame(dt) {
   stepPreview(wsPreviewState, {axis, vertical, jump, trigger}, dt);
   updateWorkshopJetpackControls();
   if (wsPreviewState.orbActivated)
-    $('ws-preview-status').textContent = 'Орб активирован!';
+    $('ws-preview-status').textContent = tr('Орб активирован!');
   drawCurrentPreview();
   if (wsPreviewState.won && !wsWinAnnounced) {
-    wsWinAnnounced = true;$('ws-preview-status').textContent = `Уровень пройден! Собрано монет: ${wsPreviewState.coins}.`;
-    notice('Уровень пройден!');
+    wsWinAnnounced = true;$('ws-preview-status').textContent = tr('Уровень пройден! Собрано монет: {0}.', wsPreviewState.coins);
+    notice(tr('Уровень пройден!'));
   }
 }
 async function publishWorkshopDraft() {
@@ -828,12 +829,12 @@ async function publishWorkshopDraft() {
     const result = await publishLevel(wsDraft);
     wsDraft.publishedId = result.id;wsDraft.publishedAt = Date.now();
     saveWorkshopDraft();
-    showWorkshopMessage(`Уровень опубликован под ID ${result.id}. Он доступен в каталоге и нативной игре.`);
-    notice(`Уровень опубликован · ID ${result.id}`, 6000);
+    showWorkshopMessage(tr('Уровень опубликован под ID {0}. Он доступен в каталоге и нативной игре.', result.id));
+    notice(tr('Уровень опубликован · ID {0}', result.id), 6000);
   } catch (error) {
-    const message = error.message.startsWith('Уровень ') ? error.message :
+    const message = error.code === 'level-saved-index-failed' ? error.message :
       error.status === 401 || error.status === 403 ?
-      'Firebase отклонил запись. Для публикации правила должны разрешать создание записей в /levels и /levels-index. Правила базы автоматически не менялись.' :
+      tr('Firebase отклонил запись. Для публикации правила должны разрешать создание записей в /levels и /levels-index. Правила базы автоматически не менялись.') :
       error.message;
     showWorkshopMessage(message);
   } finally {button.disabled = false;}
@@ -847,7 +848,7 @@ async function refreshRooms() {
   if (screen !== 'rooms') return;
   list.innerHTML = '';
   const loading = document.createElement('p');
-  loading.className = 'muted';loading.textContent = 'Обновляем комнаты…';list.append(loading);
+  loading.className = 'muted';loading.textContent = tr('Обновляем комнаты…');list.append(loading);
   try {
     const info = (await listRooms()).slice(0, 12);
     if (screen !== 'rooms') return;
@@ -858,24 +859,24 @@ async function refreshRooms() {
       const left = document.createElement('span');
       const code = document.createElement('strong');code.textContent = id;
       const detail = document.createElement('small');
-      detail.textContent = entry.map === 5 ? 'Водное поле · кувшинки' : 'Обычный газон';
+      detail.textContent = tr(entry.map === 5 ? 'Водное поле · кувшинки' : 'Обычный газон');
       left.append(code, detail);
       const tag = document.createElement('span');tag.className = 'badge';
-      tag.textContent = 'Войти';
+      tag.textContent = tr('Войти');
       button.append(left, tag);
       button.addEventListener('click', () => enterRoom(id));
       list.append(button);
     }
     if (!info.length) {
       const empty = document.createElement('p');empty.className = 'muted';
-      empty.textContent = 'Пока нет свободных комнат. Создай свою кнопкой «+»!';
+      empty.textContent = tr('Пока нет свободных комнат. Создай свою кнопкой «+»!');
       list.append(empty);
     }
-    connection(true, 'Firebase на связи');
+    connection(true, tr('Firebase на связи'));
   } catch (e) {
     list.innerHTML = '';
     const error = document.createElement('p');error.className = 'muted';error.textContent = e.message;
-    list.append(error);connection(false, 'Нет связи');notice(e.message, 6500);
+    list.append(error);connection(false, tr('Нет связи'));notice(e.message, 6500);
   }
 }
 function renderLobby() {
@@ -893,20 +894,20 @@ function enterMatch() {
   if (screen === 'match') return;
   show('match');
   $('match-code').textContent = roomId;
-  $('match-title').textContent = room?.[slot]?.role === 'plants' ? 'Защити Хлебушка' : 'Прорви защиту Кирилла';
+  $('match-title').textContent = tr(room?.[slot]?.role === 'plants' ? 'Защити Хлебушка' : 'Прорви защиту Кирилла');
   $('finish-wave').classList.toggle('hidden', room?.[slot]?.role !== 'zombies');
 }
 async function enterRoom(id, alreadyJoined = false) {
-  if (!validId(id)) {notice('Неверный код комнаты.');return;}
+  if (!validId(id)) {notice(tr('Неверный код комнаты.'));return;}
   const gen = ++generation;
-  connection(null, 'Подключаемся…');
+  connection(null, tr('Подключаемся…'));
   try {
     const joined = alreadyJoined ? await getRoom(id) : await joinRoom(id, playerId);
     if (gen !== generation) return;
     if (!joined || joined.version !== 1 ||
         (alreadyJoined && joined[slot]?.id !== playerId) ||
         (!alreadyJoined && joined.guest?.id !== playerId))
-      throw new Error('Комната закрылась или другой игрок занял твоё место.');
+      throw new Error(tr('Комната закрылась или другой игрок занял твоё место.'));
     roomId = id;room = joined;
     if (!alreadyJoined) slot = 'guest';
     seq = Math.max(0, Number(joined.state?.ackGuest) || 0);
@@ -915,32 +916,32 @@ async function enterRoom(id, alreadyJoined = false) {
       state = joined.state;
       lastSnapshot = performance.now();enterMatch();
     }
-    connection(true, 'В комнате');
+    connection(true, tr('В комнате'));
     poll(gen);
   } catch (e) {
     if (gen !== generation) return;
     roomId = '';slot = '';room = null;state = null;
-    session();clearInvite();show('rooms');connection(false, 'Ошибка комнаты');
+    session();clearInvite();show('rooms');connection(false, tr('Ошибка комнаты'));
     notice(e.message, 6000);refreshRooms();
   }
 }
 async function create() {
   $('create').disabled = true;
-  connection(null, 'Создаём комнату…');
+  connection(null, tr('Создаём комнату…'));
   const gen = ++generation;
   try {
     const result = await createRoom(playerId, mapChoice);
     if (gen !== generation) return;
     roomId = result.id;slot = 'host';room = result.room;state = null;
-    session();renderLobby();show('lobby');connection(true, 'Комната создана');
+    session();renderLobby();show('lobby');connection(true, tr('Комната создана'));
     poll(gen);
-  } catch (e) {connection(false, 'Ошибка комнаты');notice(e.message, 7000);}
+  } catch (e) {connection(false, tr('Ошибка комнаты'));notice(e.message, 7000);}
   finally {$('create').disabled = false;}
 }
 async function choose(side) {
   if (!roomId || !slot || room?.state) return;
   const other = room[slot === 'host' ? 'guest' : 'host']?.role;
-  if (other === side) {notice('Эту сторону уже выбрал соперник.');return;}
+  if (other === side) {notice(tr('Эту сторону уже выбрал соперник.'));return;}
   try {
     await chooseRole(roomId, slot, side);
     if (room && room[slot]) room[slot].role = side;
@@ -952,17 +953,17 @@ async function leave() {
   const id = roomId, oldSlot = slot;
   generation++;
   roomId = '';slot = '';room = null;state = null;pendingSeq = 0;
-  session();clearInvite();show('rooms');connection(null, 'Выходим…');
-  try {await leaveRoom(id, oldSlot, playerId);connection(true, 'Firebase на связи');}
-  catch (e) {connection(false, 'Не удалось закрыть комнату');notice(e.message);}
+  session();clearInvite();show('rooms');connection(null, tr('Выходим…'));
+  try {await leaveRoom(id, oldSlot, playerId);connection(true, tr('Firebase на связи'));}
+  catch (e) {connection(false, tr('Не удалось закрыть комнату'));notice(e.message);}
   refreshRooms();
 }
 async function publish() {
   if (!state || !roomId || slot !== 'host' || writing) return;
   writing = true;lastPublish = performance.now();
   const id = roomId;
-  try {await writeState(id, state);if (id === roomId) connection(true, 'Бой онлайн');}
-  catch (e) {if (id === roomId) {connection(false, 'Бой без связи');notice(e.message, 6000);}}
+  try {await writeState(id, state);if (id === roomId) connection(true, tr('Бой онлайн'));}
+  catch (e) {if (id === roomId) {connection(false, tr('Бой без связи'));notice(e.message, 6000);}}
   finally {writing = false;}
 }
 async function poll(gen) {
@@ -972,8 +973,8 @@ async function poll(gen) {
     if (gen !== generation) return;
     if (!current || current.version !== 1 || current[slot]?.id !== playerId) {
       generation++;roomId = '';slot = '';room = null;state = null;pendingSeq = 0;
-      session();clearInvite();show('rooms');connection(false, 'Комната закрыта');
-      notice('Комната закрыта. Вернулись к списку комнат.');refreshRooms();
+      session();clearInvite();show('rooms');connection(false, tr('Комната закрыта'));
+      notice(tr('Комната закрыта. Вернулись к списку комнат.'));refreshRooms();
       return;
     }
     room = current;
@@ -1001,9 +1002,9 @@ async function poll(gen) {
       lastPing = performance.now();
       await heartbeat(roomId, slot);
     }
-    connection(true, state ? 'Бой онлайн' : 'В комнате');
+    connection(true, tr(state ? 'Бой онлайн' : 'В комнате'));
   } catch (e) {
-    if (gen === generation) {connection(false, 'Нет связи');notice(e.message, 4500);}
+    if (gen === generation) {connection(false, tr('Нет связи'));notice(e.message, 4500);}
   } finally {
     if (gen === generation && roomId) setTimeout(() => poll(gen), 600);
   }
@@ -1011,10 +1012,10 @@ async function poll(gen) {
 async function send(cmd) {
   if (!state || state.winner || !roomId || !room?.[slot]?.role) return;
   if (slot === 'host') {
-    if (!applyCommand(state, room.host.role, cmd)) notice('Пока нельзя: проверь монеты, клетку и перезарядку.');
+    if (!applyCommand(state, room.host.role, cmd)) notice(tr('Пока нельзя: проверь монеты, клетку и перезарядку.'));
     else publish();
   } else {
-    if (pendingSeq) {notice('Подожди, предыдущий ход ещё передаётся.');return;}
+    if (pendingSeq) {notice(tr('Подожди, предыдущий ход ещё передаётся.'));return;}
     pendingSeq = ++seq;
     const payload = cmd.kind === 'coin' ? {kind:'coin',coinId:cmd.id} : cmd;
     try {await writeCommand(roomId, {...payload, id: playerId, seq: pendingSeq});}
@@ -1038,7 +1039,7 @@ function pointer(event) {
     if (x >= 18 && x <= 231) {
       const index = Math.floor((y - 137) / 107);
       if (index >= 0 && index < PLANTS.length && y <= 137 + index*107 + 98) {
-        chosenPlant = index;notice(`Выбрано: ${PLANTS[index].name}`);return;
+        chosenPlant = index;notice(tr('Выбрано: {0}', tr(PLANTS[index].name)));return;
       }
     }
     if (chosenPlant >= 0 && x >= X && x < W && y >= Y && y < Y + ROWS*CH) {
@@ -1049,7 +1050,7 @@ function pointer(event) {
     if (x >= 18 && x <= 231) {
       const index = Math.floor((y - 169) / 155);
       if (index >= 0 && index < DUCKS.length && y <= 169 + index*155 + 136) {
-        chosenDuck = index;notice(`Выбрано: ${DUCKS[index].name}`);return;
+        chosenDuck = index;notice(tr('Выбрано: {0}', tr(DUCKS[index].name)));return;
       }
     }
     if (chosenDuck >= 0 && x >= X && y >= Y && y < Y + ROWS*CH) {
@@ -1074,20 +1075,22 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 function populateBook() {
+  $('book-plants').replaceChildren();
+  $('book-ducks').replaceChildren();
   for (const p of PLANTS) {
     const item = document.createElement('div');item.className = 'book-entry';
     const img = document.createElement('img');img.src = `../assets/art/${p.image}`;img.alt = '';
     const text = document.createElement('div');
-    const name = document.createElement('strong');name.textContent = p.name;
-    const detail = document.createElement('small');detail.textContent = `${p.cost} монет · ${p.hp} HP. ${p.detail}`;
+    const name = document.createElement('strong');name.textContent = tr(p.name);
+    const detail = document.createElement('small');detail.textContent = tr('{0} монет · {1} HP. {2}', p.cost, p.hp, tr(p.detail));
     text.append(name, detail);item.append(img, text);$('book-plants').append(item);
   }
   for (const d of DUCKS) {
     const item = document.createElement('div');item.className = 'book-entry';
     const img = document.createElement('img');img.src = `../assets/art/${d.image}`;img.alt = '';
     const text = document.createElement('div');
-    const name = document.createElement('strong');name.textContent = d.name;
-    const detail = document.createElement('small');detail.textContent = `${d.cost} монет · ${d.hp} HP. ${d.detail}`;
+    const name = document.createElement('strong');name.textContent = tr(d.name);
+    const detail = document.createElement('small');detail.textContent = tr('{0} монет · {1} HP. {2}', d.cost, d.hp, tr(d.detail));
     text.append(name, detail);item.append(img, text);$('book-ducks').append(item);
   }
 }
@@ -1249,8 +1252,8 @@ for (const card of document.querySelectorAll('.map-card')) card.addEventListener
 for (const card of document.querySelectorAll('.side-card')) card.addEventListener('click', () => choose(card.dataset.side));
 $('share').addEventListener('click', async () => {
   const url = `${location.origin}${location.pathname}?room=${roomId}`;
-  try {await navigator.clipboard.writeText(url);notice('Ссылка на комнату скопирована.');}
-  catch {notice(`Код комнаты: ${roomId}`);}
+  try {await navigator.clipboard.writeText(url);notice(tr('Ссылка на комнату скопирована.'));}
+  catch {notice(tr('Код комнаты: {0}', roomId));}
 });
 $('leave-lobby').addEventListener('click', leave);
 $('leave-match').addEventListener('click', leave);
@@ -1259,15 +1262,31 @@ $('finish-wave').addEventListener('click', () => {
 });
 $('book').addEventListener('click', () => $('book-dialog').showModal());
 window.addEventListener('pagehide', flushWorkshopDraft);
+function rerenderLanguage() {
+  applyTranslations();
+  populateBook();
+  refreshRooms();
+  renderWorkshopHome();
+  if (wsPage === 'editor') wsRedrawEditor();
+  if (wsPage === 'catalog') loadWorkshopCatalog();
+  if (screen === 'match' && state) drawGame(canvas, state, {role:room?.[slot]?.role, id:roomId,
+    selected:room?.[slot]?.role === 'plants' ? chosenPlant : chosenDuck, pending:!!pendingSeq});
+  const audio = $('soundtrack');
+  $('music').textContent = tr(audio.paused ? 'Музыка' : 'Выключить музыку');
+}
+$('lang-toggle').addEventListener('click', () => {
+  setLang(getLang() === 'en' ? 'ru' : 'en');
+  rerenderLanguage();
+});
 $('music').addEventListener('click', async () => {
   const audio = $('soundtrack');
   if (audio.paused) {
-    try {await audio.play();$('music').textContent = 'Выключить музыку';}
-    catch {notice('Браузер не разрешил воспроизвести музыку.');}
-  } else {audio.pause();$('music').textContent = 'Музыка';}
+    try {await audio.play();$('music').textContent = tr('Выключить музыку');}
+    catch {notice(tr('Браузер не разрешил воспроизвести музыку.'));}
+  } else {audio.pause();$('music').textContent = tr('Музыка');}
 });
 canvas.addEventListener('pointerdown', pointer);
-populateBook();preloadArtwork();
+initLang();applyTranslations();populateBook();preloadArtwork();
 requestAnimationFrame(frame);
 let previous = null;
 try {previous = JSON.parse(sessionStorage.getItem('pvg3-room') || 'null');}

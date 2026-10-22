@@ -1,3 +1,4 @@
+import {t as tr} from './i18n.js';
 /* Shared web workshop model, PVG3-MAKER codec and small platformer preview.
  * This format is also read by src/online_protocol.c in the native C client. */
 // The canvas shows a 16×10 viewport onto a sparse, effectively infinite world.
@@ -398,21 +399,21 @@ export function pasteObjects(level, clipboard, dx = 1, dy = 1) {
 
 export function validateDraft(level) {
   const fail = message => ({ok: false, message});
-  if (!level || typeof level !== 'object') return fail('Черновик не найден.');
+  if (!level || typeof level !== 'object') return fail(tr('Черновик не найден.'));
   if (typeof level.title !== 'string' || !level.title.trim() || level.title.length > 80)
-    return fail('Укажи название длиной от 1 до 80 символов.');
+    return fail(tr('Укажи название длиной от 1 до 80 символов.'));
   if (typeof level.description !== 'string' || level.description.length > 160)
-    return fail('Описание должно быть не длиннее 160 символов.');
+    return fail(tr('Описание должно быть не длиннее 160 символов.'));
   if (level.width !== LEVEL_WIDTH || level.height !== LEVEL_HEIGHT ||
       !Array.isArray(level.objects) || level.objects.length < 1 ||
       level.objects.length > MAX_LEVEL_OBJECTS)
-    return fail(`Нужен уровень с окном просмотра 16×10 и 1–${MAX_LEVEL_OBJECTS} объектами.`);
+    return fail(tr('Нужен уровень с окном просмотра 16×10 и 1–{0} объектами.', MAX_LEVEL_OBJECTS));
   const ids = new Set();
   let hasPlayer = false, hasGoal = false;
   for (const object of level.objects) {
     if (!object || !LEVEL_TYPES.includes(object.type) ||
         !Number.isInteger(object.id) || object.id < 1 || object.id > 1_000_000 || ids.has(object.id))
-      return fail('У объектов должны быть уникальные числовые ID.');
+      return fail(tr('У объектов должны быть уникальные числовые ID.'));
     ids.add(object.id);
     if (typeof object.name !== 'string' || object.name.length > 48 ||
         ![object.x, object.y, object.w, object.h, object.angle].every(finite) ||
@@ -427,11 +428,11 @@ export function validateDraft(level) {
         !rgb(object.color) ||
         !Number.isInteger(object.number) || object.number < 0 || object.number > 9999 ||
         typeof object.visible !== 'boolean')
-      return fail(`Проверь размеры, цвет и положение объекта «${TYPE_LABELS[object.type]}».`);
+      return fail(tr('Проверь размеры, цвет и положение объекта «{0}».', tr(TYPE_LABELS[object.type])));
     hasPlayer ||= object.type === 'player';
     hasGoal ||= object.type === 'goal';
     if (object.type === 'particle' && !validParticleEmitter(object.emitter))
-      return fail('Проверь параметры эмиттера частиц.');
+      return fail(tr('Проверь параметры эмиттера частиц.'));
     if (object.type === 'trigger') {
       const t = object.trigger;
       const kind = t?.kind || 'move';
@@ -473,10 +474,10 @@ export function validateDraft(level) {
           (specialKind && !validGroup && !directTargetConfigured) ||
           (recolorKind && !validGroup) ||
           (t.groupId !== undefined && !validGroup) || !validValues || !rgb(t.color))
-        return fail('Настрой триггер: событие, группу, действие и параметры.');
+        return fail(tr('Настрой триггер: событие, группу, действие и параметры.'));
     }
   }
-  if (!hasPlayer || !hasGoal) return fail('На уровне обязательны игрок и финиш.');
+  if (!hasPlayer || !hasGoal) return fail(tr('На уровне обязательны игрок и финиш.'));
   return {ok: true, message: ''};
 }
 
@@ -524,7 +525,7 @@ function recordObject(object) {
 export function publishedRecord(id, level) {
   const check = validateDraft(level);
   if (!check.ok) throw new Error(check.message);
-  if (!/^[1-9][0-9]{0,5}$/.test(id)) throw new Error('Некорректный ID публикации.');
+  if (!/^[1-9][0-9]{0,5}$/.test(id)) throw new Error(tr('Некорректный ID публикации.'));
   return {
     format: 'PVG3-PUBLISHED-LEVEL', version: 1, id,
     title: level.title.trim(), description: level.description,
@@ -535,7 +536,7 @@ export function publishedRecord(id, level) {
 }
 
 export function draftFromPublished(record) {
-  if (!isPublishedRecord(record)) throw new Error('Уровень имеет неподдерживаемый формат.');
+  if (!isPublishedRecord(record)) throw new Error(tr('Уровень имеет неподдерживаемый формат.'));
   const objects = record.project.objects.map(object => {
     const trigger = object.type === 'trigger' ? {...object.trigger,
       kind: TRIGGER_KINDS.includes(object.trigger?.kind) ? object.trigger.kind : 'move'} : object.trigger;
@@ -603,7 +604,7 @@ export function createTouchButtonState() {
 
 export function createPreviewState(level) {
   const player = level.objects.find(o => o.type === 'player');
-  if (!player) throw new Error('Уровень без игрока.');
+  if (!player) throw new Error(tr('Уровень без игрока.'));
   const objects = copy(level.objects);
   for (const object of objects)
     if (object.type === 'particle') object.emitter = normalizeParticleEmitter(object.emitter);
@@ -1116,11 +1117,11 @@ export function drawEditorCanvas(canvas, level, selectedId = 0, _tool = 'build',
   const cameraX = clamp(Number(camera?.x) || 0, -WORLD_LIMIT, WORLD_LIMIT - LEVEL_WIDTH);
   const cameraY = clamp(Number(camera?.y) || 0, -WORLD_LIMIT, WORLD_LIMIT - LEVEL_HEIGHT);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = '#172c40';ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#2e1a0a';ctx.fillRect(0, 0, canvas.width, canvas.height);
   const firstCol = Math.floor(cameraX), firstRow = Math.floor(cameraY);
   for (let c = firstCol; (c - cameraX) * TILE_W <= canvas.width; c++) {
     const x = Math.round((c - cameraX) * TILE_W);
-    ctx.strokeStyle = '#344b60';ctx.lineWidth = 1;
+    ctx.strokeStyle = '#5a3a1e';ctx.lineWidth = 1;
     ctx.beginPath();ctx.moveTo(x, 0);ctx.lineTo(x, canvas.height);ctx.stroke();
   }
   for (let r = firstRow; (r - cameraY) * TILE_H <= canvas.height; r++) {
@@ -1163,7 +1164,7 @@ export function drawEditorCanvas(canvas, level, selectedId = 0, _tool = 'build',
         o.type === 'hazard' ? SPIKE_VERTICES : null;
       ctx.save();ctx.translate(x + w / 2, y + h / 2);ctx.rotate(angle);
       ctx.scale(objectFlipX(o) ? -1 : 1, o.flipY ? -1 : 1);
-      ctx.strokeStyle = '#67b4c8';ctx.lineWidth = 4;
+      ctx.strokeStyle = '#00aaff';ctx.lineWidth = 4;
       if (silhouette) {
         ctx.beginPath();
         silhouette.forEach(([u, v], index) => {
@@ -1178,7 +1179,7 @@ export function drawEditorCanvas(canvas, level, selectedId = 0, _tool = 'build',
       }
       ctx.restore();
     }
-    ctx.fillStyle = '#10131d';ctx.font = '14px PTSans, sans-serif';
+    ctx.fillStyle = '#fff1d6';ctx.font = '14px PTSans, sans-serif';
     ctx.fillText(String(o.id), x + 4, y + 17);
   }
 }
@@ -1267,7 +1268,7 @@ export function drawParticleEmitterPreview(canvas, settings,
   const emitter = normalizeParticleEmitter(settings);
   ctx.clearRect(0, 0, width, height);
   ctx.fillStyle = '#03070b';ctx.fillRect(0, 0, width, height);
-  ctx.strokeStyle = '#203445';ctx.lineWidth = 1;
+  ctx.strokeStyle = '#5a3a1e';ctx.lineWidth = 1;
   ctx.strokeRect(1, 1, width - 2, height - 2);
   const centerX = width / 2, centerY = height * .68;
   const count = drawConfiguredParticleTrail(ctx, emitter, 17, Math.max(0, time),
@@ -1337,9 +1338,9 @@ export function drawPreviewCanvas(canvas, state, _control = 'keyboard', art = {}
   }
   const grassY = 590 - cameraY;
   if (grassY < canvas.height) {
-    ctx.fillStyle = '#8cb95c';ctx.fillRect(0, Math.max(64, grassY), canvas.width,
+    ctx.fillStyle = '#46c800';ctx.fillRect(0, Math.max(64, grassY), canvas.width,
       Math.max(0, canvas.height - Math.max(64, grassY)));
-    if (grassY >= 64) {ctx.fillStyle = '#344b60';ctx.fillRect(0, grassY, canvas.width, 3);}
+    if (grassY >= 64) {ctx.fillStyle = '#7e3600';ctx.fillRect(0, grassY, canvas.width, 3);}
   }
   for (const o of state.objects) {
     if (!o.visible || state.invisible?.includes(o.id) ||
@@ -1375,16 +1376,16 @@ export function drawPreviewCanvas(canvas, state, _control = 'keyboard', art = {}
       ctx.fillStyle = workshopObjectColor(player);
       ctx.fillRect(x, y, w, h);
       ctx.fillStyle = '#fff';ctx.fillRect(x + w * .2, y + h * .22, 8, 9);ctx.fillRect(x + w * .62, y + h * .22, 8, 9);
-      ctx.fillStyle = '#243b52';ctx.fillRect(x + w * .25, y + h * .24, 3, 5);ctx.fillRect(x + w * .67, y + h * .24, 3, 5);
+      ctx.fillStyle = '#2b1500';ctx.fillRect(x + w * .25, y + h * .24, 3, 5);ctx.fillRect(x + w * .67, y + h * .24, 3, 5);
     }
   }
-  ctx.fillStyle = '#172c40';ctx.fillRect(0, 0, canvas.width, 64);
+  ctx.fillStyle = '#2b1500';ctx.fillRect(0, 0, canvas.width, 64);
   ctx.fillStyle = '#fff';ctx.font = '22px PTSans, sans-serif';
-  ctx.fillText(`Монеты: ${state.coins}`, 24, 41);
+  ctx.fillText(tr('Монеты: {0}', state.coins), 24, 41);
   if (state.won) {
     ctx.fillStyle = 'rgba(0,0,0,.62)';ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = '#fff';ctx.font = 'bold 48px PTSans, sans-serif';ctx.textAlign = 'center';
-    ctx.fillText('Уровень пройден!', canvas.width / 2, canvas.height / 2);
+    ctx.fillText(tr('Уровень пройден!'), canvas.width / 2, canvas.height / 2);
     ctx.textAlign = 'left';
   }
 }

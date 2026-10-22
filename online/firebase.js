@@ -1,3 +1,4 @@
+import {t as tr} from './i18n.js';
 /* Firebase Realtime Database REST adapter. No SDK, password, API key, or
  * privileged service account is embedded in the website or the APK. Demo
  * rules must permit the relevant /rooms and public-level catalog operations. */
@@ -10,7 +11,7 @@ export const validId = id => typeof id === 'string' && /^[A-Z2-9]{6}$/.test(id);
 export const validLevelId = id => typeof id === 'string' && /^[1-9][0-9]{0,5}$/.test(id);
 
 class FirebaseError extends Error {
-  constructor(status, message) {super(message);this.status = status;}
+  constructor(status, message, code = '') {super(message);this.status = status;this.code = code;}
 }
 
 async function request(path, method = 'GET', body, ifMatch = '') {
@@ -29,16 +30,16 @@ async function request(path, method = 'GET', body, ifMatch = '') {
     });
     if (!response.ok) {
       if (response.status === 401 || response.status === 403)
-        throw new FirebaseError(response.status, 'Firebase запретил чтение или запись. Проверь правила Firebase.');
-      if (response.status === 412) throw new FirebaseError(412, 'Комната уже занята. Обнови список и попробуй снова.');
+        throw new FirebaseError(response.status, tr('Firebase запретил чтение или запись. Проверь правила Firebase.'));
+      if (response.status === 412) throw new FirebaseError(412, tr('Комната уже занята. Обнови список и попробуй снова.'), 'room-busy');
       throw new FirebaseError(response.status, `Firebase: HTTP ${response.status} (${(await response.text()).slice(0, 160)})`);
     }
     if (response.status === 204) return null;
     const text = await response.text();
     return text ? JSON.parse(text) : null;
   } catch (e) {
-    if (e.name === 'AbortError') throw new Error('Firebase не отвечает (таймаут). Проверь интернет.');
-    if (e instanceof TypeError) throw new Error('Нет соединения с Firebase. Проверь сеть или настройки доступа.');
+    if (e.name === 'AbortError') throw new Error(tr('Firebase не отвечает (таймаут). Проверь интернет.'));
+    if (e instanceof TypeError) throw new Error(tr('Нет соединения с Firebase. Проверь сеть или настройки доступа.'));
     throw e;
   } finally { clearTimeout(timeout); }
 }
@@ -86,7 +87,7 @@ export function decodeState(state) {
   return state;
 }
 export async function getRoom(id) {
-  if (!validId(id)) throw new Error('Неверный код комнаты.');
+  if (!validId(id)) throw new Error(tr('Неверный код комнаты.'));
   const room = await request(`${ROOM_PATH}/${id}`);
   if (room?.state) decodeState(room.state);
   return room;
@@ -101,25 +102,25 @@ export async function createRoom(playerId, map) {
       await request(`${ROOM_PATH}/${id}`, 'PUT', room, 'null_etag');
       return {id, room};
     } catch (e) {
-      if (e.message.includes('занята')) continue;
+      if (e.code === 'room-busy') continue;
       throw e;
     }
   }
-  throw new Error('Не удалось создать уникальный код комнаты.');
+  throw new Error(tr('Не удалось создать уникальный код комнаты.'));
 }
 export async function joinRoom(id, playerId) {
   const room = await getRoom(id);
   if (!room || room.version !== 1 || !room.host?.id || room.state || room.guest)
-    throw new Error('Комната закрыта, уже началась или занята.');
+    throw new Error(tr('Комната закрыта, уже началась или занята.'));
   const guest = {id: playerId, role: null, ping: Date.now()};
   await request(`${ROOM_PATH}/${id}/guest`, 'PUT', guest, 'null_etag');
   const joined = await getRoom(id);
-  if (!joined?.host?.id) throw new Error('Создатель закрыл комнату.');
+  if (!joined?.host?.id) throw new Error(tr('Создатель закрыл комнату.'));
   return joined;
 }
 export async function chooseRole(id, slot, role) {
   if (!validId(id) || !['host', 'guest'].includes(slot) || !['plants', 'zombies'].includes(role))
-    throw new Error('Неверная сторона.');
+    throw new Error(tr('Неверная сторона.'));
   return request(`${ROOM_PATH}/${id}/${slot}/role`, 'PUT', role);
 }
 export async function writeState(id, state) {
@@ -152,10 +153,10 @@ export async function listPublishedLevels() {
 }
 
 export async function getPublishedLevel(id) {
-  if (!validLevelId(id)) throw new Error('Неверный ID уровня.');
+  if (!validLevelId(id)) throw new Error(tr('Неверный ID уровня.'));
   const record = await request(`levels/${id}`);
-  if (!record) throw new Error('Уровень не найден в каталоге.');
-  if (!isPublishedRecord(record, id)) throw new Error('Уровень повреждён или его формат не поддерживается.');
+  if (!record) throw new Error(tr('Уровень не найден в каталоге.'));
+  if (!isPublishedRecord(record, id)) throw new Error(tr('Уровень повреждён или его формат не поддерживается.'));
   return record;
 }
 
@@ -184,11 +185,12 @@ export async function publishLevel(draft) {
       await request(`levels-index/${id}`, 'PUT', summary, 'null_etag');
     } catch (e) {
       const detail = e.status === 401 || e.status === 403 ?
-        'Firebase запретил запись в /levels-index. Проверь правила Firebase.' : e.message;
+        tr('Firebase запретил запись в /levels-index. Проверь правила Firebase.') : e.message;
       throw new FirebaseError(e.status || 0,
-        `Уровень ${id} сохранён, но не появился в каталоге: ${detail} Повтори публикацию позже или проверь права базы.`);
+        tr('Уровень {0} сохранён, но не появился в каталоге: {1} Повтори публикацию позже или проверь права базы.',
+           id, detail), 'level-saved-index-failed');
     }
     return {id, record};
   }
-  throw lastCollision || new Error('Не удалось подобрать свободный ID для уровня.');
+  throw lastCollision || new Error(tr('Не удалось подобрать свободный ID для уровня.'));
 }

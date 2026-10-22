@@ -18,28 +18,33 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* The interface is drawn in the same marker set as the author's artwork:
+ * pure black outlines, paper whites, sun yellow, coin orange, sky blue and
+ * the warm wood of the lawn map. No muted app-template colors. */
 #define C(hex) lv_color_hex(0x##hex)
-#define DARK C(20354B)
-#define INK C(243B52)
-#define PAPER C(F4F0E6)
-#define WHITE C(FFFDF8)
-#define LIGHT_GRAY C(DCE8EF)
-#define MUTED C(5D7287)
-#define BUTTON_WHITE C(FFFDF8)
-#define BUTTON_GRAY C(DCE8EF)
-#define BUTTON_BLACK C(243B52)
-#define BUTTON_TEXT C(243B52)
-#define BUTTON_LIGHT_TEXT C(FFFDF8)
-#define WS_BACKGROUND C(172C40)
-#define WS_GRID C(344B60)
-#define WS_BROWN C(8D604A)
-#define WS_BROWN_DARK C(624A45)
-#define WS_BROWN_LIGHT C(A9795A)
+#define DARK C(7E3600)
+#define INK C(2B1500)
+#define PAPER C(FFF1D6)
+#define WHITE C(FFFFFF)
+#define LIGHT_GRAY C(FFD24D)
+#define MUTED C(8A6A42)
+#define OUTLINE C(000000)
+#define BUTTON_WHITE C(FFFFFF)
+#define BUTTON_GRAY C(FFD24D)
+#define BUTTON_SOFT C(FCE9BE)
+#define BUTTON_BLACK C(522100)
+#define BUTTON_TEXT C(2B1500)
+#define BUTTON_LIGHT_TEXT C(FFF6E0)
+#define WS_BACKGROUND C(2E1A0A)
+#define WS_GRID C(5A3A1E)
+#define WS_BROWN C(A44700)
+#define WS_BROWN_DARK C(522100)
+#define WS_BROWN_LIGHT C(C06A1E)
 #define WS_CREAM C(FFF2D8)
-#define WS_ACCENT C(E68E70)
-#define WS_CYAN C(67B4C8)
-#define WS_YELLOW C(F1C56E)
-#define WS_RED C(D96F6A)
+#define WS_ACCENT C(FFAA00)
+#define WS_CYAN C(00AAFF)
+#define WS_YELLOW C(FFD24D)
+#define WS_RED C(D70000)
 #define WS_DARK_VALUE C(55454A)
 
 enum {
@@ -238,7 +243,7 @@ static lv_obj_t *box(lv_obj_t *parent, int x, int y, int w, int h, int radius,
     lv_obj_set_style_radius(o, radius, 0);
     if (w >= 22 && h >= 22) {
         lv_obj_set_style_border_width(o, 2, 0);
-        lv_obj_set_style_border_color(o, C(243B52), 0);
+        lv_obj_set_style_border_color(o, OUTLINE, 0);
         lv_obj_set_style_border_opa(o, LV_OPA_COVER, 0);
     }
     lv_obj_set_style_shadow_width(o, 0, 0);
@@ -276,7 +281,7 @@ static lv_obj_t *workshop_arrow_button(lv_obj_t *parent, int x, int y,
                                        lv_color_t face, int direction);
 
 static void button_palette(int action, lv_color_t *face, lv_color_t *text) {
-    *face = BUTTON_GRAY;
+    *face = BUTTON_SOFT;
     *text = BUTTON_TEXT;
     switch (action) {
     case U_MENU_BACK: case U_SEARCH_CLOSE: case U_ROOMS_BACK:
@@ -324,7 +329,7 @@ static lv_obj_t *button(lv_obj_t *parent, int x, int y, int w, int h,
     lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(o, 5, 0);
     lv_obj_set_style_border_width(o, 3, 0);
-    lv_obj_set_style_border_color(o, C(243B52), 0);
+    lv_obj_set_style_border_color(o, OUTLINE, 0);
     lv_obj_set_style_border_opa(o, LV_OPA_COVER, 0);
     lv_obj_set_style_shadow_width(o, 0, 0);
     lv_obj_set_style_bg_color(o, button_face, LV_STATE_PRESSED);
@@ -401,7 +406,7 @@ static void duck_art(lv_obj_t *parent, int cx, int cy, int size, int variant) {
 static void header(lv_obj_t *root, const char *title, const char *back,
                    int action) {
     /* One large heading instead of three stacked lines of tiny explanations. */
-    box(root, 0, 0, GAME_W, 148, 0, back ? BUTTON_GRAY : DARK, 0);
+    box(root, 0, 0, GAME_W, 148, 0, back ? BUTTON_SOFT : DARK, 0);
     box(root, 0, 145, GAME_W, 4, 0, back ? BUTTON_BLACK : LIGHT_GRAY, 0);
     label(root, 70, 46, back ? 940 : 1120, 71, title, 4,
           back ? INK : WHITE, LV_TEXT_ALIGN_LEFT);
@@ -418,7 +423,7 @@ static void menu_screen(lv_obj_t *root) {
     button(root, 945, 51, 285, 64, "Уровни игроков", 1,
            U_CUSTOM_CATALOG);
     /* The characters stand together on the lawn, not in three square frames. */
-    box(root, 55, 176, 1170, 355, 34, C(F1EFE8), 0);
+    box(root, 55, 176, 1170, 355, 34, PAPER, 0);
     art(root, PV_ART_BREAD, 250, 322, 228);
     art(root, PV_ART_DIMA, 640, 324, 230);
     art(root, PV_ART_KIRILL, 1029, 322, 225);
@@ -457,8 +462,8 @@ static void levels_screen(lv_obj_t *root) {
 static void garden_screen(lv_obj_t *root) {
     GameOfflineUIState state;
     game_offline_ui_snapshot(&state);
-    box(root, 0, 0, 1280, 121, 0, BUTTON_GRAY, 0);
-    box(root, 0, 118, 1280, 3, 0, C(8195A4), 0);
+    box(root, 0, 0, 1280, 121, 0, BUTTON_SOFT, 0);
+    box(root, 0, 118, 1280, 3, 0, OUTLINE, 0);
     label(root, 12, 3, 232, 36, "Сад Дзен", 2, INK, LV_TEXT_ALIGN_LEFT);
     lv_obj_t *plants = button(root, 6, 42, 112, 31, "Растения", 0, U_GARDEN_PLANTS);
     lv_obj_t *geese = button(root, 128, 42, 112, 31, "Гуси", 0, U_GARDEN_GEESE);
@@ -529,7 +534,7 @@ static void book_screen(lv_obj_t *root) {
           LV_TEXT_ALIGN_CENTER);
     /* A picture book, not a tiny stats table: prices, timers and HP live in
      * the combat rules, while these two large lines explain the characters. */
-    box(root, 616, 477, 594, 186, 23, C(E7E7E7), 0);
+    box(root, 616, 477, 594, 186, 23, PAPER, 0);
     label(root, 642, 494, 542, 77, entry.description, 2, INK,
           LV_TEXT_ALIGN_CENTER);
     label(root, 642, 575, 542, 78, entry.detail, 2, INK,
@@ -542,7 +547,7 @@ static void intro_screen(lv_obj_t *root) {
     lv_obj_t *advance = button(root, 0, 121, 1280, 599, "", 0, U_INTRO_NEXT);
     lv_obj_set_style_bg_opa(advance, LV_OPA_TRANSP, 0);
     lv_obj_set_style_shadow_width(advance, 0, 0);
-    box(root, 0, 0, 1280, 121, 0, BUTTON_GRAY, 0);
+    box(root, 0, 0, 1280, 121, 0, BUTTON_SOFT, 0);
     box(root, 0, 118, 1280, 3, 0, BUTTON_BLACK, 0);
     label(root, 69, 40, 872, 57, "Уровень 0 · история Кирилла", 3,
           INK, LV_TEXT_ALIGN_LEFT);
@@ -567,10 +572,10 @@ static void packet(lv_obj_t *root, int y, int image_id, int duck_variant,
     if (dragging) lv_obj_set_style_border_width(slot, 5, 0);
     lv_obj_set_style_shadow_width(slot, 0, 0);
     if (dragging) {
-        lv_obj_t *ring = box(slot, 10, 5, 94, 94, 47, C(243B52), 0);
+        lv_obj_t *ring = box(slot, 10, 5, 94, 94, 47, INK, 0);
         lv_obj_set_style_bg_opa(ring, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(ring, 4, 0);
-        lv_obj_set_style_border_color(ring, C(243B52), 0);
+        lv_obj_set_style_border_color(ring, OUTLINE, 0);
     }
     if (duck_variant >= 0) duck_art(slot, 57, 51, 94, duck_variant);
     else art(slot, image_id, 57, 51, 94);
@@ -584,7 +589,7 @@ static void play_screen(lv_obj_t *root) {
     game_offline_ui_snapshot(&state);
     box(root, 0, 0, 1280, 121, 0, DARK, 0);
     box(root, 0, 118, 1280, 3, 0, LIGHT_GRAY, 0);
-    box(root, 0, 121, 246, 599, 0, BUTTON_GRAY, 0);
+    box(root, 0, 121, 246, 599, 0, BUTTON_SOFT, 0);
     art(root, PV_ART_COIN, 40, 82, 40);
     char coins[25];snprintf(coins, sizeof coins, "%d", state.coins);
     label(root, 72, 53, 157, 58, coins, 3, WHITE, LV_TEXT_ALIGN_LEFT);
@@ -607,7 +612,7 @@ static void play_screen(lv_obj_t *root) {
 }
 
 static void result_screen(lv_obj_t *root, int phase) {
-    lv_obj_t *veil = box(root, 0, 0, 1280, 720, 0, C(314A60), 0);
+    lv_obj_t *veil = box(root, 0, 0, 1280, 720, 0, INK, 0);
     lv_obj_set_style_bg_opa(veil, LV_OPA_80, 0);
     box(root, 307, 157, 666, 487, 27, PAPER, 1);
     const char *title = phase == GAME_LEVEL_CLEAR ? "Уровень пройден!" :
@@ -635,7 +640,7 @@ static void rooms_screen(lv_obj_t *root, const OnNetView *v) {
     button_fill(water, chosen_map == 5 ? BUTTON_GRAY : BUTTON_WHITE);
     lv_obj_set_style_border_width(chosen_map == 1 ? lawn : water, 5, 0);
     lv_obj_set_style_border_color(chosen_map == 1 ? lawn : water,
-                                  C(243B52), 0);
+                                  OUTLINE, 0);
     button(root, 650, 179, 187, 62, "Поиск", 2, U_SEARCH);
     button(root, 856, 179, 208, 62, "+ Создать", 2, U_CREATE);
     button(root, 1070, 179, 149, 62, "Мастерская", 1, U_MENU_WORKSHOP);
@@ -643,7 +648,7 @@ static void rooms_screen(lv_obj_t *root, const OnNetView *v) {
     label(root, 70, 286, 660, 52, "Свободные комнаты", 3, INK,
           LV_TEXT_ALIGN_LEFT);
     button(root, 1027, 284, 193, 48, "Обновить", 2, U_REFRESH);
-    box(root, 69, 341, 1142, 2, 0, C(BDBDBD), 0);
+    box(root, 69, 341, 1142, 2, 0, MUTED, 0);
     if (v->room_count == 0) {
         art(root, PV_ART_PEA, 544, 417, 118);
         art(root, PV_ART_DUCK, 740, 418, 116);
@@ -684,7 +689,7 @@ static void rooms_screen(lv_obj_t *root, const OnNetView *v) {
         }
     }
     if (!search_open) return;
-    lv_obj_t *veil = box(root, 0, 0, 1280, 720, 0, C(314A60), 0);
+    lv_obj_t *veil = box(root, 0, 0, 1280, 720, 0, INK, 0);
     lv_obj_set_style_bg_opa(veil, LV_OPA_80, 0);
     box(root, 216, 72, 848, 611, 26, PAPER, 1);
     label(root, 259, 111, 590, 58, "Найти комнату по коду", 3, INK,
@@ -697,7 +702,7 @@ static void rooms_screen(lv_obj_t *root, const OnNetView *v) {
         box(root, x, 207, 75, 64, 12, WHITE, 0);
         char letter[2] = {i < (int)len ? search_code[i] : ' ', 0};
         label(root, x, 216, 75, 51, letter, 3, INK, LV_TEXT_ALIGN_CENTER);
-        if (i >= (int)len) box(root, x + 27, 260, 22, 2, 0, C(8195A4), 0);
+        if (i >= (int)len) box(root, x + 27, 260, 22, 2, 0, INK, 0);
     }
     button(root, 844, 207, 148, 64, "Стереть", 1, U_SEARCH_ERASE);
     const char *keys = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -712,7 +717,7 @@ static void rooms_screen(lv_obj_t *root, const OnNetView *v) {
               MUTED, LV_TEXT_ALIGN_CENTER);
     lv_obj_t *join = button(root, 395, 599, 490, 64,
                             "Войти в комнату", 2, U_SEARCH_GO);
-    if (len != 6) button_fill(join, BUTTON_GRAY);
+    if (len != 6) button_fill(join, BUTTON_SOFT);
 }
 
 static void custom_levels_screen(lv_obj_t *root, const OnNetView *v) {
@@ -743,8 +748,8 @@ static void custom_levels_screen(lv_obj_t *root, const OnNetView *v) {
             lv_obj_t *card = button(root, x, y, 548, 78, "", 1,
                                     U_CUSTOM_LEVEL_BASE + i);
             lv_obj_set_style_border_width(card, 3, 0);
-            lv_obj_set_style_border_color(card, C(243B52), 0);
-            box(card, 13, 15, 90, 47, 10, BUTTON_GRAY, 0);
+            lv_obj_set_style_border_color(card, OUTLINE, 0);
+            box(card, 13, 15, 90, 47, 10, BUTTON_SOFT, 0);
             lv_obj_t *id_label = label(card, 15, 17, 86, 43,
                   v->levels[index].id, 1, BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
             lv_label_set_long_mode(id_label, LV_LABEL_LONG_MODE_CLIP);
@@ -839,7 +844,10 @@ static void workshop_reset_draft(void) {
     workshop_color_set = workshop_color_index = 0;
     workshop_draft_exists = 0;
     workshop_name[0] = 0;workshop_description[0] = 0;
-    snprintf(workshop_name, sizeof workshop_name, "%s", "Новый уровень");
+    /* A fresh draft starts titled in the interface language; the saved title
+     * itself is user content and stays as typed. */
+    snprintf(workshop_name, sizeof workshop_name, "%s",
+             font_translate("Новый уровень"));
 }
 
 static void workshop_home_screen(lv_obj_t *root) {
@@ -1589,7 +1597,7 @@ static void workshop_build_preview(OnPublishedLevel *level) {
 }
 
 static void workshop_dialog_shade(lv_obj_t *root) {
-    lv_obj_t *shade = box(root, 0, 0, GAME_W, GAME_H, 0, C(20354B), 0);
+    lv_obj_t *shade = box(root, 0, 0, GAME_W, GAME_H, 0, INK, 0);
     lv_obj_set_style_bg_opa(shade, LV_OPA_80, 0);
     lv_obj_set_style_border_width(shade, 0, 0);
     lv_obj_add_flag(shade, LV_OBJ_FLAG_CLICKABLE);
@@ -1612,12 +1620,12 @@ static void workshop_draw_group_dialog(lv_obj_t *root) {
     for (int i = 0; i < 4; ++i) {
         label(root, 218, tops[i] + 7, 232, 44, names[i], 2,
               WS_CREAM, LV_TEXT_ALIGN_LEFT);
-        workshop_button(root, 481, tops[i], 58, 54, "−", 2, dec[i], BUTTON_GRAY);
+        workshop_button(root, 481, tops[i], 58, 54, "−", 2, dec[i], BUTTON_SOFT);
         char text[24];snprintf(text, sizeof text, "%d", values[i]);
         box(root, 547, tops[i], 136, 54, 8, WS_DARK_VALUE, 0);
         label(root, 550, tops[i] + 6, 130, 42, text, 2,
               WS_CREAM, LV_TEXT_ALIGN_CENTER);
-        workshop_button(root, 691, tops[i], 58, 54, "+", 2, inc[i], BUTTON_GRAY);
+        workshop_button(root, 691, tops[i], 58, 54, "+", 2, inc[i], BUTTON_SOFT);
     }
     workshop_button(root, 803, 388, 205, 59, "+  Добавить группу", 1,
                     U_WORKSHOP_ADD_GROUP, WS_CYAN);
@@ -1629,7 +1637,7 @@ static void workshop_draw_group_dialog(lv_obj_t *root) {
         int x = 198 + i * 88;
         workshop_button(root, x, 530, 80, 52, layers[i], 0,
                         U_WORKSHOP_LAYER_BASE + i,
-                        workshop_layer == i ? WS_CYAN : BUTTON_GRAY);
+                        workshop_layer == i ? WS_CYAN : BUTTON_SOFT);
     }
     workshop_button(root, 500, 620, 280, 61, "ОК", 3,
                     U_WORKSHOP_DIALOG_OK, WS_ACCENT);
@@ -1686,7 +1694,7 @@ static lv_obj_t *workshop_slider(lv_obj_t *root, int x, int y, int w, int h,
     lv_slider_set_value(slider, value, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(slider, WS_DARK_VALUE, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(slider, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_border_color(slider, C(243B52), LV_PART_MAIN);
+    lv_obj_set_style_border_color(slider, OUTLINE, LV_PART_MAIN);
     lv_obj_set_style_border_width(slider, 2, LV_PART_MAIN);
     lv_obj_set_style_radius(slider, 9, LV_PART_MAIN);
     lv_obj_set_style_bg_color(slider, WS_YELLOW, LV_PART_INDICATOR);
@@ -1694,7 +1702,7 @@ static lv_obj_t *workshop_slider(lv_obj_t *root, int x, int y, int w, int h,
     lv_obj_set_style_radius(slider, 9, LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(slider, WS_CREAM, LV_PART_KNOB);
     lv_obj_set_style_bg_opa(slider, LV_OPA_COVER, LV_PART_KNOB);
-    lv_obj_set_style_border_color(slider, C(243B52), LV_PART_KNOB);
+    lv_obj_set_style_border_color(slider, OUTLINE, LV_PART_KNOB);
     lv_obj_set_style_border_width(slider, 2, LV_PART_KNOB);
     lv_obj_set_style_width(slider, 24, LV_PART_KNOB);
     lv_obj_set_style_height(slider, 24, LV_PART_KNOB);
@@ -1707,7 +1715,7 @@ static lv_obj_t *workshop_slider(lv_obj_t *root, int x, int y, int w, int h,
 static void workshop_lock_option(lv_obj_t *root, int x, int y, int label_width,
                                  const char *text, int code, int active) {
     workshop_button(root, x, y, 44, 44, active ? "X" : "", 1, code,
-                    active ? WS_CYAN : BUTTON_GRAY);
+                    active ? WS_CYAN : BUTTON_SOFT);
     label(root, x + 54, y + 2, label_width, 40, text, 0,
           WS_CREAM, LV_TEXT_ALIGN_LEFT);
 }
@@ -1805,29 +1813,29 @@ static void workshop_draw_move_dialog(lv_obj_t *root) {
     label(root, 735, 361, 143, 42, "Плавность", 2,
           WS_YELLOW, LV_TEXT_ALIGN_CENTER);
     workshop_button(root, 884, 356, 52, 52, "‹", 2,
-                    U_WORKSHOP_EASE_PREV, BUTTON_GRAY);
+                    U_WORKSHOP_EASE_PREV, BUTTON_SOFT);
     static const char *const easing_names[] = {"Нет", "Вход", "Выход", "Плавно"};
     box(root, 943, 356, 183, 52, 8, WS_DARK_VALUE, 0);
     label(root, 947, 361, 175, 42, easing_names[workshop_easing & 3], 2,
           WS_CREAM, LV_TEXT_ALIGN_CENTER);
     workshop_button(root, 1132, 356, 52, 52, "›", 2,
-                    U_WORKSHOP_EASE_NEXT, BUTTON_GRAY);
+                    U_WORKSHOP_EASE_NEXT, BUTTON_SOFT);
 
     workshop_button(root, 145, 463, 187, 56, "Касание", 1,
-                    U_WORKSHOP_TOUCH, workshop_touch ? WS_CYAN : BUTTON_GRAY);
+                    U_WORKSHOP_TOUCH, workshop_touch ? WS_CYAN : BUTTON_SOFT);
     workshop_button(root, 345, 463, 187, 56, "Появление", 1,
-                    U_WORKSHOP_SPAWN, workshop_spawn ? WS_CYAN : BUTTON_GRAY);
+                    U_WORKSHOP_SPAWN, workshop_spawn ? WS_CYAN : BUTTON_SOFT);
     workshop_button(root, 545, 463, 187, 56, "Без звука", 1,
-                    U_WORKSHOP_SILENT, workshop_silent ? WS_CYAN : BUTTON_GRAY);
+                    U_WORKSHOP_SILENT, workshop_silent ? WS_CYAN : BUTTON_SOFT);
     label(root, 790, 450, 374, 40, "ID целевой группы", 2,
           WS_YELLOW, LV_TEXT_ALIGN_CENTER);
     workshop_button(root, 841, 493, 56, 52, "−", 2,
-                    U_WORKSHOP_GROUP_DEC, BUTTON_GRAY);
+                    U_WORKSHOP_GROUP_DEC, BUTTON_SOFT);
     snprintf(value, sizeof value, "%d", workshop_target_group);
     box(root, 906, 493, 153, 52, 8, WS_DARK_VALUE, 0);
     label(root, 909, 499, 147, 40, value, 2, WS_CREAM, LV_TEXT_ALIGN_CENTER);
     workshop_button(root, 1068, 493, 56, 52, "+", 2,
-                    U_WORKSHOP_GROUP_INC, BUTTON_GRAY);
+                    U_WORKSHOP_GROUP_INC, BUTTON_SOFT);
     workshop_button(root, 500, 608, 280, 64, "ОК", 3,
                     U_WORKSHOP_DIALOG_OK, WS_ACCENT);
 }
@@ -2157,12 +2165,12 @@ static void workshop_draw_trigger_dialog(lv_obj_t *root) {
     label(root, 130, 58, 1018, 50, title, 3, WS_CREAM, LV_TEXT_ALIGN_CENTER);
     label(root, 158, 151, 260, 42, "Событие", 2, WS_YELLOW, LV_TEXT_ALIGN_LEFT);
     workshop_button(root, 433, 144, 66, 58, "‹", 2,
-                    U_WORKSHOP_TRIGGER_EVENT_PREV, BUTTON_GRAY);
+                    U_WORKSHOP_TRIGGER_EVENT_PREV, BUTTON_SOFT);
     box(root, 507, 144, 330, 58, 8, WS_DARK_VALUE, 0);
     label(root, 514, 151, 316, 44, events[o->trigger_event % 4], 2,
           WS_CREAM, LV_TEXT_ALIGN_CENTER);
     workshop_button(root, 845, 144, 66, 58, "›", 2,
-                    U_WORKSHOP_TRIGGER_EVENT_NEXT, BUTTON_GRAY);
+                    U_WORKSHOP_TRIGGER_EVENT_NEXT, BUTTON_SOFT);
     char value[32];
     if (o->trigger_kind == ON_TRIGGER_KIND_GRAVITY) {
         label(root, 158, 229, 310, 42, "Сила гравитации", 2,
@@ -2232,7 +2240,7 @@ static void workshop_draw_trigger_dialog(lv_obj_t *root) {
     for (int i = 0; i < 8; ++i)
         workshop_button(root, trigger_x[i], trigger_y[i], 220, 40, trigger_names[i], 0,
                         U_WORKSHOP_TRIGGER_BASE + i,
-                        o->trigger_kind == i ? WS_CYAN : BUTTON_GRAY);
+                        o->trigger_kind == i ? WS_CYAN : BUTTON_SOFT);
     workshop_button(root, 500, 596, 280, 64, "ОК", 3,
                     U_WORKSHOP_DIALOG_OK, WS_ACCENT);
 }
@@ -2315,7 +2323,7 @@ static void workshop_draw_particle_dialog(lv_obj_t *root) {
         toggle_text[i] = toggle_storage[i];
         workshop_button(root, toggle_x[i], 119, 158, 47, toggle_text[i], 0,
             U_WORKSHOP_PARTICLE_BASE + i,
-            toggle_values[i] ? WS_CYAN : BUTTON_GRAY);
+            toggle_values[i] ? WS_CYAN : BUTTON_SOFT);
     }
     char value[40];
     struct ParticleSliderRow {
@@ -2354,7 +2362,7 @@ static void workshop_draw_particle_dialog(lv_obj_t *root) {
             rows[i].min, rows[i].max, rows[i].value, rows[i].code);
     }
     workshop_button(root, 68, 559, 197, 48, "Сбросить настройки", 0,
-                    U_WORKSHOP_PARTICLE_BASE + 4, BUTTON_GRAY);
+                    U_WORKSHOP_PARTICLE_BASE + 4, BUTTON_SOFT);
     box(root, 765, 120, 452, 480, 9, WS_BROWN_DARK, 0);
     label(root, 788, 133, 405, 34, "ПРЕДПРОСМОТР", 1,
           WS_YELLOW, LV_TEXT_ALIGN_CENTER);
@@ -2370,7 +2378,7 @@ static void workshop_draw_particle_dialog(lv_obj_t *root) {
     lv_color_t emitter_color = lv_color_hex(
         workshop_colors[object->color_set % 4][object->color_index % 8]);
     box(root, 973, 401, 44, 44, 22, emitter_color, 0);
-    label(root, 973, 400, 44, 46, "P", 1, C(243B52), LV_TEXT_ALIGN_CENTER);
+    label(root, 973, 400, 44, 46, "P", 1, BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
     workshop_button(root, 510, 632, 260, 55, "Готово", 2,
                     U_WORKSHOP_DIALOG_OK, WS_ACCENT);
 }
@@ -2393,9 +2401,9 @@ static void workshop_draw_transform_dialog(lv_obj_t *root) {
     workshop_button(root, 416, 155, 252, 64, value, 2,
                     U_WORKSHOP_OBJECT_WIDTH_EDIT, WS_DARK_VALUE);
     workshop_button(root, 683, 155, 78, 64, "- 0.1", 1,
-                    U_WORKSHOP_SCALE_BASE, BUTTON_GRAY);
+                    U_WORKSHOP_SCALE_BASE, BUTTON_SOFT);
     workshop_button(root, 770, 155, 78, 64, "+ 0.1", 1,
-                    U_WORKSHOP_SCALE_BASE + 1, BUTTON_GRAY);
+                    U_WORKSHOP_SCALE_BASE + 1, BUTTON_SOFT);
 
     label(root, 195, 258, 220, 46, "Высота", 2, WS_YELLOW,
           LV_TEXT_ALIGN_LEFT);
@@ -2403,9 +2411,9 @@ static void workshop_draw_transform_dialog(lv_obj_t *root) {
     workshop_button(root, 416, 249, 252, 64, value, 2,
                     U_WORKSHOP_OBJECT_HEIGHT_EDIT, WS_DARK_VALUE);
     workshop_button(root, 683, 249, 78, 64, "- 0.1", 1,
-                    U_WORKSHOP_SCALE_BASE + 2, BUTTON_GRAY);
+                    U_WORKSHOP_SCALE_BASE + 2, BUTTON_SOFT);
     workshop_button(root, 770, 249, 78, 64, "+ 0.1", 1,
-                    U_WORKSHOP_SCALE_BASE + 3, BUTTON_GRAY);
+                    U_WORKSHOP_SCALE_BASE + 3, BUTTON_SOFT);
 
     label(root, 195, 352, 220, 46, "Угол, градусы", 2, WS_YELLOW,
           LV_TEXT_ALIGN_LEFT);
@@ -2413,10 +2421,10 @@ static void workshop_draw_transform_dialog(lv_obj_t *root) {
     workshop_button(root, 416, 343, 252, 64, value, 2,
                     U_WORKSHOP_OBJECT_ANGLE_EDIT, WS_DARK_VALUE);
     workshop_rotation_button(root, 683, 343, 78, 64,
-                             U_WORKSHOP_ROTATE_BASE, BUTTON_GRAY, -1,
+                             U_WORKSHOP_ROTATE_BASE, BUTTON_SOFT, -1,
                              "-45°", 0);
     workshop_rotation_button(root, 770, 343, 78, 64,
-                             U_WORKSHOP_ROTATE_BASE + 1, BUTTON_GRAY, 1,
+                             U_WORKSHOP_ROTATE_BASE + 1, BUTTON_SOFT, 1,
                              "+45°", 0);
 
     workshop_button(root, 500, 578, 280, 64, "Готово", 3,
@@ -2669,13 +2677,13 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
     label(root, 769, 140, 450, 36, "РЕЖИМ РЕДАКТОРА", 1,
           WS_YELLOW, LV_TEXT_ALIGN_LEFT);
     workshop_button(root, 760, 181, 108, 56, "Строить", 0,
-                    U_WORKSHOP_BUILD, workshop_tool == WS_TOOL_BUILD ? WS_CYAN : BUTTON_GRAY);
+                    U_WORKSHOP_BUILD, workshop_tool == WS_TOOL_BUILD ? WS_CYAN : BUTTON_SOFT);
     workshop_button(root, 875, 181, 108, 56, "Выбрать", 0,
-                    U_WORKSHOP_EDITMODE, workshop_tool == WS_TOOL_EDIT ? WS_CYAN : BUTTON_GRAY);
+                    U_WORKSHOP_EDITMODE, workshop_tool == WS_TOOL_EDIT ? WS_CYAN : BUTTON_SOFT);
     workshop_button(root, 990, 181, 108, 56, "Мульти", 0,
-                    U_WORKSHOP_MULTIMODE, workshop_tool == WS_TOOL_MULTI ? WS_CYAN : BUTTON_GRAY);
+                    U_WORKSHOP_MULTIMODE, workshop_tool == WS_TOOL_MULTI ? WS_CYAN : BUTTON_SOFT);
     workshop_button(root, 1105, 181, 108, 56, "Удалить", 0,
-                    U_WORKSHOP_DELETE, workshop_tool == WS_TOOL_DELETE ? WS_CYAN : BUTTON_GRAY);
+                    U_WORKSHOP_DELETE, workshop_tool == WS_TOOL_DELETE ? WS_CYAN : BUTTON_SOFT);
     label(root, 769, 250, 450, 31, "ВЫБРАННЫЙ ОБЪЕКТ", 1,
           WS_YELLOW, LV_TEXT_ALIGN_LEFT);
     char object_info[110], object_position[64];
@@ -2722,13 +2730,13 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
                     selected_particle ? "Настроить P" :
                     selected_trigger ? "Настроить" : "Движение", 0,
                     selected_particle ? U_WORKSHOP_PARTICLE_PANEL :
-                    U_WORKSHOP_MOVE_PANEL, selected_particle ? WS_CYAN : BUTTON_GRAY);
+                    U_WORKSHOP_MOVE_PANEL, selected_particle ? WS_CYAN : BUTTON_SOFT);
     workshop_button(root, 917, 336, 140, 50, "Группа", 0,
-                    U_WORKSHOP_GROUP_PANEL, BUTTON_GRAY);
+                    U_WORKSHOP_GROUP_PANEL, BUTTON_SOFT);
     int can_manually_recolor = workshop_selection_can_manually_recolor();
     lv_obj_t *color_button = workshop_button(root, 1068, 336, 154, 50, "Цвет", 0,
                     U_WORKSHOP_COLOR_PANEL,
-                    can_manually_recolor ? BUTTON_GRAY : C(8195A4));
+                    can_manually_recolor ? BUTTON_SOFT : C(8195A4));
     if (!can_manually_recolor) lv_obj_add_state(color_button, LV_STATE_DISABLED);
     int show_block_variants = workshop_palette_type == ON_LEVEL_BLOCK &&
                               workshop_tool == WS_TOOL_BUILD;
@@ -2751,7 +2759,7 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
         for (int i = 0; i < 3; ++i)
             workshop_button(root, block_x[i], 420, 148, 38, block_names[i], 0,
                             U_WORKSHOP_BLOCK_VARIANT_BASE + i,
-                            workshop_block_variant == block_types[i] ? WS_CYAN : BUTTON_GRAY);
+                            workshop_block_variant == block_types[i] ? WS_CYAN : BUTTON_SOFT);
     }
     if (show_trigger_variants) {
         label(root, 769, 394, 448, 27, "ВАРИАНТЫ ТРИГГЕРА", 0,
@@ -2765,7 +2773,7 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
         for (int i = 0; i < 8; ++i)
             workshop_button(root, trigger_x[i], trigger_y[i], 108, 38,
                             trigger_names[i], 0, U_WORKSHOP_TRIGGER_BASE + i,
-                            workshop_trigger_kind == i ? WS_CYAN : BUTTON_GRAY);
+                            workshop_trigger_kind == i ? WS_CYAN : BUTTON_SOFT);
     }
     if (show_orb_variants) {
         label(root, 769, 394, 448, 27, "ВАРИАНТЫ ОРБА", 0,
@@ -2776,7 +2784,7 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
         for (int i = 0; i < 2; ++i)
             workshop_button(root, orb_x[i], 420, 222, 38, orb_names[i], 0,
                             U_WORKSHOP_ORB_VARIANT_BASE + i,
-                            workshop_orb_variant == orb_types[i] ? WS_CYAN : BUTTON_GRAY);
+                            workshop_orb_variant == orb_types[i] ? WS_CYAN : BUTTON_SOFT);
     }
     if (show_goal_variants) {
         label(root, 769, 394, 448, 27, "ЦЕЛИ", 0,
@@ -2787,7 +2795,7 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
         for (int i = 0; i < 2; ++i)
             workshop_button(root, goal_x[i], 420, 222, 38, goal_names[i], 0,
                             U_WORKSHOP_GOAL_VARIANT_BASE + i,
-                            workshop_goal_variant == goal_types[i] ? WS_CYAN : BUTTON_GRAY);
+                            workshop_goal_variant == goal_types[i] ? WS_CYAN : BUTTON_SOFT);
     }
     if (show_portal_variants) {
         label(root, 769, 394, 448, 27, "ВАРИАНТЫ ПОРТАЛА", 0,
@@ -2802,7 +2810,7 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
                             portal_names[i], 0,
                             U_WORKSHOP_PORTAL_VARIANT_BASE + i,
                             workshop_portal_variant == portal_types[i] ?
-                            WS_CYAN : BUTTON_GRAY);
+                            WS_CYAN : BUTTON_SOFT);
     }
     char camera_label[48];
     snprintf(camera_label, sizeof camera_label, "Карта X %d  Y %d",
@@ -2831,14 +2839,14 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
         int art_id = workshop_object_art(palette_types[i], workshop_trigger_kind);
         workshop_button(root, x, 565, 72, 62, "", 0,
                         U_WORKSHOP_PALETTE_BASE + i,
-                        workshop_palette_type == palette_types[i] ? WS_CYAN : BUTTON_GRAY);
+                        workshop_palette_type == palette_types[i] ? WS_CYAN : BUTTON_SOFT);
         if (art_id >= 0) art(root, art_id, x + 36, 581, 24);
         label(root, x + 1, 600, 70, 22, palette_names[i], 0,
               BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
     }
     workshop_button(root, 724, 565, 38, 62, "P", 2,
                     U_WORKSHOP_PALETTE_BASE + 9,
-                    workshop_palette_type == ON_LEVEL_PARTICLE ? WS_CYAN : BUTTON_GRAY);
+                    workshop_palette_type == ON_LEVEL_PARTICLE ? WS_CYAN : BUTTON_SOFT);
     label(root, 43, 637, 193, 28, "ДВИГАТЬ ОБЪЕКТЫ", 0,
           WS_YELLOW, LV_TEXT_ALIGN_LEFT);
     workshop_nudge_button(root, 43, 666, 46, 44,
@@ -2875,9 +2883,9 @@ static void workshop_editor_screen(lv_obj_t *root, const OnNetView *view) {
               LV_TEXT_ALIGN_CENTER);
     }
     workshop_button(root, 749, 670, 118, 43, "Копировать", 0,
-                    U_WORKSHOP_COPY, BUTTON_GRAY);
+                    U_WORKSHOP_COPY, BUTTON_SOFT);
     workshop_button(root, 873, 670, 118, 43, "Вставить", 0,
-                    U_WORKSHOP_PASTE, BUTTON_GRAY);
+                    U_WORKSHOP_PASTE, BUTTON_SOFT);
     workshop_button(root, 997, 670, 118, 43, "Удалить", 0,
                     U_WORKSHOP_DELETE_SELECTED, WS_RED);
     workshop_button(root, 1121, 670, 128, 43, "Размер/угол", 0,
@@ -3161,7 +3169,7 @@ static void vector_arrow(lv_obj_t *parent, int x, int y, int direction) {
 
 static void custom_platformer_screen(lv_obj_t *root) {
     lv_obj_set_style_bg_opa(root, LV_OPA_TRANSP, 0);
-    lv_obj_t *bar = box(root, 0, 0, GAME_W, 103, 0, BUTTON_GRAY, 0);
+    lv_obj_t *bar = box(root, 0, 0, GAME_W, 103, 0, BUTTON_SOFT, 0);
     lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
     OnNetView view;
     on_net_view(&view);
@@ -3184,23 +3192,23 @@ static void custom_platformer_screen(lv_obj_t *root) {
 
     lv_obj_t *trigger = box(root, 910, 567, 128, 99, 19, BUTTON_WHITE, 1);
     lv_obj_set_style_border_width(trigger, 2, 0);
-    lv_obj_set_style_border_color(trigger, C(243B52), 0);
+    lv_obj_set_style_border_color(trigger, OUTLINE, 0);
     label(trigger, 5, 21, 118, 56, "ДЕЙСТВИЕ", 1, BUTTON_TEXT,
           LV_TEXT_ALIGN_CENTER);
     if (!game_custom_jetpack_mode()) {
-        lv_obj_t *jump = box(root, 1081, 525, 169, 169, 84, BUTTON_GRAY, 1);
+        lv_obj_t *jump = box(root, 1081, 525, 169, 169, 84, BUTTON_SOFT, 1);
         lv_obj_set_style_border_width(jump, 3, 0);
-        lv_obj_set_style_border_color(jump, C(243B52), 0);
+        lv_obj_set_style_border_color(jump, OUTLINE, 0);
         vector_arrow(jump, 47, 13, 0);
         label(jump, 4, 102, 161, 44, "ПРЫЖОК", 1, BUTTON_TEXT,
               LV_TEXT_ALIGN_CENTER);
     } else {
-        lv_obj_t *up = box(root, 1081, 525, 82, 169, 12, BUTTON_GRAY, 1);
-        lv_obj_t *down = box(root, 1168, 525, 82, 169, 12, BUTTON_GRAY, 1);
+        lv_obj_t *up = box(root, 1081, 525, 82, 169, 12, BUTTON_SOFT, 1);
+        lv_obj_t *down = box(root, 1168, 525, 82, 169, 12, BUTTON_SOFT, 1);
         lv_obj_set_style_border_width(up, 3, 0);
         lv_obj_set_style_border_width(down, 3, 0);
-        lv_obj_set_style_border_color(up, C(243B52), 0);
-        lv_obj_set_style_border_color(down, C(243B52), 0);
+        lv_obj_set_style_border_color(up, OUTLINE, 0);
+        lv_obj_set_style_border_color(down, OUTLINE, 0);
         vector_arrow(up, 4, 9, 0);
         vector_arrow(down, 4, 9, 2);
         label(up, 1, 91, 80, 54, "ВВЕРХ", 0, BUTTON_TEXT,
@@ -3213,7 +3221,7 @@ static void custom_platformer_screen(lv_obj_t *root) {
 static void settings_dialog(lv_obj_t *root) {
     lv_obj_t *shade = button(root, 0, 0, GAME_W, GAME_H, "", 0,
                              U_SETTINGS_CLOSE);
-    lv_obj_set_style_bg_color(shade, C(243B52), 0);
+    lv_obj_set_style_bg_color(shade, INK, 0);
     lv_obj_set_style_bg_opa(shade, LV_OPA_70, 0);
     lv_obj_set_style_border_width(shade, 0, 0);
     lv_obj_set_style_radius(shade, 0, 0);
@@ -3286,7 +3294,7 @@ static void lobby_screen(lv_obj_t *root, const OnNetView *v) {
               side == ON_ROLE_PLANTS ? "Растения" : "Зомби", 3, BUTTON_TEXT,
               LV_TEXT_ALIGN_CENTER);
         box(card, 129, 285, 269, 6, 0,
-            chosen ? C(243B52) : BUTTON_GRAY, 0);
+            chosen ? INK : BUTTON_SOFT, 0);
         if (taken)
             label(card, 155, 288, 220, 29, "Сторона занята", 1,
                   BUTTON_TEXT, LV_TEXT_ALIGN_CENTER);
@@ -3303,9 +3311,9 @@ static void match_screen(lv_obj_t *root, const OnNetView *v) {
     int role = 0;
     game_online_ui_snapshot(&state, &role, NULL, NULL, 0, NULL);
     int plants = role == ON_ROLE_PLANTS;
-    box(root, 0, 0, 1280, 120, 0, BUTTON_GRAY, 0);
+    box(root, 0, 0, 1280, 120, 0, BUTTON_SOFT, 0);
     box(root, 0, 118, 1280, 3, 0, BUTTON_BLACK, 0);
-    lv_obj_t *rail = box(root, 0, 121, 246, 599, 0, C(243B52), 0);
+    lv_obj_t *rail = box(root, 0, 121, 246, 599, 0, INK, 0);
     lv_obj_set_style_bg_opa(rail, 115, 0);
     art(root, PV_ART_COIN, 40, 82, 40);
     char cash[24];
@@ -3612,10 +3620,10 @@ static void drag_overlay(lv_obj_t *root, int phase) {
     drag_ghost = drag_target = NULL;
     if (drag_index < 0 || drag_phase != phase) return;
     /* A flat, transparent drop target with a black outline; no glowing halo. */
-    drag_target = box(root, 0, 0, ON_CELL_W, ON_CELL_H, 0, C(243B52), 0);
+    drag_target = box(root, 0, 0, ON_CELL_W, ON_CELL_H, 0, INK, 0);
     lv_obj_set_style_bg_opa(drag_target, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(drag_target, 3, 0);
-    lv_obj_set_style_border_color(drag_target, C(243B52), 0);
+    lv_obj_set_style_border_color(drag_target, OUTLINE, 0);
     drag_ghost = lv_obj_create(root);
     lv_obj_remove_style_all(drag_ghost);
     lv_obj_set_size(drag_ghost, 110, 110);

@@ -1668,42 +1668,42 @@ static void draw_button_black(int x0, int y0, int x1, int y1,
 
 static void draw_seed_bar(void) {
     /* A light blue-gray HUD keeps contrast without pairing navy with the lawn. */
-    rect(0, 0, GAME_W - 1, LAWN_Y - 1, COL(220, 232, 239));
-    rect(0, 118, GAME_W - 1, LAWN_Y - 1, COL(103, 180, 200));
-    rect(0, LAWN_Y + 1, LAWN_X - 8, GAME_H - 1, COL(239, 241, 234));
-    rect(LAWN_X - 7, LAWN_Y + 1, LAWN_X - 1, GAME_H - 1, COL(103, 180, 200));
+    rect(0, 0, GAME_W - 1, LAWN_Y - 1, COL(255, 241, 214));
+    rect(0, 118, GAME_W - 1, LAWN_Y - 1, COL(0, 170, 255));
+    rect(0, LAWN_Y + 1, LAWN_X - 8, GAME_H - 1, COL(255, 241, 214));
+    rect(LAWN_X - 7, LAWN_Y + 1, LAWN_X - 1, GAME_H - 1, COL(0, 170, 255));
     rect(12, 12, LAWN_X - 19, 131, COL(93, 114, 135));
     rect(17, 17, LAWN_X - 24, 126, COL(245, 242, 232));
     draw_coin_icon(60, 71, 26);
-    draw_text(101, 37, 2, COL(36, 59, 82), "МОНЕТЫ");
-    draw_int(101, 67, 5, COL(36, 59, 82), coin_balance);
+    draw_text(101, 37, 2, COL(43, 21, 0), "МОНЕТЫ");
+    draw_int(101, 67, 5, COL(43, 21, 0), coin_balance);
     for (int i = 0; i < PT_COUNT; i++) {
         int x0 = BATTLE_CARD_X, y0 = BATTLE_CARD_Y + i * BATTLE_CARD_STEP;
         int affordable = coin_balance >= PDEF[i].cost && cooldown[i] <= 0 &&
                          (i != PT_LILY || level == WATER_LEVEL);
         int inset = selected == i ? 5 : 3;
         rect(x0 - 3, y0 - 3, x0 + BATTLE_CARD_W + 3,
-             y0 + BATTLE_CARD_H + 3, COL(36, 59, 82));
+             y0 + BATTLE_CARD_H + 3, COL(43, 21, 0));
         rect(x0 - 3 + inset, y0 - 3 + inset,
              x0 + BATTLE_CARD_W + 3 - inset,
              y0 + BATTLE_CARD_H + 3 - inset,
-             selected == i ? COL(241, 197, 110) : COL(255, 253, 248));
+             selected == i ? COL(255, 210, 77) : COL(255, 255, 255));
         sprite_draw(PDEF[i].sprite, x0 + 78, y0 + 2, 55, 55, 0);
         draw_text_c(x0 + BATTLE_CARD_W / 2, y0 + 59, 2,
-                    COL(36, 59, 82), PDEF[i].short_name);
+                    COL(43, 21, 0), PDEF[i].short_name);
         draw_coin_icon(x0 + 81, y0 + 88, 8);
-        draw_int(x0 + 102, y0 + 77, 2, COL(36, 59, 82), PDEF[i].cost);
+        draw_int(x0 + 102, y0 + 77, 2, COL(43, 21, 0), PDEF[i].cost);
         if (!affordable) rect_blend(x0, y0, x0 + BATTLE_CARD_W,
                                      y0 + BATTLE_CARD_H, COL(80, 105, 126), 95);
         if (cooldown[i] > 0) {
             float frac = cooldown[i] / PDEF[i].recharge;
             rect_blend(x0, y0, x0 + BATTLE_CARD_W,
-                       y0 + (int)(BATTLE_CARD_H * frac), COL(32, 53, 75), 95);
+                       y0 + (int)(BATTLE_CARD_H * frac), COL(43, 21, 0), 95);
         }
     }
 
-    rect(LAWN_X, 0, GAME_W - 1, LAWN_Y - 1, COL(220, 232, 239));
-    rect(LAWN_X, LAWN_Y - 5, GAME_W - 1, LAWN_Y - 1, COL(103, 180, 200));
+    rect(LAWN_X, 0, GAME_W - 1, LAWN_Y - 1, COL(255, 241, 214));
+    rect(LAWN_X, LAWN_Y - 5, GAME_W - 1, LAWN_Y - 1, COL(0, 170, 255));
     /* Defeated enemies fill the wave meter; then the boss meter shows HP. */
     int defeated = total_zombies - game_wave_remaining();
     if (defeated < 0) defeated = 0;
@@ -1720,13 +1720,13 @@ static void draw_seed_bar(void) {
                 break;
             }
     }
-    draw_text(282, 20, 3, COL(36, 59, 82), boss_phase ? "РОБОТ" : "ВОЛНА");
-    draw_text(462, 24, 2, COL(83, 106, 128), progress);
-    rect(281, 65, 585, 89, COL(103, 180, 200));
-    if (bar > 0) rect(283, 67, 283 + bar, 87, COL(241, 197, 110));
-    draw_text(638, 20, 3, COL(36, 59, 82), "УРОВЕНЬ");
-    draw_int(829, 20, 3, COL(36, 59, 82), level);
-    draw_text(641, 69, 2, COL(83, 106, 128), LEVEL_NAMES[level - 1]);
+    draw_text(282, 20, 3, COL(43, 21, 0), boss_phase ? "РОБОТ" : "ВОЛНА");
+    draw_text(462, 24, 2, COL(138, 106, 66), progress);
+    rect(281, 65, 585, 89, COL(0, 170, 255));
+    if (bar > 0) rect(283, 67, 283 + bar, 87, COL(255, 210, 77));
+    draw_text(638, 20, 3, COL(43, 21, 0), "УРОВЕНЬ");
+    draw_int(829, 20, 3, COL(43, 21, 0), level);
+    draw_text(641, 69, 2, COL(138, 106, 66), LEVEL_NAMES[level - 1]);
     draw_button_white(925, 28, 1080, 88, "КНИГА", 3);
     draw_button_white(1100, 28, 1260, 88, "МЕНЮ", 3);
 }
@@ -1735,14 +1735,14 @@ static void draw_seed_bar(void) {
 static void draw_button_tone(int x0, int y0, int x1, int y1,
                              const char *label, int size, int active, int tone) {
     int inset = active ? 5 : 3;
-    uint32_t face = tone == BUTTON_TONE_BLACK ? COL(36, 59, 82) :
-                    tone == BUTTON_TONE_WHITE ? COL(255, 253, 248) :
-                    tone == BUTTON_TONE_ACCENT ? COL(230, 142, 112) :
-                                                 COL(220, 232, 239);
-    uint32_t text = tone == BUTTON_TONE_BLACK ? COL(255, 253, 248) :
-                                                COL(36, 59, 82);
-    if (active && tone != BUTTON_TONE_BLACK) face = COL(241, 197, 110);
-    rect(x0, y0, x1, y1, COL(36, 59, 82));
+    uint32_t face = tone == BUTTON_TONE_BLACK ? COL(43, 21, 0) :
+                    tone == BUTTON_TONE_WHITE ? COL(255, 255, 255) :
+                    tone == BUTTON_TONE_ACCENT ? COL(255, 170, 0) :
+                                                 COL(255, 241, 214);
+    uint32_t text = tone == BUTTON_TONE_BLACK ? COL(255, 255, 255) :
+                                                COL(43, 21, 0);
+    if (active && tone != BUTTON_TONE_BLACK) face = COL(255, 210, 77);
+    rect(x0, y0, x1, y1, COL(43, 21, 0));
     rect(x0 + inset, y0 + inset, x1 - inset, y1 - inset, face);
     while (size > 1 && text_w(size, label) > x1 - x0 - 22) size--;
     draw_text_c((x0 + x1) / 2, (y0 + y1 - size * 7) / 2,
@@ -1767,7 +1767,7 @@ static void draw_button_black(int x0, int y0, int x1, int y1,
 static void draw_dima(int cx, int feet_y, int size) {
     /* Show the author's masked Dima as-is, without an invented body. */
     sprite_draw(SPR_MASK, cx - size / 2, feet_y - size, size, size, 0);
-    draw_text_c(cx, feet_y + 8, 3, COL(255, 253, 248), "ДИМА");
+    draw_text_c(cx, feet_y + 8, 3, COL(255, 255, 255), "ДИМА");
 }
 
 static void draw_khlebushek(int cx, int feet_y, int size, int crying) {
@@ -1780,36 +1780,36 @@ static void draw_khlebushek(int cx, int feet_y, int size, int crying) {
         ellipse(eye_x, eye_y + 11 + drop, 4, 10, COL(105, 205, 255));
         ellipse(eye_x - size / 20, eye_y + 19 + drop, 3, 8, COL(146, 221, 255));
     }
-    draw_text_c(cx, feet_y + 8, 3, COL(255, 253, 248), "ХЛЕБУШЕК");
+    draw_text_c(cx, feet_y + 8, 3, COL(255, 255, 255), "ХЛЕБУШЕК");
 }
 
 static void draw_kirill(int cx, int feet_y, int size) {
     /* The author's updated Kirill drawing, assets/art/kirill.png. */
     sprite_draw(SPR_KIRILL, cx - size / 2, feet_y - size, size, size, 0);
-    draw_text_c(cx, feet_y + 8, 3, COL(255, 253, 248), "КИРИЛЛ");
+    draw_text_c(cx, feet_y + 8, 3, COL(255, 255, 255), "КИРИЛЛ");
 }
 
 static void draw_menu_hero(int image, int cx, int feet_y, int size,
                            const char *name) {
-    ellipse(cx, feet_y - 2, size / 2 - 20, 13, COL(124, 145, 159));
+    ellipse(cx, feet_y - 2, size / 2 - 20, 13, COL(120, 84, 40));
     sprite_draw(image, cx - size / 2, feet_y - size, size, size, 0);
-    draw_text_c(cx, feet_y + 8, 3, COL(36, 59, 82), name);
+    draw_text_c(cx, feet_y + 8, 3, COL(43, 21, 0), name);
 }
 
 static void draw_menu(void) {
     /* Use a soft sky-and-sand palette with the three author's heroes. The
      * Queen's robot is revealed in the FINAL level, not on this screen. */
-    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(198, 224, 236));
-    rect(0, 508, GAME_W - 1, GAME_H - 1, COL(224, 211, 181));
+    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(121, 208, 255));
+    rect(0, 508, GAME_W - 1, GAME_H - 1, COL(255, 224, 160));
     rect(0, 508, GAME_W - 1, 511, COL(179, 161, 126));
     draw_button_white(83, 25, 389, 171, "УРОВНИ ИГРОКОВ", 4);
     draw_button_white(475, 38, 785, 127, "УРОВНИ 1-10", 4);
-    rect(846, 34, 1244, 137, COL(36, 59, 82));
-    rect(849, 37, 1241, 134, COL(255, 253, 248));
-    draw_text_c(1045, 65, 5, COL(36, 59, 82), "САД ДЗЕН");
+    rect(846, 34, 1244, 137, COL(43, 21, 0));
+    rect(849, 37, 1241, 134, COL(255, 255, 255));
+    draw_text_c(1045, 65, 5, COL(43, 21, 0), "САД ДЗЕН");
 
-    draw_text_c(640, 177, 6, COL(36, 59, 82), "РАСТЕНИЯ ПРОТИВ ГУСЕЙ");
-    draw_text_c(640, 231, 3, COL(83, 106, 128), "ИСТОРИЯ ХЛЕБУШКА");
+    draw_text_c(640, 177, 6, COL(43, 21, 0), "РАСТЕНИЯ ПРОТИВ ГУСЕЙ");
+    draw_text_c(640, 231, 3, COL(138, 106, 66), "ИСТОРИЯ ХЛЕБУШКА");
     draw_menu_hero(SPR_KHLEBUSHEK, 256, 491, 212, "ХЛЕБУШЕК");
     draw_menu_hero(SPR_MASK, 640, 491, 235, "ДИМА");
     draw_menu_hero(SPR_KIRILL, 1012, 491, 225, "КИРИЛЛ");
@@ -1817,25 +1817,25 @@ static void draw_menu(void) {
     draw_button_white(98, 568, 392, 665, "КНИГА", 5);
     draw_button_tone(440, 548, 840, 674, "СТАРТ", 8, 0, BUTTON_TONE_ACCENT);
     draw_button_white(893, 569, 1223, 661, "ОНЛАЙН", 6);
-    rect(926, 609, 946, 614, COL(36, 59, 82));
-    rect(933, 602, 939, 621, COL(36, 59, 82));
+    rect(926, 609, 946, 614, COL(43, 21, 0));
+    rect(933, 602, 939, 621, COL(43, 21, 0));
 }
 
 /* Level 0 replays the story; any wave can be replayed. */
 static void draw_level_select(void) {
     rect(0, 0, GAME_W - 1, GAME_H - 1, COL(245, 242, 232));
-    rect(0, 0, GAME_W - 1, 101, COL(220, 232, 239));
-    rect(0, 99, GAME_W - 1, 102, COL(36, 59, 82));
-    draw_text_c(630, 32, 6, COL(36, 59, 82), "ВЫБОР УРОВНЯ");
+    rect(0, 0, GAME_W - 1, 101, COL(255, 241, 214));
+    rect(0, 99, GAME_W - 1, 102, COL(43, 21, 0));
+    draw_text_c(630, 32, 6, COL(43, 21, 0), "ВЫБОР УРОВНЯ");
     draw_button_black(1045, 18, 1265, 85, "НАЗАД", 4);
     for (int n = 1; n <= MAX_LEVEL; n++) {
         int col = (n - 1) % 5, row = (n - 1) / 5;
         int x = 100 + col * 220, y = 155 + row * 190;
         int active = resume_level == n;
         int inset = active ? 5 : 3;
-        rect(x, y, x + 180, y + 130, COL(36, 59, 82));
+        rect(x, y, x + 180, y + 130, COL(43, 21, 0));
         rect(x + inset, y + inset, x + 180 - inset, y + 130 - inset,
-             active ? COL(241, 197, 110) : COL(255, 253, 248));
+             active ? COL(255, 210, 77) : COL(255, 255, 255));
         int water_art = !preferences_neutral_background_enabled() &&
                         n == WATER_LEVEL && sprite_pixels[SPR_WATER_MAP];
         if (water_art) {
@@ -1843,10 +1843,10 @@ static void draw_level_select(void) {
                         180 - 2 * inset, 130 - 2 * inset,
                         0, 0, 500, 500, 0);
             rect_blend(x + inset, y + inset, x + 180 - inset,
-                       y + 130 - inset, COL(36, 59, 82), 145);
+                       y + 130 - inset, COL(43, 21, 0), 145);
         }
         char label[32];
-        uint32_t text_color = water_art ? COL(255, 253, 248) : COL(36, 59, 82);
+        uint32_t text_color = water_art ? COL(255, 255, 255) : COL(43, 21, 0);
         snprintf(label, sizeof(label), "УРОВЕНЬ %d", n);
         draw_text_c(x + 90, y + 12, 3, text_color, label);
         draw_text_c(x + 90, y + 56, 2, text_color, LEVEL_NAMES[n - 1]);
@@ -1886,10 +1886,10 @@ static void draw_garden(void) {
         sprite_crop(SPR_MAP, LAWN_X, 0, GAME_W - LAWN_X, LAWN_Y,
                     0, 0, 242, 135, 0);
     else rect(LAWN_X, 0, GAME_W - 1, LAWN_Y - 1, COL(96, 64, 40));
-    rect_blend(0, 0, GAME_W - 1, LAWN_Y - 1, COL(32, 53, 75), 148);
+    rect_blend(0, 0, GAME_W - 1, LAWN_Y - 1, COL(43, 21, 0), 148);
     rect(LAWN_X, LAWN_Y - 5, GAME_W - 1, LAWN_Y - 1, COL(70, 46, 28));
     rect(0, 0, GAME_W - 1, 124, COL(232, 228, 212));
-    draw_text(28, 13, 4, COL(36, 59, 82), "САД ДЗЕН");
+    draw_text(28, 13, 4, COL(43, 21, 0), "САД ДЗЕН");
     draw_garden_button(8, 43, 116, 78, "РАСТЕНИЯ", 1, !garden_mode,
                        BUTTON_TONE_WHITE);
     draw_garden_button(124, 43, 232, 78, "ГУСИ", 1, garden_mode,
@@ -1904,20 +1904,20 @@ static void draw_garden(void) {
         int x0 = garden_card_x(i);
         int active = garden_selected == i;
         int inset = active ? 5 : 3;
-        rect(x0 - 3, 9, x0 + CARD_W + 3, 115, COL(36, 59, 82));
+        rect(x0 - 3, 9, x0 + CARD_W + 3, 115, COL(43, 21, 0));
         rect(x0 - 3 + inset, 9 + inset,
              x0 + CARD_W + 3 - inset, 115 - inset,
-             active ? COL(241, 197, 110) : COL(255, 253, 248));
+             active ? COL(255, 210, 77) : COL(255, 255, 255));
         if (garden_mode) {
             draw_duck_variant(x0 + (CARD_W - 60) / 2, 19, 60,
                               GARDEN_DUCKS[i], 0);
-            draw_text_c(x0 + CARD_W / 2, 84, 2, COL(36, 59, 82),
+            draw_text_c(x0 + CARD_W / 2, 84, 2, COL(43, 21, 0),
                         GARDEN_DUCK_NAMES[i]);
         } else {
             sprite_draw(PDEF[i].sprite, x0 + (CARD_W - 60) / 2, 19, 60, 60, 0);
             int size = text_w(2, PDEF[i].short_name) <= CARD_W - 8 ? 2 : 1;
             draw_text_c(x0 + CARD_W / 2, 84, size,
-                        COL(36, 59, 82), PDEF[i].short_name);
+                        COL(43, 21, 0), PDEF[i].short_name);
         }
     }
     draw_garden_button(915, 16, 1070, 58, "КНИГА", 2, 0,
@@ -1926,8 +1926,8 @@ static void draw_garden(void) {
                        BUTTON_TONE_BLACK);
     draw_garden_button(915, 73, 1265, 116, "УБРАТЬ", 2,
                        garden_selected == PT_COUNT, BUTTON_TONE_GRAY);
-    rect_blend(95, 679, 1185, 717, COL(32, 53, 75), 220);
-    draw_text_c(640, 691, 2, COL(255, 253, 248),
+    rect_blend(95, 679, 1185, 717, COL(43, 21, 0), 220);
+    draw_text_c(640, 691, 2, COL(255, 255, 255),
                 "СВОБОДНО СТАВЬ РАСТЕНИЯ И ГУСЕЙ. ВСЁ БЕСПЛАТНО.");
 }
 
@@ -1936,15 +1936,15 @@ static void draw_garden(void) {
 static void draw_book(void) {
     /* An open, warm-paper spread with clear blue-gray ink. */
     rect(0, 0, GAME_W - 1, GAME_H - 1, COL(232, 228, 212));
-    rect(0, 0, GAME_W - 1, 105, COL(220, 232, 239));
-    draw_text_c(565, 28, 5, COL(36, 59, 82), "УМНАЯ КНИГА КИРИЛЛА");
+    rect(0, 0, GAME_W - 1, 105, COL(255, 241, 214));
+    draw_text_c(565, 28, 5, COL(43, 21, 0), "УМНАЯ КНИГА КИРИЛЛА");
     draw_button_black(1045, 18, 1265, 85, "НАЗАД", 4);
-    rect(76, 121, 1209, 697, COL(36, 59, 82));
-    rect(84, 115, 1201, 686, COL(102, 128, 148));
-    rect(92, 122, 557, 677, COL(255, 253, 248));
-    rect(567, 122, 1192, 677, COL(225, 236, 242));
-    rect(550, 122, 568, 677, COL(140, 159, 174));
-    rect(554, 131, 564, 667, COL(176, 198, 211));
+    rect(76, 121, 1209, 697, COL(43, 21, 0));
+    rect(84, 115, 1201, 686, COL(126, 54, 0));
+    rect(92, 122, 557, 677, COL(255, 255, 255));
+    rect(567, 122, 1192, 677, COL(255, 241, 214));
+    rect(550, 122, 568, 677, COL(126, 54, 0));
+    rect(554, 131, 564, 667, COL(164, 71, 0));
     draw_button_tone(160, 123, 344, 158, "РАСТЕНИЯ", 2,
                      !book_enemy_tab, BUTTON_TONE_WHITE);
     draw_button_tone(355, 123, 540, 158, "ВРАГИ", 2,
@@ -1956,17 +1956,17 @@ static void draw_book(void) {
         int type = book_enemy_tab ? BOOK_ENEMIES[i] : i;
         int highlighted = (book_enemy_tab ? book_enemy_selected : book_selected) == i;
         int inset = highlighted ? 5 : 3;
-        rect(160, y0, 540, y0 + BOOK_ENTRY_H, COL(36, 59, 82));
+        rect(160, y0, 540, y0 + BOOK_ENTRY_H, COL(43, 21, 0));
         rect(160 + inset, y0 + inset, 540 - inset,
              y0 + BOOK_ENTRY_H - inset,
-             highlighted ? COL(241, 197, 110) : COL(255, 253, 248));
+             highlighted ? COL(255, 210, 77) : COL(255, 255, 255));
         if (book_enemy_tab) {
             if (type == EN_ROBOT) sprite_draw(SPR_ROBOT, 183, y0 + 11, 67, 67, 0);
             else draw_duck_variant(183, y0 + 15, 63, type, 1);
-            draw_text(265, y0 + 28, 2, COL(36, 59, 82), EN_NAMES[type]);
+            draw_text(265, y0 + 28, 2, COL(43, 21, 0), EN_NAMES[type]);
         } else {
             sprite_draw(PDEF[i].sprite, 183, y0 + 11, 67, 67, 0);
-            draw_text(265, y0 + 28, 2, COL(36, 59, 82), PDEF[i].short_name);
+            draw_text(265, y0 + 28, 2, COL(43, 21, 0), PDEF[i].short_name);
         }
     }
 
@@ -1976,13 +1976,13 @@ static void draw_book(void) {
         else draw_duck_variant(762, 163, 208, type, 1);
         int title_size = 4;
         while (title_size > 2 && text_w(title_size, EN_NAMES[type]) > 565) title_size--;
-        draw_text_c(865, 380, title_size, COL(36, 59, 82), EN_NAMES[type]);
+        draw_text_c(865, 380, title_size, COL(43, 21, 0), EN_NAMES[type]);
         GameBookEntry entry;
         game_book_entry(1, book_enemy_selected, &entry);
-        rect(580, 438, 1150, 663, COL(176, 198, 211));
+        rect(580, 438, 1150, 663, COL(164, 71, 0));
         rect(585, 443, 1145, 658, COL(247, 243, 232));
-        draw_text(598, 473, 2, COL(36, 59, 82), entry.description);
-        draw_text(598, 542, 2, COL(36, 59, 82), entry.detail);
+        draw_text(598, 473, 2, COL(43, 21, 0), entry.description);
+        draw_text(598, 542, 2, COL(43, 21, 0), entry.detail);
         return;
     }
 
@@ -1990,21 +1990,21 @@ static void draw_book(void) {
     sprite_draw(p->sprite, 756, 148, 222, 222, 0);
     int title_size = 4;
     while (title_size > 2 && text_w(title_size, p->name) > 565) title_size--;
-    draw_text_c(865, 380, title_size, COL(36, 59, 82), p->name);
+    draw_text_c(865, 380, title_size, COL(43, 21, 0), p->name);
     /* Only the drawing and its purpose belong on the book page. Combat
      * prices, recharge times and small stat captions obscured the story. */
-    rect(580, 438, 1150, 663, COL(176, 198, 211));
+    rect(580, 438, 1150, 663, COL(164, 71, 0));
     rect(585, 443, 1145, 658, COL(247, 243, 232));
-    draw_text(598, 473, 2, COL(36, 59, 82), p->description);
-    draw_text(598, 542, 2, COL(36, 59, 82), p->detail);
+    draw_text(598, 473, 2, COL(43, 21, 0), p->description);
+    draw_text(598, 542, 2, COL(43, 21, 0), p->detail);
 }
 
 static void draw_intro(void) {
     draw_background();
-    rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(32, 53, 75), 105);
+    rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(43, 21, 0), 105);
     if (!use_lvgl_ui) {
-        rect(0, 0, GAME_W - 1, 115, COL(220, 232, 239));
-        draw_text_c(535, 37, 6, COL(36, 59, 82), "УРОВЕНЬ 0: КАТ-СЦЕНА");
+        rect(0, 0, GAME_W - 1, 115, COL(255, 241, 214));
+        draw_text_c(535, 37, 6, COL(43, 21, 0), "УРОВЕНЬ 0: КАТ-СЦЕНА");
         draw_button_black(1020, 10, 1270, 89, "ПРОПУСТИТЬ", 3);
     }
     draw_khlebushek(245, 492, 246, intro_step == 0);
@@ -2016,7 +2016,7 @@ static void draw_intro(void) {
     if (intro_step >= 2) draw_kirill(977, 492, 248);
     if (use_lvgl_ui) return; /* LVGL owns the dialog and skip/next controls. */
 
-    rect(95, 533, 1185, 679, COL(36, 59, 82));
+    rect(95, 533, 1185, 679, COL(43, 21, 0));
     rect(102, 540, 1178, 672, COL(247, 243, 232));
     rect(111, 548, 1169, 665, COL(232, 228, 212));
     const char *speaker = intro_step == 0 ? "ХЛЕБУШЕК" :
@@ -2024,10 +2024,10 @@ static void draw_intro(void) {
     const char *line = intro_step == 0 ? "ХЛЕБУШЕК ПЛАЧЕТ..." :
                        intro_step == 1 ? "НЕ ПЛАЧЬ, МЫ НОВОГО СДЕЛАЕМ." :
                        "МОЖЕТ, КТО-ТО ПОМОГАТЬ МНЕ БУДЕТ?";
-    draw_text(145, 554, 3, COL(83, 106, 128), speaker);
+    draw_text(145, 554, 3, COL(138, 106, 66), speaker);
     int size = 5;
     while (size > 2 && text_w(size, line) > 990) size--;
-    draw_text_c(640, 602, size, COL(36, 59, 82), line);
+    draw_text_c(640, 602, size, COL(43, 21, 0), line);
 }
 
 static void draw_play_scene(void) {
@@ -2062,36 +2062,36 @@ static void draw_play_scene(void) {
         while (s > 1 && text_w(s, banner_text) > GAME_W - 120) s--;
         int bw = text_w(s, banner_text) + 44;
         rect_blend(640 - bw / 2, 156, 640 + bw / 2, 172 + 7 * s,
-                   COL(32, 53, 75), 205);
-        draw_text_c(640, 165, s, COL(255, 253, 248), banner_text);
+                   COL(43, 21, 0), 205);
+        draw_text_c(640, 165, s, COL(255, 255, 255), banner_text);
     }
     for (int i = 0; i < ZMAX; i++)
         if (zomb[i].active && zomb[i].type == EN_ROBOT) {
             float bf = zomb[i].hp / zomb[i].maxhp;
             if (bf < 0) bf = 0;
             if (bf > 1) bf = 1;
-            rect(395, 684, 885, 717, COL(36, 59, 82));
-            rect(401, 690, 401 + (int)(478 * bf), 711, COL(241, 197, 110));
-            draw_text_c(640, 697, 2, COL(255, 253, 248), "КОРОЛЕВА В РОБОТЕ");
+            rect(395, 684, 885, 717, COL(43, 21, 0));
+            rect(401, 690, 401 + (int)(478 * bf), 711, COL(255, 210, 77));
+            draw_text_c(640, 697, 2, COL(255, 255, 255), "КОРОЛЕВА В РОБОТЕ");
             break;
         }
 }
 
 static void draw_result(void) {
-    rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(32, 53, 75), 199);
-    rect(258, 175, 1022, 645, COL(36, 59, 82));
+    rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(43, 21, 0), 199);
+    rect(258, 175, 1022, 645, COL(43, 21, 0));
     rect(265, 182, 1015, 638, COL(247, 243, 232));
     if (phase == PH_LEVEL_CLEAR) {
-        draw_text_c(640, 246, 7, COL(36, 59, 82), "УРОВЕНЬ ПРОЙДЕН!");
+        draw_text_c(640, 246, 7, COL(43, 21, 0), "УРОВЕНЬ ПРОЙДЕН!");
         draw_button_white(390, 450, 890, 565, "ДАЛЬШЕ", 7);
         draw_button_black(480, 580, 800, 645, "В МЕНЮ", 3);
     } else if (phase == PH_LOSE) {
-        draw_text_c(640, 254, 7, COL(36, 59, 82),
+        draw_text_c(640, 254, 7, COL(43, 21, 0),
                     level == 10 && boss_phase ? "РОБОТ УНИЧТОЖИЛ ВСЕХ!" : "ЗАЩИТА ПРОРВАНА!");
         draw_button_white(335, 460, 645, 565, "ПОВТОРИТЬ", 4);
         draw_button_black(660, 460, 975, 565, "В МЕНЮ", 4);
     } else if (phase == PH_WIN) {
-        draw_text_c(640, 237, 7, COL(36, 59, 82), "РОБОТ ОСТАНОВЛЕН!");
+        draw_text_c(640, 237, 7, COL(43, 21, 0), "РОБОТ ОСТАНОВЛЕН!");
         draw_button_black(425, 460, 855, 580, "В МЕНЮ", 6);
     }
 }
@@ -2099,13 +2099,13 @@ static void draw_result(void) {
 /* Native rooms and fight — same framebuffer, touch input and author's art as
  * the offline game. A square opens search; only '+' creates a room. */
 static void draw_online_rooms(void) {
-    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(239, 241, 234));
-    rect(0, 0, GAME_W - 1, 124, COL(220, 232, 239));
+    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(255, 241, 214));
+    rect(0, 0, GAME_W - 1, 124, COL(255, 241, 214));
     sprite_draw(SPR_KHLEBUSHEK, 32, 10, 106, 104, 0);
-    draw_text(168, 22, 5, COL(36, 59, 82), "ОНЛАЙН");
-    draw_text(170, 78, 2, COL(83, 106, 128), "ИГРАЙ ЗА РАСТЕНИЯ ИЛИ УТОК");
+    draw_text(168, 22, 5, COL(43, 21, 0), "ОНЛАЙН");
+    draw_text(170, 78, 2, COL(138, 106, 66), "ИГРАЙ ЗА РАСТЕНИЯ ИЛИ УТОК");
     draw_button_black(1070, 17, 1255, 87, "МЕНЮ", 3);
-    rect(48, 134, 1231, 231, COL(36, 59, 82));
+    rect(48, 134, 1231, 231, COL(43, 21, 0));
     rect(55, 140, 1224, 224, COL(247, 243, 232));
     draw_button_tone(70, 144, 303, 222, "ГАЗОН", 3,
                      online_map == 1, BUTTON_TONE_WHITE);
@@ -2113,60 +2113,60 @@ static void draw_online_rooms(void) {
                      online_map == 5, BUTTON_TONE_WHITE);
     /* The search affordance is visibly a SQUARE, not the create button. */
     draw_button(720, 144, 884, 222, "", 2);
-    rect(754, 166, 796, 202, COL(36, 59, 82));
-    rect(757, 169, 793, 199, COL(241, 197, 110));
+    rect(754, 166, 796, 202, COL(43, 21, 0));
+    rect(757, 169, 793, 199, COL(255, 210, 77));
     rect(762, 174, 788, 194, COL(78, 105, 126));
-    draw_text(806, 171, 2, COL(36, 59, 82), "ПОИСК");
+    draw_text(806, 171, 2, COL(43, 21, 0), "ПОИСК");
     draw_button_white(904, 144, 1065, 222, "+ СОЗДАТЬ", 2);
     draw_button_white(1070, 144, 1223, 222, "МАСТЕРСКАЯ", 1);
-    rect(45, 239, 1234, 711, COL(36, 59, 82));
+    rect(45, 239, 1234, 711, COL(43, 21, 0));
     rect(52, 245, 1227, 704, COL(241, 238, 228));
-    draw_text(70, 260, 4, COL(36, 59, 82), "КОМНАТЫ");
+    draw_text(70, 260, 4, COL(43, 21, 0), "КОМНАТЫ");
     draw_button(1019, 248, 1225, 308, "ОБНОВИТЬ", 2);
     int indexes[ON_ROOM_LIST_CAP], count = online_filtered(indexes);
     int page = online_page;
     if (page * 8 >= count) page = 0;
-    if (online_view.busy) draw_text(350, 273, 2, COL(83, 106, 128), "ПОДКЛЮЧАЕМСЯ...");
+    if (online_view.busy) draw_text(350, 273, 2, COL(138, 106, 66), "ПОДКЛЮЧАЕМСЯ...");
     else if (!online_view.connected && !online_view.notice[0])
-        draw_text(350, 273, 2, COL(83, 106, 128), "ЗАГРУЖАЕМ КОМНАТЫ...");
+        draw_text(350, 273, 2, COL(138, 106, 66), "ЗАГРУЖАЕМ КОМНАТЫ...");
     else if (online_view.notice[0]) {
         int size = text_w(2, online_view.notice) < 730 ? 2 : 1;
-        draw_text(362, 276, size, COL(83, 106, 128), online_view.notice);
+        draw_text(362, 276, size, COL(138, 106, 66), online_view.notice);
     } else {
         char label[50];snprintf(label, sizeof label, "НАЙДЕНО: %d", count);
-        draw_text(366, 275, 2, COL(83, 106, 128), label);
+        draw_text(366, 275, 2, COL(138, 106, 66), label);
     }
-    if (!count) draw_text_c(640, 459, 4, COL(83, 106, 128),
+    if (!count) draw_text_c(640, 459, 4, COL(138, 106, 66),
                            "ПОКА НЕТ СВОБОДНЫХ КОМНАТ");
     for (int i = 0; i < 8; i++) {
         int pos = page * 8 + i;
         if (pos >= count) break;
         const OnRoomSummary *room = &online_view.rooms[indexes[pos]];
         int col = i % 2, row = i / 2, x = 69 + col * 582, y = 321 + row * 80;
-        rect(x, y + 2, x + 557, y + 71, COL(36, 59, 82));
+        rect(x, y + 2, x + 557, y + 71, COL(43, 21, 0));
         rect(x + 3, y + 5, x + 554, y + 68,
-             (i & 1) ? COL(226, 237, 243) : COL(255, 253, 248));
-        draw_text(x + 28, y + 13, 4, COL(36, 59, 82), room->id);
+             (i & 1) ? COL(255, 241, 214) : COL(255, 255, 255));
+        draw_text(x + 28, y + 13, 4, COL(43, 21, 0), room->id);
         draw_text(x + 236, y + 17, 2, COL(50, 71, 91),
                   room->map == 5 ? "ВОДА" : "ГАЗОН");
-        draw_text(x + 362, y + 17, 2, COL(36, 59, 82), "ВОЙТИ >");
+        draw_text(x + 362, y + 17, 2, COL(43, 21, 0), "ВОЙТИ >");
     }
     if (count > 8) {
         draw_button(62, 654, 374, 704, "НАЗАД", 2);
         draw_button(873, 654, 1220, 704, "ДАЛЬШЕ", 2);
         char page_text[48];
         snprintf(page_text, sizeof page_text, "%d / %d", page + 1, (count + 7) / 8);
-        draw_text_c(640, 670, 2, COL(83, 106, 128), page_text);
+        draw_text_c(640, 670, 2, COL(138, 106, 66), page_text);
     }
     if (online_search) {
-        rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(32, 53, 75), 193);
-        rect(222, 92, 1058, 667, COL(36, 59, 82));
+        rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(43, 21, 0), 193);
+        rect(222, 92, 1058, 667, COL(43, 21, 0));
         rect(229, 99, 1051, 660, COL(247, 243, 232));
-        draw_text_c(640, 116, 5, COL(36, 59, 82), "ПОИСК КОМНАТЫ");
+        draw_text_c(640, 116, 5, COL(43, 21, 0), "ПОИСК КОМНАТЫ");
         draw_button_black(902, 109, 1009, 159, "X", 3);
         rect(301, 171, 837, 237, COL(70, 94, 114));
-        rect(309, 179, 829, 229, COL(255, 253, 248));
-        if (online_code[0]) draw_text_c(569, 184, 4, COL(36, 59, 82), online_code);
+        rect(309, 179, 829, 229, COL(255, 255, 255));
+        if (online_code[0]) draw_text_c(569, 184, 4, COL(43, 21, 0), online_code);
         else draw_text_c(569, 185, 3, COL(104, 125, 143), "КОД ИЗ 6 СИМВОЛОВ");
         draw_button(847, 171, 993, 236, "СТЕРЕТЬ", 2);
         const char *keys = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -2176,45 +2176,45 @@ static void draw_online_rooms(void) {
             draw_button_white(kx, ky, kx + 68, ky + 58, letter, 3);
         }
         char matches[80];snprintf(matches, sizeof matches, "ПОДХОДЯЩИХ КОМНАТ: %d", count);
-        draw_text_c(640, 542, 2, COL(83, 106, 128), matches);
+        draw_text_c(640, 542, 2, COL(138, 106, 66), matches);
         draw_button_white(395, 568, 880, 644, "ВОЙТИ ПО КОДУ", 4);
     }
 }
 
 static void draw_online_lobby(void) {
-    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(239, 241, 234));
-    rect(0, 0, GAME_W - 1, 115, COL(220, 232, 239));
+    rect(0, 0, GAME_W - 1, GAME_H - 1, COL(255, 241, 214));
+    rect(0, 0, GAME_W - 1, 115, COL(255, 241, 214));
     char heading[72];snprintf(heading, sizeof heading, "КОМНАТА %s", online_view.room_id);
-    draw_text(60, 26, 5, COL(36, 59, 82), heading);
+    draw_text(60, 26, 5, COL(43, 21, 0), heading);
     draw_button_black(1093, 17, 1265, 91, "ВЫЙТИ", 3);
-    draw_text_c(640, 145, 3, COL(36, 59, 82),
+    draw_text_c(640, 145, 3, COL(43, 21, 0),
                 online_view.map == 5 ? "КАРТА: ВОДА" : "КАРТА: ГАЗОН");
-    rect(148, 229, 1132, 592, COL(36, 59, 82));
+    rect(148, 229, 1132, 592, COL(43, 21, 0));
     rect(156, 237, 1124, 585, COL(247, 243, 232));
     int mine = online_role(), other = online_view.slot == ON_SLOT_HOST ?
                                  online_view.guest_role : online_view.host_role;
     for (int side = ON_ROLE_PLANTS; side <= ON_ROLE_ZOMBIES; side++) {
         int x = side == ON_ROLE_PLANTS ? 160 : 663;
         int inset = mine == side ? 5 : 3;
-        rect(x, 243, x + 451, 574, COL(36, 59, 82));
+        rect(x, 243, x + 451, 574, COL(43, 21, 0));
         rect(x + inset, 243 + inset, x + 451 - inset, 574 - inset,
-             mine == side ? COL(241, 197, 110) :
-             other == side ? COL(226, 237, 243) : COL(255, 253, 248));
+             mine == side ? COL(255, 210, 77) :
+             other == side ? COL(255, 241, 214) : COL(255, 255, 255));
         sprite_draw(side == ON_ROLE_PLANTS ? SPR_PEA : SPR_DUCK,
                     x + 125, 268, 185, 188, side == ON_ROLE_ZOMBIES);
-        draw_text_c(x + 225, 478, 4, COL(36, 59, 82),
+        draw_text_c(x + 225, 478, 4, COL(43, 21, 0),
                     side == ON_ROLE_PLANTS ? "РАСТЕНИЯ" : "ЗОМБИ");
-        draw_text_c(x + 225, 525, 2, COL(36, 59, 82),
+        draw_text_c(x + 225, 525, 2, COL(43, 21, 0),
                     mine == side ? "ТВОЯ СТОРОНА" :
                     other == side ? "СТОРОНА СОПЕРНИКА" : "ВЫБРАТЬ СТОРОНУ");
     }
-    rect(148, 603, 1132, 690, COL(36, 59, 82));
+    rect(148, 603, 1132, 690, COL(43, 21, 0));
     if (!online_view.guest_id[0])
-        draw_text_c(640, 611, 3, COL(255, 253, 248), "ЖДЁМ ВТОРОГО ИГРОКА...");
+        draw_text_c(640, 611, 3, COL(255, 255, 255), "ЖДЁМ ВТОРОГО ИГРОКА...");
     else if (online_view.slot == ON_SLOT_GUEST && !online_view.has_state)
-        draw_text_c(640, 611, 3, COL(255, 253, 248), "ХОЗЯИН ЗАПУСКАЕТ БОЙ...");
+        draw_text_c(640, 611, 3, COL(255, 255, 255), "ХОЗЯИН ЗАПУСКАЕТ БОЙ...");
     if (online_view.notice[0])
-        draw_text_c(640, 665, 2, COL(232, 240, 244), online_view.notice);
+        draw_text_c(640, 665, 2, COL(255, 246, 224), online_view.notice);
 }
 
 static void draw_online_match(void) {
@@ -2245,16 +2245,16 @@ static void draw_online_match(void) {
     /* With LVGL active only the author's map and moving entities are drawn
      * here. The LVGL tree provides touchable cards, status, book and result. */
     if (use_lvgl_ui) return;
-    rect(0, 0, GAME_W - 1, 119, COL(220, 232, 239));
+    rect(0, 0, GAME_W - 1, 119, COL(255, 241, 214));
     int role = online_role(), plants = role == ON_ROLE_PLANTS;
-    draw_text(21, 18, 3, COL(36, 59, 82), plants ? "РАСТЕНИЯ" : "ЗОМБИ");
+    draw_text(21, 18, 3, COL(43, 21, 0), plants ? "РАСТЕНИЯ" : "ЗОМБИ");
     draw_coin_icon(46, 82, 21);
-    draw_int(80, 69, 4, COL(36, 59, 82),
+    draw_int(80, 69, 4, COL(43, 21, 0),
              plants ? s->plant_cash : s->zombie_cash);
     char title[98];
     snprintf(title, sizeof title, "КОМНАТА %s    УТОК ОСТАЛОСЬ: %d",
              online_view.room_id, s->left + s->duck_count);
-    draw_text(269, 22, 3, COL(36, 59, 82), title);
+    draw_text(269, 22, 3, COL(43, 21, 0), title);
 
     draw_button_white(917, 20, 1088, 91, "КНИГА", 3);
     draw_button_black(1093, 17, 1265, 91, "ВЫЙТИ", 3);
@@ -2266,26 +2266,26 @@ static void draw_online_match(void) {
         int affordable = (plants ? s->plant_cash : s->zombie_cash) >= cost &&
                          delay <= 0 && (plants ? (i != ON_LILY || s->map == 5) : s->left > 0);
         int inset = online_selected == i ? 5 : 3;
-        rect(12, y, 235, y + 98, COL(36, 59, 82));
+        rect(12, y, 235, y + 98, COL(43, 21, 0));
         rect(12 + inset, y + inset, 235 - inset, y + 98 - inset,
-             online_selected == i ? COL(241, 197, 110) : COL(255, 253, 248));
+             online_selected == i ? COL(255, 210, 77) : COL(255, 255, 255));
         if (plants) sprite_draw(PDEF[i].sprite, 27, y + 8, 67, 65, 0);
         else draw_duck_variant(26, y + 9, 64, on_duck_type[i], 1);
-        draw_text(99, y + 16, 2, COL(36, 59, 82),
+        draw_text(99, y + 16, 2, COL(43, 21, 0),
                   plants ? PDEF[i].short_name : EN_NAMES[on_duck_type[i]]);
         draw_coin_icon(113, y + 67, 12);
-        draw_int(136, y + 57, 3, COL(36, 59, 82), cost);
+        draw_int(136, y + 57, 3, COL(43, 21, 0), cost);
         if (!affordable) rect_blend(17, y + 4, 230, y + 93, COL(80, 105, 126), 105);
     }
     if (!plants)
         draw_button_white(15, 615, 232, 702, "ЗАКОНЧИТЬ", 2);
     if (s->winner) {
-        rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(32, 53, 75), 198);
-        rect(283, 197, 997, 585, COL(36, 59, 82));
+        rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(43, 21, 0), 198);
+        rect(283, 197, 997, 585, COL(43, 21, 0));
         rect(290, 204, 990, 578, COL(247, 243, 232));
-        draw_text_c(640, 246, 6, COL(36, 59, 82),
+        draw_text_c(640, 246, 6, COL(43, 21, 0),
                     s->winner == role ? "ПОБЕДА!" : "ПОБЕДИЛ СОПЕРНИК");
-        draw_text_c(640, 336, 3, COL(83, 106, 128),
+        draw_text_c(640, 336, 3, COL(138, 106, 66),
                     s->winner == ON_WIN_PLANTS ? "РАСТЕНИЯ ПОБЕДИЛИ" : "УТКИ ПОБЕДИЛИ");
         draw_button_black(411, 459, 869, 560, "В КОМНАТЫ", 5);
     }
@@ -3245,17 +3245,17 @@ static void custom_platformer_draw(void) {
                 (int)custom_player_w, (int)custom_player_h,
                 player_flip_x, player_flip_y);
     }
-    rect(0, 0, GAME_W - 1, 102, COL(220, 232, 239));
-    rect(0, 100, GAME_W - 1, 102, COL(36, 59, 82));
-    draw_text(24, 19, 3, COL(36, 59, 82), custom_level.title);
+    rect(0, 0, GAME_W - 1, 102, COL(255, 241, 214));
+    rect(0, 100, GAME_W - 1, 102, COL(43, 21, 0));
+    draw_text(24, 19, 3, COL(43, 21, 0), custom_level.title);
     char label_text[48];
     snprintf(label_text, sizeof label_text, "МОНЕТЫ %d", custom_level_coins);
-    draw_text(26, 64, 2, COL(83, 106, 128), label_text);
+    draw_text(26, 64, 2, COL(138, 106, 66), label_text);
     if (custom_level_won) {
-        rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(32, 53, 75), 170);
-        rect(358, 264, 922, 447, COL(36, 59, 82));
+        rect_blend(0, 0, GAME_W - 1, GAME_H - 1, COL(43, 21, 0), 170);
+        rect(358, 264, 922, 447, COL(43, 21, 0));
         rect(365, 271, 915, 440, COL(247, 243, 232));
-        draw_text_c(640, 304, 5, COL(36, 59, 82), "УРОВЕНЬ ПРОЙДЕН!");
+        draw_text_c(640, 304, 5, COL(43, 21, 0), "УРОВЕНЬ ПРОЙДЕН!");
     }
 }
 

@@ -19,8 +19,8 @@ test('renderers preserve full color and fixed sprites keep their authored colors
   const draft = newDraft();
   assert.equal(draft.objects.find(object => object.type === 'player').color, '#fffdf8');
   assert.equal(draft.objects.find(object => object.type === 'goal').color, '#fffdf8');
-  assert.match(styles, /--accent: #e68e70/);
-  assert.match(styles, /--accent-blue: #67b4c8/);
+  assert.match(styles, /--accent: #ffaa00/);
+  assert.match(styles, /--accent-blue: #00aaff/);
   assert.doesNotMatch(styles, /grayscale\s*\(/i);
   assert.match(android, /gl_FragColor = texture2D\(u_tex/);
   assert.doesNotMatch(android, /grayscale|float gray/i);

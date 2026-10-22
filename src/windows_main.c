@@ -51,6 +51,16 @@ static int legacy_renderer_phase(int phase) {
            phase == GAME_GARDEN || phase == GAME_BOOK || phase == GAME_SELECT;
 }
 
+/* UI strings live in UTF-8 and switch language through font_translate; Win32
+ * wants UTF-16 for the title bar and error boxes. */
+static void utf8_to_wide(const char *utf8, wchar_t *out, size_t cap) {
+    if (!out || !cap) return;
+    out[0] = 0;
+    if (!utf8) return;
+    MultiByteToWideChar(CP_UTF8, 0, utf8, -1, out, (int)cap);
+    out[cap - 1] = 0;
+}
+
 static int join_path(wchar_t *out, size_t cap, const wchar_t *dir,
                      const wchar_t *name) {
     if (!out || !cap) return 0;
@@ -535,25 +545,32 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous,
     wc.hInstance = instance;
     wc.hCursor = LoadCursorW(NULL, MAKEINTRESOURCEW(32512));
     wc.hIcon = LoadIconW(NULL, MAKEINTRESOURCEW(32512));
-    window_background_brush = CreateSolidBrush(RGB(32, 53, 75));
+    window_background_brush = CreateSolidBrush(RGB(126, 54, 0)); /* marker wood #7E3600 */
     if (!window_background_brush) goto cleanup;
     wc.hbrBackground = window_background_brush;
     wc.lpszClassName = APP_CLASS;
     if (!RegisterClassExW(&wc)) {
-        MessageBoxW(NULL, L"Не удалось создать окно PvG3.", L"PvG3",
-                    MB_OK | MB_ICONERROR);
+        wchar_t message[128];
+        utf8_to_wide(font_translate("Не удалось создать окно PvG3."),
+                     message, sizeof message / sizeof *message);
+        MessageBoxW(NULL, message, L"PvG3", MB_OK | MB_ICONERROR);
         goto cleanup;
     }
 
     RECT rect = {0, 0, GAME_W, GAME_H};
     AdjustWindowRect(&rect, WS_OVERLAPPEDWINDOW, FALSE);
+    wchar_t title[128];
+    utf8_to_wide(font_translate("Растения против гусей 3"),
+                 title, sizeof title / sizeof *title);
     window_handle = CreateWindowExW(0, APP_CLASS,
-        L"Растения против гусей 3", WS_OVERLAPPEDWINDOW,
+        title, WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT, rect.right - rect.left,
         rect.bottom - rect.top, NULL, NULL, instance, NULL);
     if (!window_handle) {
-        MessageBoxW(NULL, L"Не удалось открыть окно PvG3.", L"PvG3",
-                    MB_OK | MB_ICONERROR);
+        wchar_t message[128];
+        utf8_to_wide(font_translate("Не удалось открыть окно PvG3."),
+                     message, sizeof message / sizeof *message);
+        MessageBoxW(NULL, message, L"PvG3", MB_OK | MB_ICONERROR);
         goto cleanup;
     }
     ShowWindow(window_handle, show_command);
