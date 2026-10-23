@@ -53,6 +53,11 @@ IMAGES = [
     ("LEVEL_TRIGGER_COLOR", "assets/art/Триггер-цвет.png"),
     ("WORKSHOP_ROTATE", "assets/art/Переворот-блоков.png"),
     ("COLOR_WHEEL", "assets/art/Цветовой-круг.png"),
+    ("LEVEL_TRIGGER_COUNT", "assets/art/Триггер-счёта.png"),
+    ("LEVEL_TRIGGER_TOGGLE", "assets/art/Триггер-переключатель.png"),
+    ("LEVEL_TRIGGER_SPAWN", "assets/art/Триггер-появления.png"),
+    ("LIKE", "assets/art/Лайк.png"),
+    ("DISLIKE", "assets/art/Дизлайк.png"),
 ]
 
 

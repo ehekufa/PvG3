@@ -6,8 +6,9 @@ import {LEVEL_TYPES, TYPE_LABELS, TRIGGER_KINDS, WORLD_LIMIT, MAX_LEVEL_OBJECTS,
         moveObjects, resizeObjects, rotateObjects, flipObjects, panCamera, copyObjects, pasteObjects, validateDraft,
         publishedRecord, isPublishedRecord, draftFromPublished, resolveControlMode,
         setTriggerKind, createTouchButtonState, createPreviewState, stepPreview,
-        DEFAULT_PARTICLE_EMITTER, OFFICIAL_LEVEL_ID, isOfficialLevel,
-        canManuallyRecolorType, normalizeParticleEmitter, sampleParticleEmitter,
+        filterPublishedLevels, DEFAULT_PARTICLE_EMITTER, OFFICIAL_LEVEL_ID, isOfficialLevel,
+        canManuallyRecolorType, usesDefaultArtwork, defaultObjectColor,
+        normalizeParticleEmitter, sampleParticleEmitter,
         drawParticleEmitterPreview, drawEditorCanvas, drawPreviewCanvas} from '../workshop.js';
 
 test('renderers preserve full color and fixed sprites keep their authored colors', () => {
@@ -27,7 +28,8 @@ test('renderers preserve full color and fixed sprites keep their authored colors
   assert.doesNotMatch(game, /game_frame_apply_grayscale|grayscale/i);
   assert.doesNotMatch(windows, /game_frame_apply_grayscale|grayscale/i);
   assert.doesNotMatch(game, /0x5ab7e8|0xf2a76f/i);
-  assert.match(game, /custom_object_can_manually_recolor\(o->type\) \? 128 : 0/);
+  assert.match(game,
+    /custom_object_can_manually_recolor\(o->type\) && !o->color_default\) \? 128 : 0/);
   const enemyDraw = game.match(/case ON_LEVEL_ENEMY: \{([\s\S]*?)break;\s*\}/)?.[1];
   assert.ok(enemyDraw, 'custom-level enemy uses the supplied duck sprite');
   assert.match(enemyDraw, /sprite_draw_rotated_flipped/);
@@ -35,7 +37,7 @@ test('renderers preserve full color and fixed sprites keep their authored colors
   assert.doesNotMatch(enemyDraw, /sprite_draw_(?:rotated_)?tinted/,
     'fixed duck artwork is drawn without a programmatic tint');
   assert.match(workshop,
-    /const tint = canManuallyRecolorType\(object\.type\) \?[\s\S]*?: null/);
+    /const tint = canManuallyRecolorType\(object\.type\) && object\.defaultColor !== true \?[\s\S]*?: null/);
 });
 
 test('saving stays active without autosave or control-hint captions', () => {
@@ -83,6 +85,11 @@ test('editor keeps section and control names but omits instructional hints', () 
     'Состояние группы остаётся таким',
   ]) assert.equal(editor.includes(hint), false, `removed editor hint: ${hint}`);
   assert.equal(editor.includes('title='), false, 'editor buttons have no hover tooltips');
+  assert.equal((editor.match(/class="overline ws-hint"/g) || []).length, 3,
+    'transform captions are tutorial hints, switched off by default');
+  assert(editor.includes('id="ws-tutorial-toggle"'),
+    'the tutorial mode has its own switch in the editor');
+  assert(editor.includes('Обучение'));
   assert(editor.includes('КАТЕГОРИИ ОБЪЕКТОВ'));
   assert(editor.includes('ЗЕРКАЛЬНОЕ ОТРАЖЕНИЕ'));
   assert.equal((editor.match(/Переворот-блоков\.png/g) || []).length, 2,
@@ -109,7 +116,10 @@ test('editor keeps section and control names but omits instructional hints', () 
   drawPreviewCanvas(playCanvas.canvas, createPreviewState(level));
   assert.equal(playCanvas.labels.includes(String(block.id)), false,
     'object IDs stay hidden in gameplay while messages and coin count remain');
-  assert(playCanvas.labels.some(label => label.startsWith('Монеты:')));
+  assert(playCanvas.labels.some(label => label.startsWith('Монеты ')));
+  assert(playCanvas.labels.some(label => label.startsWith('Прогресс ')));
+  assert(playCanvas.labels.some(label => label.startsWith('Попытка ')));
+  assert(playCanvas.labels.some(label => label.startsWith('Время ')));
 
   const particleDialog = html.match(/<dialog id="ws-particle-dialog"[\s\S]*?<\/dialog>/)?.[0];
   assert.ok(particleDialog, 'particle settings dialog exists');
@@ -143,9 +153,11 @@ test('manual recoloring is blocked only for fixed-art workshop objects', () => {
   const native = readFileSync(new URL('../../src/lvgl_ui.c', import.meta.url), 'utf8');
   assert.match(native, /workshop_type_can_manually_recolor/);
   assert(native.includes('int can_recolor_art = workshop_type_can_manually_recolor(type);'));
-  assert(native.includes('(!has_art || can_recolor_art)'),
+  assert(native.includes('(!has_art || tinted)'),
     'fixed sprite art does not get a colored backing shape');
-  assert(native.includes('if (can_recolor_art) {'),
+  assert(native.includes('int tinted = can_recolor_art && !default_color;'),
+    'objects flagged as default drop their tint');
+  assert(native.includes('if (tinted) {'),
     'native fixed-art sprites are not recolored');
   assert.match(native, /LV_STATE_DISABLED/);
   assert.match(native, /return workshop_ground_selected \|\| workshop_first_recolorable_selected\(\) >= 0;/);
@@ -177,12 +189,89 @@ test('block-turn artwork replaces the circular refresh symbol across the UI', ()
   assert.equal(styles.includes('.refresh-icon::after'), false);
 });
 
-test('only published level ID 338069 receives the official marker', () => {
+test('the historic ID 338069 and a moderator flag both mark a level official', () => {
   assert.equal(OFFICIAL_LEVEL_ID, '338069');
   assert.equal(isOfficialLevel('338069'), true);
   assert.equal(isOfficialLevel(338069), true);
   assert.equal(isOfficialLevel('338068'), false);
   assert.equal(isOfficialLevel('1338069'), false);
+  /* Any level a moderator flagged in the database is official too, so the
+   * native catalog and the browser one agree. */
+  assert.equal(isOfficialLevel('5150', {id: '5150', official: true}), true);
+  assert.equal(isOfficialLevel('5150', {id: '5150', official: false}), false);
+  assert.equal(isOfficialLevel('5150', {id: '5150'}), false);
+  assert.equal(isOfficialLevel('5150', null), false);
+});
+
+test('catalog filters search Russian and English fields and sort likes/dislikes', () => {
+  const levels = [
+    {id: '2', title: 'Быстрый маршрут', description: 'Прыжки через мост', author: 'Аня',
+      difficulty: 'hard', tags: ['мост', 'скорость'], likes: 2, dislikes: 20, updatedAt: 4},
+    {id: '10', title: 'Alpha level', description: 'A quiet garden', author: 'Kai',
+      difficulty: 'easy', tags: ['forest'], likes: 7, dislikes: 5, updatedAt: 4},
+    {id: '3', title: 'Тайный мост', description: 'Сложная дорога к финишу', author: 'Ира',
+      difficulty: 'hard', tags: ['мост'], likes: 7, dislikes: 30, updatedAt: 9},
+  ];
+  const originalOrder = levels.map(level => level.id);
+  assert.deepEqual(filterPublishedLevels(levels, {query: 'МОСТ', language: 'ru'})
+    .map(level => level.id), ['3', '2']);
+  assert.deepEqual(filterPublishedLevels(levels, {query: 'kai', language: 'en'})
+    .map(level => level.id), ['10']);
+  assert.deepEqual(filterPublishedLevels(levels, {difficulty: 'hard', tag: 'мост'})
+    .map(level => level.id), ['3', '2']);
+  assert.deepEqual(filterPublishedLevels(levels, {sort: 'likes'})
+    .map(level => level.id), ['3', '10', '2']);
+  assert.deepEqual(filterPublishedLevels(levels, {sort: 'dislikes'})
+    .map(level => level.id), ['3', '2', '10']);
+  assert.deepEqual(filterPublishedLevels(levels, {sort: 'title', language: 'en'})
+    .map(level => level.id), ['10', '2', '3']);
+  assert.deepEqual(levels.map(level => level.id), originalOrder,
+    'sorting the catalog does not mutate its source records');
+});
+
+test('the browser catalog renders exclusive Like and Dislike reactions with supplied art', () => {
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const app = readFileSync(new URL('../app.js', import.meta.url), 'utf8');
+  const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+  const native = readFileSync(new URL('../../src/lvgl_ui.c', import.meta.url), 'utf8');
+  for (const id of ['ws-catalog-search', 'ws-catalog-difficulty',
+                    'ws-catalog-tag', 'ws-catalog-sort'])
+    assert(html.includes(`id="${id}"`), `${id} is part of the catalog`);
+  assert.match(html, /data-ws-en="Most liked"/);
+  assert.match(html, /data-ws-en="Most disliked"/);
+  assert.match(app, /filterPublishedLevels\(wsCatalog/);
+  assert.match(app, /ws-reaction-button/);
+  assert.match(app, /setLevelReaction\(level\.id, statsClientId, desired\)/);
+  assert.match(app, /Лайк\.png/);
+  assert.match(app, /Дизлайк\.png/);
+  const reactionStyle = styles.match(/\.ws-reaction-button\s*\{([^}]+)\}/)?.[1] || '';
+  const likeStyle = styles.match(/\.ws-like-button\s*\{([^}]+)\}/)?.[1] || '';
+  assert.match(reactionStyle, /border:\s*2px solid #000 !important/);
+  assert.match(likeStyle, /background:\s*#000 !important/);
+  assert.match(styles, /\.ws-dislike-button\.is-disliked/);
+  assert.match(native, /#define BUTTON_BLACK C\(000000\)/);
+  assert.match(native, /case U_BOOK_BACK:[\s\S]*?case U_CUSTOM_LIKE:[\s\S]*?\*face = BUTTON_BLACK/);
+  assert.match(native, /PV_ART_LIKE/);
+  assert.match(native, /PV_ART_DISLIKE/);
+  assert.match(native, /U_CUSTOM_DISLIKE/);
+});
+
+test('Count, Toggle and Spawn use their supplied trigger art in both editors', () => {
+  const app = readFileSync(new URL('../app.js', import.meta.url), 'utf8');
+  const native = readFileSync(new URL('../../src/lvgl_ui.c', import.meta.url), 'utf8');
+  const packer = readFileSync(new URL('../../tools/pack_sprites.py', import.meta.url), 'utf8');
+  const roles = readFileSync(new URL('../../tools/check_art_roles.py', import.meta.url), 'utf8');
+  for (const [kind, file, sprite] of [
+    ['triggerCount', 'Триггер-счёта.png', 'PV_ART_LEVEL_TRIGGER_COUNT'],
+    ['triggerToggle', 'Триггер-переключатель.png', 'PV_ART_LEVEL_TRIGGER_TOGGLE'],
+    ['triggerSpawn', 'Триггер-появления.png', 'PV_ART_LEVEL_TRIGGER_SPAWN'],
+  ]) {
+    assert(app.includes(`${kind}: '${file}'`), `${kind} browser artwork is registered`);
+    assert(packer.includes(`("${sprite.replace('PV_ART_', '')}", "assets/art/${file}")`),
+      `${sprite} is packed from the supplied PNG`);
+    assert(roles.includes(`"${sprite.replace('PV_ART_', '')}": "assets/art/${file}"`));
+    assert(native.includes(sprite), `${sprite} is used by the native workshop`);
+  }
 });
 
 function recordingCanvas() {
@@ -271,7 +360,7 @@ test('world placement is scrollable across large positive and negative coordinat
     assert.equal(addObject(level, 'trigger', kind === 'rotate' ? 8 : 7, 5, kind).trigger.kind, kind);
   assert.deepEqual(TRIGGER_KINDS,
     ['move', 'rotate', 'forever', 'invisibility', 'no-collision', 'gravity',
-      'recolor', 'background']);
+      'recolor', 'background', 'count', 'toggle', 'spawn']);
   assert.equal(validateDraft(level).ok, true);
 });
 
@@ -408,8 +497,10 @@ test('recolor and background triggers round-trip, target groups, and update the 
   other.number = 43;
   const recolor = addObject(level, 'trigger', 100, 100, 'recolor');
   Object.assign(recolor.trigger, {event:'start', groupId:42, color:'#e547b2'});
+  recolor.defaultColor = false;
   const background = addObject(level, 'trigger', 102, 100, 'background');
   Object.assign(background.trigger, {event:'start', color:'#468bd0'});
+  background.defaultColor = false;
 
   assert.equal(validateDraft(level).ok, true);
   const record = publishedRecord('712', level);
@@ -443,6 +534,83 @@ test('recolor and background triggers round-trip, target groups, and update the 
   assert.equal(switched.objects.find(object => object.id === background.id).trigger.groupId, 3,
     'switching to recolor selects the recolorable built-in platform group');
   assert.equal(validateDraft(switched).ok, true);
+});
+
+test('the default color option keeps the object\'s own picture and round-trips', () => {
+  const level = newDraft('default-color');
+  const plain = addObject(level, 'block', 6, 6);
+  plain.number = 42;plain.color = '#123456';plain.defaultColor = true;
+  const tinted = addObject(level, 'block', 8, 6);
+  tinted.number = 43;tinted.color = '#e547b2';tinted.defaultColor = false;
+  const player = level.objects.find(object => object.type === 'player');
+  player.defaultColor = true;
+  const recolor = addObject(level, 'trigger', 100, 100, 'recolor');
+  Object.assign(recolor.trigger, {event:'start', groupId:43});
+  recolor.defaultColor = true;
+  const backdrop = addObject(level, 'trigger', 102, 100, 'background');
+  Object.assign(backdrop.trigger, {event:'start', color:'#468bd0'});
+  backdrop.defaultColor = true;
+
+  assert.equal(usesDefaultArtwork(plain), true);
+  assert.equal(usesDefaultArtwork(tinted), false);
+  // Nothing picked yet: a fresh recolorable object keeps the author artwork.
+  const untouched = newDraft('fresh-color');
+  const freshBlock = addObject(untouched, 'block', 6, 6);
+  const freshCoin = addObject(untouched, 'coin', 8, 6);
+  assert.equal(freshBlock.defaultColor, true, 'a new block shows its own picture');
+  assert.equal(usesDefaultArtwork(freshBlock), true);
+  assert.equal(freshCoin.defaultColor, undefined, 'fixed sprites need no switch');
+  assert.equal(usesDefaultArtwork(player), false,
+    'fixed sprites always keep their own artwork and need no switch');
+  assert.equal(defaultObjectColor('block'), '#55c8ea');
+  assert.equal(defaultObjectColor('player'), '#fffdf8');
+  assert.equal(validateDraft(level).ok, true);
+  const wrongType = structuredClone(level);
+  wrongType.objects.find(object => object.id === plain.id).defaultColor = 'yes';
+  assert.equal(validateDraft(wrongType).ok, false, 'the switch stays a boolean');
+
+  const record = publishedRecord('733', level);
+  const plainWire = record.project.objects.find(object => object.id === plain.id);
+  assert.equal(plainWire.defaultColor, true, 'default objects say so in the record');
+  assert.equal(plainWire.color, '#123456', 'the picked color is kept for later use');
+  assert.equal('defaultColor' in
+    record.project.objects.find(object => object.id === tinted.id), false,
+    'colored objects keep the exact payload of older records');
+  assert.equal('defaultColor' in
+    record.project.objects.find(object => object.type === 'player'), false);
+  assert.deepEqual(record.project.objects.find(object => object.id === recolor.id).trigger,
+    {kind:'recolor', event:'start', action:'recolor', groupId:43,
+      color:'#ffc54e', defaultColor:true});
+  assert.deepEqual(record.project.objects.find(object => object.id === backdrop.id).trigger,
+    {kind:'background', event:'start', action:'set-background',
+      color:'#468bd0', defaultColor:true});
+  assert.equal(isPublishedRecord(record, '733'), true);
+  const restored = draftFromPublished(record);
+  assert.equal(validateDraft(restored).ok, true);
+  assert.equal(restored.objects.find(o => o.id === plain.id).defaultColor, true);
+  assert.equal(restored.objects.find(o => o.id === recolor.id).defaultColor, true);
+
+  const editor = recordingCanvas();
+  drawEditorCanvas(editor.canvas, level, tinted.id);
+  const editorStyles = new Set([...editor.fills, ...editor.rectFills]
+    .map(fill => fill.style));
+  assert(editorStyles.has('#e547b2'), 'a picked color still tints its object');
+  assert(editorStyles.has('#55c8ea'), 'a default block falls back to its own color');
+  assert.equal(editorStyles.has('#123456'), false,
+    'a default object never paints the picked color over the author art');
+
+  const state = createPreviewState(restored);
+  assert.equal(state.objects.find(object => object.id === tinted.id).defaultColor, true,
+    'a default recolor trigger restores the normal artwork of its group');
+  assert.equal(state.backgroundColor, '#8bcce6',
+    'a default background trigger restores the normal backdrop');
+  const preview = recordingCanvas();
+  drawPreviewCanvas(preview.canvas, state);
+  const previewStyles = new Set([...preview.fills, ...preview.rectFills]
+    .map(fill => fill.style));
+  assert.equal(previewStyles.has('#e547b2'), false,
+    'the restored group is drawn with the author colors again');
+  assert(previewStyles.has('#55c8ea'), 'the restored block keeps its own color');
 });
 
 test('gravity triggers round-trip a signed level setting and change preview acceleration', () => {
@@ -552,7 +720,10 @@ test('portals switch forms on entry and Jetpack idles, moves, and renders active
   drawPreviewCanvas(idlePreview.canvas, state, 'keyboard', art);
   assert(idlePreview.images.some(call => call.image === inactiveArt),
     'the idle player uses the supplied inactive Jetpack artwork');
-  assert(idlePreview.labels.some(label => label === 'Монеты: 0'));
+  assert(idlePreview.labels.includes('Прогресс 0%'));
+  assert(idlePreview.labels.includes('Попытка 1'));
+  assert(idlePreview.labels.includes('Время 0:00'));
+  assert(idlePreview.labels.includes('Монеты 0/0'));
   assert.equal(idlePreview.labels.some(label => label.includes('↑/W, ↓/S')), false,
     'the preview HUD contains no instructional control hints');
 
@@ -637,7 +808,7 @@ test('control mode defaults to buttons on touch devices and can be chosen explic
 test('web artwork uses cached alpha-preserving tints in both editor and gameplay preview', () => {
   const level = newDraft('sprite-recolor');
   const block = addObject(level, 'block', 6, 6);
-  block.color = '#e547b2';
+  block.color = '#e547b2';block.defaultColor = false;
   const source = {naturalWidth:32, naturalHeight:32};
   const offscreen = [];
   const hadDocument = Object.hasOwn(globalThis, 'document');
@@ -744,6 +915,20 @@ test('workshop editor and preview use the supplied level artwork and tile wide p
   assert.equal(preview.images.filter(call => call.image.type === 'ground').length, 16);
 });
 
+test('falling below the level respawns at the player start when no checkpoint is active', () => {
+  const state = createPreviewState(newDraft('fall-respawn-start'));
+  const spawn = {...state.spawn};
+  state.x = spawn.x + 120;
+  state.y = state.fallPlaneY + 1;
+  state.vx = 80;state.vy = 780;
+  stepPreview(state, {}, 0);
+  assert.equal(state.x, spawn.x);assert.equal(state.y, spawn.y);
+  assert.equal(state.vx, 0);assert.equal(state.vy, 0);
+  assert.equal(state.checkpointId, 0);
+  stepPreview(state, {axis: 1}, .05);
+  assert(state.x > spawn.x, 'the player can keep playing after respawning');
+});
+
 test('checkpoints show their active art and respawn at the most recently touched marker', () => {
   const level = newDraft('checkpoint-runtime');
   const first = addObject(level, 'checkpoint', 2, 7);
@@ -752,7 +937,7 @@ test('checkpoints show their active art and respawn at the most recently touched
   assert.equal(validateDraft(level).ok, true);
   const state = createPreviewState(level);
   const activationOrder = [];
-  let previousCheckpoint = 0, died = false;
+  let previousCheckpoint = 0, respawned = false;
   for (let frame = 0; frame < 80; frame++) {
     const previousX = state.x;
     stepPreview(state, {axis: 1}, .05);
@@ -760,11 +945,11 @@ test('checkpoints show their active art and respawn at the most recently touched
       activationOrder.push(state.checkpointId);previousCheckpoint = state.checkpointId;
     }
     if (state.checkpointId === latest.id && previousX > state.spawn.x + 100 &&
-        state.x === state.spawn.x) {died = true;break;}
+        state.x === state.spawn.x) {respawned = true;break;}
   }
   assert.deepEqual(activationOrder, [first.id, latest.id],
     'each touched marker replaces the saved checkpoint in encounter order');
-  assert(died, 'the hazard should kill the player after both checkpoint activations');
+  assert(respawned, 'the hazard should respawn the player at the latest checkpoint');
   assert.equal(state.checkpointId, latest.id);
   assert(Math.abs(state.x - (latest.x + latest.w / 2 - .65 / 2) * 80) < 1e-6);
   assert(Math.abs(state.y - (latest.y + latest.h - .85) * 72) < 1e-6);
@@ -784,7 +969,8 @@ test('checkpoints show their active art and respawn at the most recently touched
     'only the most recently activated checkpoint uses active artwork');
   assert.equal(preview.images.filter(call => call.image === inactiveArt).length, 1);
 
-  state.y = WORLD_LIMIT * 72 + 10;state.vx = 40;state.vy = 800;state.grounded = true;
+  state.x += 120;
+  state.y = state.fallPlaneY + 10;state.vx = 40;state.vy = 800;state.grounded = true;
   stepPreview(state, {}, 0);
   assert.equal(state.x, state.spawn.x);assert.equal(state.y, state.spawn.y);
   assert.equal(state.vx, 0);assert.equal(state.vy, 0);

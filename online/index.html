@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#242424">
+  <meta name="theme-color" content="#20354b">
   <meta name="description" content="PvG3 Онлайн: играй за растения Кирилла или отправляй уток-зомби другу. Комнаты через Firebase.">
   <title>PvG3 Онлайн — растения против уток</title>
   <link rel="stylesheet" href="./style.css">
@@ -14,6 +14,10 @@
       <div class="brand"><span class="brand-mark"><img src="../assets/art/khlebushek.png" alt="Хлебушек"></span>
         <span><strong>PvG3</strong><small>онлайн-арена Кирилла</small></span></div>
       <div class="top-actions"><span class="connection" id="connection"><span class="dot"></span>Подключение…</span>
+        <div class="top-account-bar" aria-label="Аккаунт мастерской">
+          <span id="ws-account-status" class="top-account-status" aria-live="polite">Гость</span>
+          <button class="small-button" id="ws-account-open" type="button">Войти</button>
+        </div>
         <button class="small-button music-button" id="music" type="button" aria-label="Включить музыку">Музыка</button>
         <button class="small-button" id="book" type="button"><span class="icon-book" aria-hidden="true"></span>Книга</button></div>
     </header>
@@ -78,13 +82,32 @@
           <div class="ws-page-toolbar">
             <button class="small-button" id="ws-editor-back" type="button">Назад · Мастерская</button>
             <div class="ws-main-actions">
-              <button class="small-button" id="ws-preview" type="button"><span class="icon-play" aria-hidden="true"></span>Проверить</button>
+              <label class="ws-tutorial-toggle"><input id="ws-tutorial-toggle" type="checkbox">Обучение</label>
+            <button class="small-button" id="ws-preview" type="button"><span class="icon-play" aria-hidden="true"></span>Проверить</button>
               <button class="primary-button" id="ws-publish" type="button">Опубликовать</button>
             </div>
           </div>
           <div class="ws-project-fields">
-            <label>Название уровня<input id="ws-title-input" maxlength="80" autocomplete="off"></label>
-            <label>Краткое описание<textarea id="ws-description-input" maxlength="160" rows="2"></textarea></label>
+            <label><span data-ws-ru="Название уровня" data-ws-en="Level title">Название уровня</span><input id="ws-title-input" maxlength="80" autocomplete="off"></label>
+            <label><span data-ws-ru="Краткое описание" data-ws-en="Short description">Краткое описание</span><textarea id="ws-description-input" maxlength="160" rows="2"></textarea></label>
+            <div class="ws-project-extra">
+              <label><span data-ws-ru="Сложность" data-ws-en="Difficulty">Сложность</span>
+                <select id="ws-difficulty-input">
+                  <option value="easy" data-ws-ru="Лёгкая" data-ws-en="Easy">Лёгкая</option>
+                  <option value="normal" data-ws-ru="Обычная" data-ws-en="Normal">Обычная</option>
+                  <option value="hard" data-ws-ru="Сложная" data-ws-en="Hard">Сложная</option>
+                  <option value="expert" data-ws-ru="Экспертная" data-ws-en="Expert">Экспертная</option>
+                </select>
+              </label>
+              <label><span data-ws-ru="Теги · через запятую" data-ws-en="Tags · comma separated">Теги · через запятую</span>
+                <input id="ws-tags-input" maxlength="140" autocomplete="off" placeholder="скорость, тайминг"></label>
+              <fieldset class="ws-movement-fields">
+                <legend data-ws-ru="Способности игрока" data-ws-en="Player abilities">Способности игрока</legend>
+                <label><input id="ws-ability-double-jump" type="checkbox"><span data-ws-ru="Двойной прыжок" data-ws-en="Double jump">Двойной прыжок</span></label>
+                <label><input id="ws-ability-dash" type="checkbox"><span data-ws-ru="Рывок" data-ws-en="Dash">Рывок</span></label>
+                <label><input id="ws-ability-wall-slide" type="checkbox"><span data-ws-ru="Скольжение по стене" data-ws-en="Wall slide">Скольжение по стене</span></label>
+              </fieldset>
+            </div>
           </div>
           <div class="ws-editor-layout">
             <div class="ws-board-column">
@@ -96,7 +119,7 @@
               <div class="ws-tool-group"><span class="overline">РЕЖИМ</span>
                 <div class="ws-mode-buttons"><button type="button" data-ws-tool="build" class="active">Строить</button><button type="button" data-ws-tool="select">Выбрать</button><button type="button" data-ws-tool="multi">Мульти</button><button type="button" data-ws-tool="delete">Удалить</button><button type="button" data-ws-tool="pan">Карта</button></div></div>
               <div class="ws-tool-group ws-transform-tools">
-                <span class="overline">ВЫДЕЛЕНИЕ И ПРЕОБРАЗОВАНИЕ</span>
+                <span class="overline ws-hint">ВЫДЕЛЕНИЕ И ПРЕОБРАЗОВАНИЕ</span>
                 <strong id="ws-selection-count" aria-live="polite">0 выбрано</strong>
                 <div class="ws-transform-actions"><button id="ws-copy-selected" type="button" disabled>Копировать</button><button id="ws-paste-selected" type="button" disabled>Вставить</button></div>
                 <div class="ws-transform-move">
@@ -116,14 +139,14 @@
                   <button type="button" data-ws-rotate="-1" aria-label="Повернуть против часовой стрелки"><img class="ws-rotate-icon rotate-ccw" src="../assets/art/Переворот-блоков.png" alt="" aria-hidden="true"><span data-ws-rotate-label>-45°</span></button>
                   <button type="button" data-ws-rotate="1" aria-label="Повернуть по часовой стрелке"><img class="ws-rotate-icon rotate-cw" src="../assets/art/Переворот-блоков.png" alt="" aria-hidden="true"><span data-ws-rotate-label>+45°</span></button>
                 </div>
-                <span class="overline">ЗЕРКАЛЬНОЕ ОТРАЖЕНИЕ</span>
+                <span class="overline ws-hint">ЗЕРКАЛЬНОЕ ОТРАЖЕНИЕ</span>
                 <div class="ws-flip-actions" role="group" aria-label="Отразить выделение">
                   <button type="button" data-ws-flip="x" aria-label="Отразить слева направо"><svg class="ws-flip-icon" viewBox="0 0 32 32" aria-hidden="true"><path class="mirror-axis" d="M16 3v26"/><path d="M12 8 5 16l7 8z"/><path d="m20 8 7 8-7 8z"/></svg><span>Слева ↔ справа</span></button>
                   <button type="button" data-ws-flip="y" aria-label="Отразить сверху вниз"><svg class="ws-flip-icon" viewBox="0 0 32 32" aria-hidden="true"><path class="mirror-axis" d="M3 16h26"/><path d="m8 12 8-7 8 7z"/><path d="m8 20 8 7 8-7z"/></svg><span>Сверху ↕ снизу</span></button>
                 </div>
               </div>
               <div class="ws-tool-group ws-map-pan-tools">
-                <span class="overline">ПЕРЕМЕЩЕНИЕ КАРТЫ</span>
+                <span class="overline ws-hint">ПЕРЕМЕЩЕНИЕ КАРТЫ</span>
                 <div class="ws-transform-move">
                   <label>Шаг карты<input id="ws-pan-step" type="number" min="0.1" max="100" step="0.1" value="1"></label>
                   <div class="ws-nudge-grid ws-pan-grid" role="group" aria-label="Сдвинуть окно карты">
@@ -154,20 +177,25 @@
                   <div class="ws-number-fields"><label>X<input id="ws-object-x" type="number" min="-100000" max="100000" step="0.1"></label><label>Y<input id="ws-object-y" type="number" min="-100000" max="100000" step="0.1"></label><label>Число<input id="ws-object-number" type="number" min="0" max="9999" step="1"></label></div>
                   <div class="ws-number-fields"><label>Ширина<input id="ws-object-width" type="number" min="0.1" max="64" step="0.1"></label><label>Высота<input id="ws-object-height" type="number" min="0.1" max="40" step="0.1"></label><label>Поворот<input id="ws-object-angle" type="number" min="0" max="359.9" step="0.1"></label></div>
                   <label class="ws-color-field">Цвет<input id="ws-object-color" type="color" value="#55c8ea"></label>
+                  <label class="ws-color-field ws-color-default-field">По умолчанию<input id="ws-object-color-default" type="checkbox"></label>
                   <div id="ws-particle-fields" class="ws-particle-fields hidden">
                     <button class="small-button" id="ws-particle-settings" type="button">Настроить эмиттер</button>
                   </div>
                   <div id="ws-trigger-fields" class="hidden">
-                  <label>Вид триггера<select id="ws-trigger-kind"><option value="move">Движение</option><option value="rotate">Разворот</option><option value="forever">Вечно</option><option value="invisibility">Невидимость</option><option value="no-collision">Нет столкновения</option><option value="gravity">Гравитация</option><option value="recolor">Перекраска</option><option value="background">Фон</option></select></label>
-                  <label id="ws-trigger-event-field">Событие<select id="ws-trigger-event"><option value="touch">Касание</option><option value="coin">Подбор монеты</option><option value="manual">Кнопка действия</option><option value="start">Старт уровня</option></select></label>
+                  <label><span data-ws-ru="Вид триггера" data-ws-en="Trigger type">Вид триггера</span><select id="ws-trigger-kind">
+                    <option value="move" data-ws-ru="Движение" data-ws-en="Move">Движение</option><option value="rotate" data-ws-ru="Разворот" data-ws-en="Rotate">Разворот</option><option value="forever" data-ws-ru="Вечно" data-ws-en="Forever">Вечно</option><option value="invisibility" data-ws-ru="Невидимость" data-ws-en="Invisibility">Невидимость</option><option value="no-collision" data-ws-ru="Нет столкновения" data-ws-en="No collision">Нет столкновения</option><option value="gravity" data-ws-ru="Гравитация" data-ws-en="Gravity">Гравитация</option><option value="recolor" data-ws-ru="Перекраска" data-ws-en="Recolor">Перекраска</option><option value="background" data-ws-ru="Фон" data-ws-en="Background">Фон</option><option value="count" data-ws-ru="Счётчик" data-ws-en="Count">Счётчик</option><option value="toggle" data-ws-ru="Переключатель" data-ws-en="Toggle">Переключатель</option><option value="spawn" data-ws-ru="Появление" data-ws-en="Spawn">Появление</option>
+                  </select></label>
+                  <label id="ws-trigger-event-field"><span data-ws-ru="Событие" data-ws-en="Event">Событие</span><select id="ws-trigger-event"><option value="touch" data-ws-ru="Касание" data-ws-en="Touch">Касание</option><option value="coin" data-ws-ru="Подбор монеты" data-ws-en="Collect coin">Подбор монеты</option><option value="manual" data-ws-ru="Кнопка действия" data-ws-en="Action button">Кнопка действия</option><option value="start" data-ws-ru="Старт уровня" data-ws-en="Level start">Старт уровня</option></select></label>
+                  <label id="ws-trigger-touch-mode-field" class="hidden"><span data-ws-ru="Режим касания" data-ws-en="Touch mode">Режим касания</span><select id="ws-trigger-touch-mode"><option value="enter" data-ws-ru="При входе" data-ws-en="On enter">При входе</option><option value="exit" data-ws-ru="При выходе" data-ws-en="On exit">При выходе</option><option value="stay" data-ws-ru="Пока внутри · раз в 0,25 с" data-ws-en="While inside · every 0.25 s">Пока внутри · раз в 0,25 с</option></select></label>
                   <div id="ws-trigger-motion-fields">
-                    <label>Целевая группа<input id="ws-trigger-group" type="number" min="0" max="9999" step="1"></label>
+                    <label id="ws-trigger-group-field"><span data-ws-ru="Целевая группа" data-ws-en="Target group">Целевая группа</span><input id="ws-trigger-group" type="number" min="0" max="9999" step="1"></label>
+                    <label id="ws-trigger-count-field" class="hidden"><span data-ws-ru="Срабатываний до действия" data-ws-en="Activations before action">Срабатываний до действия</span><input id="ws-trigger-count" type="number" min="1" max="999" step="1"></label>
                     <div id="ws-trigger-move-fields" class="ws-number-fields ws-trigger-values">
-                      <label>Смещение X<input id="ws-trigger-x" type="number" min="-9999" max="9999" step="1"></label>
-                      <label>Смещение Y<input id="ws-trigger-y" type="number" min="-9999" max="9999" step="1"></label>
+                      <label><span data-ws-ru="Смещение X" data-ws-en="Offset X">Смещение X</span><input id="ws-trigger-x" type="number" min="-9999" max="9999" step="1"></label>
+                      <label><span data-ws-ru="Смещение Y" data-ws-en="Offset Y">Смещение Y</span><input id="ws-trigger-y" type="number" min="-9999" max="9999" step="1"></label>
                     </div>
                     <div id="ws-trigger-rotate-field" class="hidden">
-                      <label>Время вращения, с<input id="ws-trigger-duration" type="number" min="1" max="9999" step="1"></label>
+                      <label><span data-ws-ru="Время вращения, с" data-ws-en="Rotation time, s">Время вращения, с</span><input id="ws-trigger-duration" type="number" min="1" max="9999" step="1"></label>
                     </div>
                   </div>
                   <div id="ws-trigger-gravity-field" class="ws-trigger-gravity hidden">
@@ -179,8 +207,8 @@
                     <input id="ws-trigger-color" type="color" value="#ffc54e">
                   </div>
                   <div id="ws-trigger-forever-fields" class="hidden">
-                    <label>Группа<input id="ws-trigger-forever-group" type="number" min="0" max="9999" step="1"></label>
-                    <label>Действие<select id="ws-trigger-action"><option value="activate">Активировать</option><option value="unactivate">Деактивировать</option></select></label>
+                    <label><span data-ws-ru="Группа" data-ws-en="Group">Группа</span><input id="ws-trigger-forever-group" type="number" min="0" max="9999" step="1"></label>
+                    <label><span data-ws-ru="Действие" data-ws-en="Action">Действие</span><select id="ws-trigger-action"><option value="activate" data-ws-ru="Активировать" data-ws-en="Activate">Активировать</option><option value="unactivate" data-ws-ru="Деактивировать" data-ws-en="Deactivate">Деактивировать</option></select></label>
                   </div>
                   </div>
                 </div>
@@ -202,7 +230,8 @@
             <div class="ws-touch-controls hidden" id="ws-buttons-controls" aria-label="Экранные кнопки">
               <button type="button" data-ws-hold="back" aria-label="Назад"><span class="ws-control-arrow ws-arrow-back" aria-hidden="true"></span><span>НАЗАД</span></button>
               <button type="button" data-ws-hold="forward" aria-label="Вперёд"><span class="ws-control-arrow ws-arrow-forward" aria-hidden="true"></span><span>ВПЕРЁД</span></button>
-              <button type="button" data-ws-press="jump" data-ws-normal-control>ПРЫЖОК</button>
+              <button type="button" data-ws-press="jump" data-ws-normal-control data-ws-ru="ПРЫЖОК" data-ws-en="JUMP">ПРЫЖОК</button>
+              <button type="button" data-ws-press="dash" id="ws-dash-control" class="hidden" data-ws-ru="РЫВОК" data-ws-en="DASH">РЫВОК</button>
               <button type="button" data-ws-hold="up" data-ws-jetpack-control class="hidden" aria-label="Подъём">↑ ВВЕРХ</button>
               <button type="button" data-ws-hold="down" data-ws-jetpack-control class="hidden" aria-label="Спуск">↓ ВНИЗ</button>
               <button type="button" data-ws-press="trigger">ДЕЙСТВИЕ</button>
@@ -213,7 +242,14 @@
 
         <section class="ws-page hidden" id="ws-catalog-page" aria-label="Каталог уровней игроков">
           <div class="ws-page-toolbar"><button class="small-button" id="ws-catalog-back" type="button">Назад · Мастерская</button>
-            <h2>Уровни игроков</h2><button class="small-button" id="ws-catalog-refresh" type="button"><img class="refresh-icon" src="../assets/art/Переворот-блоков.png" alt="" aria-hidden="true">Обновить</button></div>
+            <h2 data-ws-ru="Уровни игроков" data-ws-en="Player levels">Уровни игроков</h2>
+            <button class="small-button" id="ws-catalog-refresh" type="button"><img class="refresh-icon" src="../assets/art/Переворот-блоков.png" alt="" aria-hidden="true"><span data-ws-ru="Обновить" data-ws-en="Refresh">Обновить</span></button></div>
+          <div class="ws-catalog-filters" role="search" aria-label="Поиск и фильтры уровней">
+            <label class="ws-catalog-search"><span data-ws-ru="Поиск" data-ws-en="Search">Поиск</span><input id="ws-catalog-search" type="search" autocomplete="off" placeholder="Название, автор, описание или тег"></label>
+            <label><span data-ws-ru="Сложность" data-ws-en="Difficulty">Сложность</span><select id="ws-catalog-difficulty"><option value="all" data-ws-ru="Любая" data-ws-en="Any">Любая</option><option value="easy" data-ws-ru="Лёгкая" data-ws-en="Easy">Лёгкая</option><option value="normal" data-ws-ru="Обычная" data-ws-en="Normal">Обычная</option><option value="hard" data-ws-ru="Сложная" data-ws-en="Hard">Сложная</option><option value="expert" data-ws-ru="Экспертная" data-ws-en="Expert">Экспертная</option></select></label>
+            <label><span data-ws-ru="Тег" data-ws-en="Tag">Тег</span><select id="ws-catalog-tag"><option value="all" data-ws-ru="Все теги" data-ws-en="All tags">Все теги</option></select></label>
+            <label><span data-ws-ru="Сортировка" data-ws-en="Sort by">Сортировка</span><select id="ws-catalog-sort"><option value="newest" data-ws-ru="Сначала новые" data-ws-en="Newest">Сначала новые</option><option value="likes" data-ws-ru="Больше лайков" data-ws-en="Most liked">Больше лайков</option><option value="dislikes" data-ws-ru="Больше дизлайков" data-ws-en="Most disliked">Больше дизлайков</option><option value="title" data-ws-ru="По названию" data-ws-en="Title">По названию</option></select></label>
+          </div>
           <div id="ws-catalog-list" class="ws-catalog-list"><p class="muted">Загружаем каталог…</p></div>
           <p id="ws-catalog-message" class="ws-error hidden" role="status" aria-live="polite"></p>
         </section>
@@ -279,6 +315,24 @@
     <footer class="ws-particle-dialog-foot">
       <button id="ws-particle-reset" class="small-button" type="button">По умолчанию</button>
       <button id="ws-particle-close-bottom" class="small-button primary" type="button">Готово</button>
+    </footer>
+  </dialog>
+  <dialog id="ws-account-dialog" class="book-dialog" aria-labelledby="ws-account-title">
+    <header class="ws-particle-dialog-head">
+      <span class="overline">МАСТЕРСКАЯ</span>
+      <h2 id="ws-account-title">Аккаунт</h2>
+      <button id="ws-account-close" class="round-icon" type="button" aria-label="Закрыть">×</button>
+    </header>
+    <form id="ws-account-form" class="ws-account-form">
+      <p class="muted">Ник: a–z, 0–9, _ (3–24 знака). Пароль: 6–72 знака без пробелов.</p>
+      <label>Ник<input id="ws-account-login" type="text" minlength="3" maxlength="24" autocomplete="username" spellcheck="false" required></label>
+      <label>Пароль<input id="ws-account-password" type="password" minlength="6" maxlength="72" autocomplete="current-password" required></label>
+      <p id="ws-account-message" class="ws-error hidden" role="status" aria-live="polite"></p>
+    </form>
+    <footer class="ws-particle-dialog-foot">
+      <button id="ws-account-signout" class="small-button hidden" type="button">Выйти</button>
+      <button id="ws-account-create" class="small-button" type="button">Создать аккаунт</button>
+      <button id="ws-account-signin" class="small-button primary" type="submit" form="ws-account-form">Войти</button>
     </footer>
   </dialog>
   <audio id="soundtrack" src="../assets/music/kirill-pond-loop.wav" preload="none" loop></audio>

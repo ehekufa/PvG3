@@ -2,7 +2,9 @@ import {PLANTS, DUCKS, W, H, X, Y, CW, CH, ROWS, COLS,
         newMatch, validMatch, applyCommand, stepMatch} from './rules.js';
 import {DATABASE, validId, randomPlayerId, listRooms, getRoom, createRoom,
         joinRoom, chooseRole, writeState, writeCommand, heartbeat, leaveRoom,
-        listPublishedLevels, getPublishedLevel, publishLevel} from './firebase.js';
+        listPublishedLevels, getPublishedLevel, publishLevel,
+        setLevelReaction} from './firebase.js';
+import {rotateToken} from './accounts.js';
 import {preloadArtwork, drawGame} from './draw.js';
 import {LEVEL_WIDTH, LEVEL_HEIGHT, MAX_LEVEL_OBJECTS, WORLD_LIMIT,
         MIN_OBJECT_SIZE, MAX_OBJECT_WIDTH, MAX_OBJECT_HEIGHT, TILE_W, TILE_H,
@@ -12,10 +14,28 @@ import {LEVEL_WIDTH, LEVEL_HEIGHT, MAX_LEVEL_OBJECTS, WORLD_LIMIT,
         moveObjects, resizeObjects, rotateObjects, flipObjects, panCamera, copyObjects, pasteObjects,
         createPreviewState, stepPreview,
         drawEditorCanvas, drawPreviewCanvas, normalizeParticleEmitter,
-        drawParticleEmitterPreview,
+        drawParticleEmitterPreview, filterPublishedLevels,
         resolveControlMode, createTouchButtonState} from './workshop.js';
+import {currentSession, createAccount, signIn, signOut, isModerator, onSessionChange,
+        loadBans, isBanned, loadComments, postComment, hideComment, banAccount,
+        unbanAccount, setLevelOfficial, MAX_COMMENT} from './accounts.js';
 
 const $ = id => document.getElementById(id);
+const requestedLocale = new URLSearchParams(location.search).get('lang');
+const WS_ENGLISH = requestedLocale ? requestedLocale.toLowerCase().startsWith('en') :
+  (navigator.language || '').toLowerCase().startsWith('en');
+document.documentElement.lang = WS_ENGLISH ? 'en' : 'ru';
+const wsText = (ru, en) => WS_ENGLISH ? en : ru;
+function applyWorkshopLocale() {
+  for (const node of document.querySelectorAll('[data-ws-ru][data-ws-en]'))
+    node.textContent = node.getAttribute(WS_ENGLISH ? 'data-ws-en' : 'data-ws-ru');
+  $('ws-tags-input').placeholder = wsText('скорость, тайминг', 'speed, timing');
+  $('ws-catalog-search').placeholder = wsText(
+    'Название, автор, описание или тег', 'Title, author, description, or tag');
+  $('ws-catalog-page').setAttribute('aria-label',
+    wsText('Каталог уровней игроков', 'Player level catalog'));
+}
+applyWorkshopLocale();
 const canvas = $('battle');
 const sections = {rooms: $('rooms-screen'), lobby: $('lobby-screen'), match: $('match-screen'),
   workshop: $('workshop-screen')};
@@ -26,6 +46,8 @@ let lastFrame = performance.now(), lastPing = 0, generation = 0;
 let toastTimer;
 const WS_DRAFT_KEY = 'pvg3-workshop-draft-v1';
 const WS_CONTROL_KEY = 'pvg3-workshop-control-v1';
+const WS_TUTORIAL_KEY = 'pvg3-workshop-tutorial-v1';
+const WS_ACCOUNT_LOGIN_KEY = 'pvg3-account-last-login-v1';
 const WS_DB_NAME = 'pvg3-workshop';
 const WS_DB_STORE = 'drafts';
 const WS_LOCAL_FALLBACK_MAX = 1024 * 1024;
@@ -36,15 +58,19 @@ const wsPages = {home: $('ws-home-page'), editor: $('ws-editor-page'),
 let wsDraftFromLocalStorage = false;
 let wsPage = 'home', wsDraft = loadWorkshopDraft(), wsTool = 'build', wsType = 'block';
 let wsDraftReady = Promise.resolve();
+let publishAfterAccount = false;
 let wsTriggerKind = 'move', wsBlockType = 'block', wsOrbType = 'orb-yellow';
 let wsGoalType = 'goal', wsPortalType = 'portal-normal', wsPaletteSelected = true;
 let wsSelectedId = 0, wsSelectedIds = new Set(), wsClipboard = [];
 let wsDrag = null, wsPanDrag = null, wsCatalogGeneration = 0, wsCatalog = [];
 let wsCamera = {x: 0, y: 0};
 let wsPreviewState = null, wsPreviewLevel = null, wsPreviewReturn = 'editor';
+let wsBans = {};
 let wsParticleDialogObjectId = 0, wsParticlePreviewTime = 0, wsParticleAnimation = 0;
 let wsControlPreference = localSetting(WS_CONTROL_KEY, 'auto'), wsControlMode = 'keyboard';
-let wsJumpQueued = false, wsTriggerQueued = false;
+// Tool captions such as «ЗЕРКАЛЬНОЕ ОТРАЖЕНИЕ» are a tutorial aid only.
+let wsTutorialHints = localSetting(WS_TUTORIAL_KEY, '0') === '1';
+let wsJumpQueued = false, wsDashQueued = false, wsTriggerQueued = false;
 const wsTouchButtons = createTouchButtonState();
 const wsKeys = new Set();
 let wsWinAnnounced = false;
@@ -57,6 +83,9 @@ const WS_ART_FILES = {
   triggerInvisibility: 'Триггер-невидимости.png',
   triggerNoCollision: 'Триггер-нет столкновения.png',
   triggerGravity: 'Триггер-гравитации.png', triggerColor: 'Триггер-цвет.png',
+  triggerCount: 'Триггер-счёта.png',
+  triggerToggle: 'Триггер-переключатель.png',
+  triggerSpawn: 'Триггер-появления.png',
   'orb-orange': 'Оранжевый opб.png', 'orb-yellow': 'Жёлтый орб.png',
   checkpoint: 'Чекпоинт-выключен.png', checkpointActive: 'Чекпоинт-включён.png',
   'portal-normal': 'Портал-обычный.png', 'portal-jetpack': 'Портал-джетпака.png',
@@ -81,6 +110,13 @@ const wsArt = Object.fromEntries(Object.entries(WS_ART_FILES).map(([type, file])
 const savedId = sessionStorage.getItem('pvg3-online-player');
 const playerId = savedId && /^[0-9a-f]{32}$/.test(savedId) ? savedId : randomPlayerId();
 sessionStorage.setItem('pvg3-online-player', playerId);
+let statsClientId = '';
+try {
+  const savedStatsId = localStorage.getItem('pvg3-level-stats-client');
+  statsClientId = savedStatsId && /^[0-9a-f]{32}$/.test(savedStatsId) ?
+    savedStatsId : randomPlayerId();
+  localStorage.setItem('pvg3-level-stats-client', statsClientId);
+} catch {statsClientId = playerId;}
 
 function show(name) {
   screen = name;
@@ -288,6 +324,11 @@ function renderPaletteOptions() {
 function renderWorkshopEditor() {
   $('ws-title-input').value = wsDraft.title;
   $('ws-description-input').value = wsDraft.description;
+  $('ws-difficulty-input').value = wsDraft.difficulty || 'normal';
+  $('ws-tags-input').value = (wsDraft.tags || []).join(', ');
+  $('ws-ability-double-jump').checked = wsDraft.movement?.doubleJump === true;
+  $('ws-ability-dash').checked = wsDraft.movement?.dash === true;
+  $('ws-ability-wall-slide').checked = wsDraft.movement?.wallSlide === true;
   $('ws-object-count').textContent = `${wsDraft.objects.length} / ${MAX_LEVEL_OBJECTS} объектов`;
   for (const button of document.querySelectorAll('[data-ws-tool]'))
     button.classList.toggle('active', button.dataset.wsTool === wsTool);
@@ -352,7 +393,11 @@ function renderSelectedObject() {
     return;
   }
   if (!object) return;
-  const triggerLabel = object.type === 'trigger' ? ` · ${TRIGGER_LABELS[object.trigger?.kind || 'move']}` : '';
+  const triggerKind = object.trigger?.kind || 'move';
+  const triggerName = triggerKind === 'count' ? wsText('Счётчик', 'Count') :
+    triggerKind === 'toggle' ? wsText('Переключатель', 'Toggle') :
+    triggerKind === 'spawn' ? wsText('Появление', 'Spawn') : TRIGGER_LABELS[triggerKind];
+  const triggerLabel = object.type === 'trigger' ? ` · ${triggerName}` : '';
   $('ws-selected-label').textContent = `${TYPE_LABELS[object.type]}${triggerLabel} · ID ${object.id}`;
   $('ws-object-x').value = Number(object.x.toFixed(2));
   $('ws-object-y').value = Number(object.y.toFixed(2));
@@ -365,6 +410,11 @@ function renderSelectedObject() {
   colorInput.value = object.color;
   colorInput.disabled = !canRecolor;
   colorInput.closest('.ws-color-field').classList.toggle('is-disabled', !canRecolor);
+  const defaultColorInput = $('ws-object-color-default');
+  defaultColorInput.checked = canRecolor && object.defaultColor === true;
+  defaultColorInput.disabled = !canRecolor;
+  defaultColorInput.closest('.ws-color-default-field')
+    .classList.toggle('is-disabled', !canRecolor);
   const triggerFields = $('ws-trigger-fields');
   triggerFields.classList.toggle('hidden', object.type !== 'trigger');
   if (object.type === 'particle') object.emitter = normalizeParticleEmitter(object.emitter);
@@ -378,17 +428,26 @@ function renderSelectedObject() {
   const background = kind === 'background';
   const recolor = kind === 'recolor';
   const moving = kind === 'move';
+  const grouped = ['move', 'rotate', 'invisibility', 'no-collision',
+    'recolor', 'count', 'toggle', 'spawn'].includes(kind);
   const legacyTarget = wsDraft.objects.find(candidate => candidate.id === t.targetId);
   const groupId = Number.isInteger(t.groupId) ? t.groupId :
     Number.isInteger(legacyTarget?.number) ? legacyTarget.number : 0;
   $('ws-trigger-event').value = t.event || 'touch';
+  $('ws-trigger-touch-mode-field').classList.toggle('hidden', (t.event || 'touch') !== 'touch');
+  $('ws-trigger-touch-mode').value = ['enter', 'exit', 'stay'].includes(t.touchMode) ?
+    t.touchMode : 'enter';
   $('ws-trigger-motion-fields').classList.toggle('hidden', forever || gravity || background);
+  $('ws-trigger-group-field').classList.toggle('hidden', !grouped);
+  $('ws-trigger-count-field').classList.toggle('hidden', kind !== 'count');
+  $('ws-trigger-count').value = Number.isInteger(t.count) ? t.count : 3;
   $('ws-trigger-move-fields').classList.toggle('hidden', !moving);
   $('ws-trigger-rotate-field').classList.toggle('hidden', !rotate);
   $('ws-trigger-forever-fields').classList.toggle('hidden', !forever);
   $('ws-trigger-gravity-field').classList.toggle('hidden', !gravity);
   $('ws-trigger-color-field').classList.toggle('hidden', !recolor && !background);
-  $('ws-trigger-color-label').textContent = background ? 'Цвет фона' : 'Цвет объектов';
+  $('ws-trigger-color-label').textContent = background ?
+    wsText('Цвет фона', 'Background color') : wsText('Цвет объектов', 'Object color');
   $('ws-trigger-color').value = /^#[0-9a-f]{6}$/i.test(t.color || '') ? t.color : '#ffc54e';
   $('ws-trigger-group').value = groupId;
   $('ws-trigger-forever-group').value = groupId;
@@ -552,9 +611,11 @@ function wsPointerUp(event) {
 function updateSelectedProperty(property, value) {
   const object = wsObject(wsSelectedId);
   if (!object || wsSelectedIds.size !== 1 ||
-      (property === 'color' && !canManuallyRecolorType(object.type))) return;
+      (property === 'color' && !canManuallyRecolorType(object.type)) ||
+      (property === 'defaultColor' && !canManuallyRecolorType(object.type))) return;
   const n = Number(value);
-  if (property !== 'color' && !Number.isFinite(n)) return;
+  if (property !== 'color' && property !== 'defaultColor' &&
+      !Number.isFinite(n)) return;
   if (property === 'x' || property === 'y') {
     object[property] = Math.max(-WORLD_LIMIT,
       Math.min(WORLD_LIMIT - object[property === 'x' ? 'w' : 'h'], n));
@@ -569,7 +630,8 @@ function updateSelectedProperty(property, value) {
     object.angle = ((n % 360) + 360) % 360;
   } else if (property === 'number') {
     object.number = Math.max(0, Math.min(9999, Math.trunc(n)));
-  } else if (property === 'color') object.color = value;
+  } else if (property === 'color') {object.color = value;object.defaultColor = false;}
+  else if (property === 'defaultColor') object.defaultColor = value === true;
   wsRedrawEditor();saveWorkshopDraft();
 }
 function wsStep(id, fallback) {
@@ -647,7 +709,14 @@ function updateSelectedTrigger(property, value) {
   if (property === 'kind') {
     if (!setTriggerKind(wsDraft, object.id, value)) return;
   } else if (property === 'event') {
+    if (!['touch', 'coin', 'manual', 'start'].includes(value)) return;
     t.event = value;
+  } else if (property === 'touchMode') {
+    if (!['enter', 'exit', 'stay'].includes(value)) return;
+    t.touchMode = value;
+  } else if (property === 'count') {
+    const n = Number(value);if (!Number.isFinite(n)) return;
+    t.count = Math.max(1, Math.min(999, Math.trunc(n)));
   } else if (property === 'groupId') {
     const n = Number(value);if (!Number.isFinite(n)) return;
     t.groupId = Math.max(0, Math.min(9999, Math.trunc(n)));
@@ -688,15 +757,46 @@ function setCatalogMessage(message = '') {
   const node = $('ws-catalog-message');node.textContent = message;
   node.classList.toggle('hidden', !message);
 }
+function updateCatalogTagOptions() {
+  const select = $('ws-catalog-tag'), selected = select.value || 'all';
+  const tags = [...new Set(wsCatalog.flatMap(level => Array.isArray(level.tags) ? level.tags : []))]
+    .filter(tag => typeof tag === 'string' && tag.trim())
+    .sort((a, b) => a.localeCompare(b, WS_ENGLISH ? 'en' : 'ru'));
+  select.replaceChildren();
+  const all = document.createElement('option');all.value = 'all';
+  all.textContent = wsText('Все теги', 'All tags');select.append(all);
+  for (const tag of tags) {
+    const option = document.createElement('option');option.value = tag;
+    option.textContent = `#${tag}`;select.append(option);
+  }
+  select.value = tags.includes(selected) ? selected : 'all';
+}
+function filteredCatalog() {
+  return filterPublishedLevels(wsCatalog, {
+    query: $('ws-catalog-search').value,
+    difficulty: $('ws-catalog-difficulty').value,
+    tag: $('ws-catalog-tag').value,
+    sort: $('ws-catalog-sort').value,
+    language: WS_ENGLISH ? 'en' : 'ru',
+  });
+}
+function renderFilteredCatalog() {renderWorkshopCatalog(filteredCatalog());}
+function difficultyLabel(value) {
+  const labels = {easy: wsText('Лёгкая', 'Easy'), normal: wsText('Обычная', 'Normal'),
+    hard: wsText('Сложная', 'Hard'), expert: wsText('Экспертная', 'Expert')};
+  return labels[value] || labels.normal;
+}
 function renderWorkshopCatalog(levels) {
   const list = $('ws-catalog-list');list.replaceChildren();
   if (!levels.length) {
     const empty = document.createElement('p');empty.className = 'muted';
-    empty.textContent = 'В каталоге пока нет опубликованных уровней.';
+    empty.textContent = wsCatalog.length ?
+      wsText('Нет уровней по выбранным фильтрам.', 'No levels match these filters.') :
+      wsText('В каталоге пока нет опубликованных уровней.', 'No published levels yet.');
     list.append(empty);return;
   }
   for (const level of levels) {
-    const official = isOfficialLevel(level.id);
+    const official = isOfficialLevel(level.id, level);
     const card = document.createElement('article');
     card.className = official ? 'ws-level-card ws-level-card-official' : 'ws-level-card';
     const content = document.createElement('div');
@@ -705,16 +805,192 @@ function renderWorkshopCatalog(levels) {
     meta.append(id);
     if (official) {
       const badge = document.createElement('span');badge.className = 'ws-official-badge';
-      badge.textContent = 'ОФИЦИАЛЬНЫЙ';badge.setAttribute('aria-label', 'Официальный уровень');
+      badge.textContent = wsText('ОФИЦИАЛЬНЫЙ', 'OFFICIAL');
+      badge.setAttribute('aria-label', wsText('Официальный уровень', 'Official level'));
       meta.append(badge);
     }
+    const difficulty = document.createElement('span');difficulty.className = 'ws-difficulty-badge';
+    difficulty.textContent = difficultyLabel(level.difficulty);meta.append(difficulty);
     const title = document.createElement('h3');title.textContent = level.title;
-    const description = document.createElement('p');description.textContent = level.description || 'Авторский платформерный уровень.';
+    const description = document.createElement('p');description.textContent = level.description ||
+      wsText('Авторский платформерный уровень.', 'Player-made platform level.');
     content.append(meta, title, description);
-    const button = document.createElement('button');button.type = 'button';button.textContent = 'Играть';
-    button.addEventListener('click', () => playPublishedLevel(level.id, button));
-    card.append(content, button);list.append(card);
+    if (Array.isArray(level.tags) && level.tags.length) {
+      const tags = document.createElement('div');tags.className = 'ws-level-tags';
+      for (const value of level.tags) {
+        const tag = document.createElement('span');tag.className = 'ws-level-tag';
+        tag.textContent = `#${value}`;tags.append(tag);
+      }
+      content.append(tags);
+    }
+    const playButton = document.createElement('button');playButton.type = 'button';
+    playButton.className = 'ws-level-play';
+    playButton.textContent = wsText('Играть', 'Play');
+    playButton.addEventListener('click', () => playPublishedLevel(level.id, playButton));
+    const panel = document.createElement('div');panel.className = 'ws-comments hidden';
+    const stats = document.createElement('div');stats.className = 'ws-level-stats';
+    const like = catalogReactionButton(level, 'like');
+    const dislike = catalogReactionButton(level, 'dislike');
+    stats.append(like, dislike);
+    card.append(content, playButton, stats, levelFooter(level, official, panel), panel);
+    list.append(card);
   }
+}
+function catalogReactionButton(level, reaction) {
+  const isLike = reaction === 'like';
+  const active = isLike ? level.liked === true : level.disliked === true;
+  const count = isLike ? level.likes || 0 : level.dislikes || 0;
+  const button = document.createElement('button');button.type = 'button';
+  button.className = `ws-reaction-button ${isLike ? 'ws-like-button' : 'ws-dislike-button'}` +
+    (active ? isLike ? ' is-liked' : ' is-disliked' : '');
+  button.setAttribute('aria-pressed', String(active));
+  const action = isLike ?
+    (active ? wsText('Убрать лайк', 'Remove like') : wsText('Поставить лайк', 'Like this level')) :
+    (active ? wsText('Убрать дизлайк', 'Remove dislike') :
+      wsText('Поставить дизлайк', 'Dislike this level'));
+  const total = isLike ? wsText(`Лайков: ${count}`, `Likes: ${count}`) :
+    wsText(`Дизлайков: ${count}`, `Dislikes: ${count}`);
+  button.setAttribute('aria-label', `${action}. ${total}`);
+  const icon = document.createElement('img');
+  icon.src = new URL(`../assets/art/${isLike ? 'Лайк.png' : 'Дизлайк.png'}`, import.meta.url).href;
+  icon.alt = '';icon.setAttribute('aria-hidden', 'true');
+  const number = document.createElement('span');number.className = 'ws-reaction-count';
+  number.textContent = String(count);
+  button.append(icon, number);
+  button.addEventListener('click', () => toggleCatalogReaction(level, reaction, button));
+  return button;
+}
+async function toggleCatalogReaction(level, reaction, button) {
+  const wasLiked = level.liked === true, wasDisliked = level.disliked === true;
+  const current = wasLiked ? 'like' : wasDisliked ? 'dislike' : null;
+  const desired = current === reaction ? null : reaction;
+  button.disabled = true;
+  try {
+    const result = await setLevelReaction(level.id, statsClientId, desired);
+    level.likes = Math.max(0, (level.likes || 0) - (wasLiked ? 1 : 0) +
+      (result === 'like' ? 1 : 0));
+    level.dislikes = Math.max(0, (level.dislikes || 0) - (wasDisliked ? 1 : 0) +
+      (result === 'dislike' ? 1 : 0));
+    level.liked = result === 'like';
+    level.disliked = result === 'dislike';
+    renderFilteredCatalog();
+  } catch (error) {
+    setCatalogMessage(error.message);
+    button.disabled = false;
+  }
+}
+function levelFooter(level, official, panel) {
+  const footer = document.createElement('div');footer.className = 'ws-level-footer';
+  if (level.author) {
+    const author = document.createElement('small');author.className = 'ws-level-author';
+    author.textContent = isBanned(wsBans, level.author) ?
+      wsText(`Автор: ${level.author} (забанен)`, `Author: ${level.author} (banned)`) :
+      wsText(`Автор: ${level.author}`, `Author: ${level.author}`);
+    footer.append(author);
+  }
+  const toggle = document.createElement('button');toggle.type = 'button';
+  toggle.className = 'ws-comments-toggle';toggle.textContent = 'Комментарии';
+  toggle.addEventListener('click', () => {
+    panel.classList.toggle('hidden');
+    if (!panel.classList.contains('hidden')) renderComments(level.id, panel);
+  });
+  footer.append(toggle);
+  if (isModerator()) footer.append(moderatorActions(level, official));
+  return footer;
+}
+function moderatorActions(level, official) {
+  const wrap = document.createElement('div');wrap.className = 'ws-mod-actions';
+  const officialButton = document.createElement('button');
+  officialButton.type = 'button';officialButton.className = 'small-button';
+  officialButton.textContent = official ? 'Снять «официальный»' : 'Сделать официальным';
+  officialButton.addEventListener('click', async () => {
+    officialButton.disabled = true;
+    try {await setLevelOfficial(level.id, !official);notice('Готово.');await loadWorkshopCatalog();}
+    catch (error) {setCatalogMessage(error.message);}
+    finally {officialButton.disabled = false;}
+  });
+  wrap.append(officialButton);
+  if (!level.author) return wrap;
+  const banned = isBanned(wsBans, level.author);
+  const reason = document.createElement('input');
+  reason.type = 'text';reason.maxLength = 140;reason.className = 'ws-ban-reason';
+  reason.placeholder = banned ? 'Причина разбана' : 'Причина бана';
+  const banButton = document.createElement('button');
+  banButton.type = 'button';banButton.className = 'small-button';
+  banButton.textContent = banned ? 'Разбанить автора' : 'Забанить автора';
+  banButton.addEventListener('click', async () => {
+    banButton.disabled = true;
+    try {
+      if (banned) await unbanAccount(level.author, reason.value);
+      else await banAccount(level.author, reason.value);
+      wsBans = await loadBans().catch(() => ({}));
+      notice('Готово.');await loadWorkshopCatalog();
+    } catch (error) {setCatalogMessage(error.message);}
+    finally {banButton.disabled = false;}
+  });
+  wrap.append(reason, banButton);
+  return wrap;
+}
+async function renderComments(levelId, panel) {
+  panel.replaceChildren();
+  const loading = document.createElement('p');loading.className = 'muted';
+  loading.textContent = 'Загружаем сообщения…';panel.append(loading);
+  let comments;
+  try {
+    comments = (await loadComments(levelId))
+      .filter(comment => !comment.hidden && !isBanned(wsBans, comment.login));
+  } catch (error) {
+    panel.replaceChildren();
+    const note = document.createElement('p');note.className = 'muted';
+    note.textContent = `Сообщения не загрузились: ${error.message}`;panel.append(note);return;
+  }
+  panel.replaceChildren();
+  if (!comments.length) {
+    const note = document.createElement('p');note.className = 'muted';
+    note.textContent = 'Сообщений пока нет.';panel.append(note);
+  }
+  for (const comment of comments) panel.append(commentNode(levelId, comment, panel));
+  if (currentSession()) panel.append(commentForm(levelId, panel));
+  else {
+    const note = document.createElement('p');note.className = 'muted';
+    note.textContent = 'Писать сообщения могут только игроки с аккаунтом.';
+    panel.append(note);
+  }
+}
+function commentNode(levelId, comment, panel) {
+  const row = document.createElement('div');row.className = 'ws-comment';
+  const author = document.createElement('strong');author.textContent = comment.login;
+  const text = document.createElement('span');text.textContent = comment.text;
+  row.append(author, text);
+  const active = currentSession();
+  if (active && (active.admin || active.login === comment.login)) {
+    const hide = document.createElement('button');hide.type = 'button';
+    hide.className = 'ws-comment-hide';hide.textContent = 'Скрыть';
+    hide.addEventListener('click', async () => {
+      hide.disabled = true;
+      try {await hideComment(levelId, comment.id);await renderComments(levelId, panel);}
+      catch (error) {setCatalogMessage(error.message);}
+      finally {hide.disabled = false;}
+    });
+    row.append(hide);
+  }
+  return row;
+}
+function commentForm(levelId, panel) {
+  const form = document.createElement('form');form.className = 'ws-comment-form';
+  const input = document.createElement('input');
+  input.type = 'text';input.maxLength = MAX_COMMENT;input.placeholder = 'Сообщение под уровнем';
+  const submit = document.createElement('button');
+  submit.type = 'submit';submit.className = 'small-button';submit.textContent = 'Отправить';
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    submit.disabled = true;
+    try {await postComment(levelId, input.value);input.value = '';await renderComments(levelId, panel);}
+    catch (error) {setCatalogMessage(error.message);}
+    finally {submit.disabled = false;}
+  });
+  form.append(input, submit);
+  return form;
 }
 async function loadWorkshopCatalog() {
   const generationId = ++wsCatalogGeneration;
@@ -722,9 +998,10 @@ async function loadWorkshopCatalog() {
   const list = $('ws-catalog-list');list.replaceChildren();
   const loading = document.createElement('p');loading.className = 'muted';loading.textContent = 'Загружаем каталог…';list.append(loading);
   try {
-    const levels = await listPublishedLevels();
+    const [levels, bans] = await Promise.all([listPublishedLevels(statsClientId),
+      loadBans().catch(() => ({}))]);
     if (generationId !== wsCatalogGeneration || wsPage !== 'catalog') return;
-    wsCatalog = levels;renderWorkshopCatalog(levels);
+    wsCatalog = levels;wsBans = bans;updateCatalogTagOptions();renderFilteredCatalog();
   } catch (error) {
     if (generationId !== wsCatalogGeneration || wsPage !== 'catalog') return;
     list.replaceChildren();
@@ -739,10 +1016,11 @@ async function playPublishedLevel(id, button) {
   try {
     const record = await getPublishedLevel(id);
     const level = draftFromPublished(record);
-    startWorkshopPreview(level, record.title, 'catalog', isOfficialLevel(record.id));
+    startWorkshopPreview(level, record.title, 'catalog', isOfficialLevel(record.id, record));
   } catch (error) {
     setCatalogMessage(error.status === 401 || error.status === 403 ?
-      'Firebase запретил чтение /levels. Проверь правила базы.' : error.message);
+      wsText('Firebase запретил чтение /levels. Проверь правила базы.',
+        'Firebase denied access to /levels. Check the database rules.') : error.message);
   } finally {button.disabled = false;}
 }
 function startWorkshopPreview(level, title, returnPage, official = false) {
@@ -771,11 +1049,71 @@ function updateWorkshopJetpackControls() {
     button.classList.toggle('hidden', jetpack);
   for (const button of document.querySelectorAll('[data-ws-jetpack-control]'))
     button.classList.toggle('hidden', !jetpack);
+  const dash = $('ws-dash-control');
+  dash.classList.toggle('hidden', jetpack || wsPreviewState?.abilities?.dash !== true);
 }
 function previewJumpPointerDown(event) {
   if (screen !== 'workshop' || wsPage !== 'preview' || !wsPreviewState) return;
   event.preventDefault();
   if (!wsPreviewState.jetpack) wsJumpQueued = true;
+}
+function setAccountMessage(message = '') {
+  const node = $('ws-account-message');
+  node.textContent = message;node.classList.toggle('hidden', !message);
+}
+function renderAccountStatus() {
+  const active = currentSession();
+  const status = $('ws-account-status');
+  const button = $('ws-account-open');
+  status.textContent = active ?
+    active.admin ? `${active.login} · модератор` : active.login : 'Гость';
+  status.classList.toggle('signed-out', !active);
+  button.textContent = active ? 'Аккаунт' : 'Войти';
+  button.setAttribute('aria-label', active ? `Аккаунт ${active.login}` : 'Войти в аккаунт');
+  $('ws-account-signout').classList.toggle('hidden', !active);
+  if (active && !$('ws-account-login').value)
+    $('ws-account-login').value = active.login;
+}
+function openAccountDialog() {
+  setAccountMessage('');
+  const login = $('ws-account-login');
+  if (!login.value) {
+    const active = currentSession();
+    let remembered = '';
+    try {remembered = localStorage.getItem(WS_ACCOUNT_LOGIN_KEY) || '';} catch {}
+    login.value = active?.login || remembered;
+  }
+  $('ws-account-dialog').showModal();
+  const focus = login.value ? $('ws-account-password') : login;
+  focus.focus({preventScroll: true});
+}
+async function submitAccount(kind) {
+  const login = $('ws-account-login').value, password = $('ws-account-password').value;
+  const button = $(kind === 'create' ? 'ws-account-create' : 'ws-account-signin');
+  button.disabled = true;setAccountMessage('');
+  try {
+    const session = kind === 'create' ?
+      await createAccount(login, password) : await signIn(login, password);
+    try {localStorage.setItem(WS_ACCOUNT_LOGIN_KEY, session.login);} catch {}
+    $('ws-account-password').value = '';
+    $('ws-account-dialog').close();
+    notice(`Вход выполнен · ${session.login}`);
+    if (wsPage === 'catalog') await loadWorkshopCatalog();
+    if (publishAfterAccount) {
+      publishAfterAccount = false;
+      await publishWorkshopDraft();
+    }
+  } catch (error) {
+    setAccountMessage(error.message);
+  } finally {button.disabled = false;}
+}
+function applyWorkshopTutorial(enabled) {
+  wsTutorialHints = enabled === true;
+  try {localStorage.setItem(WS_TUTORIAL_KEY, wsTutorialHints ? '1' : '0');} catch {}
+  const box = $('ws-tutorial-toggle');
+  if (box) box.checked = wsTutorialHints;
+  for (const tools of document.querySelectorAll('.ws-tools'))
+    tools.classList.toggle('hints-hidden', !wsTutorialHints);
 }
 function applyWorkshopControl(preference) {
   wsControlPreference = ['auto', 'buttons', 'keyboard'].includes(preference) ? preference : 'auto';
@@ -788,7 +1126,7 @@ function applyWorkshopControl(preference) {
 }
 function clearWorkshopInput() {
   wsTouchButtons.clear();
-  wsJumpQueued = wsTriggerQueued = false;wsKeys.clear();
+  wsJumpQueued = wsDashQueued = wsTriggerQueued = false;wsKeys.clear();
 }
 function resetWorkshopPreview() {
   if (!wsPreviewLevel) return;
@@ -807,35 +1145,63 @@ function workshopFrame(dt) {
   const jump = !wsPreviewState.jetpack && (wsJumpQueued ||
     (wsControlMode === 'keyboard' &&
       (wsKeys.has(' ') || wsKeys.has('arrowup') || wsKeys.has('w'))));
+  const dash = wsDashQueued || (wsControlMode === 'keyboard' &&
+    (wsKeys.has('shift') || wsKeys.has('x')));
   const trigger = wsTriggerQueued || (wsControlMode === 'keyboard' && wsKeys.has('e'));
-  wsJumpQueued = false;wsTriggerQueued = false;
-  stepPreview(wsPreviewState, {axis, vertical, jump, trigger}, dt);
+  wsJumpQueued = wsDashQueued = wsTriggerQueued = false;
+  stepPreview(wsPreviewState, {axis, vertical, jump, dash, trigger}, dt);
   updateWorkshopJetpackControls();
   if (wsPreviewState.orbActivated)
-    $('ws-preview-status').textContent = 'Орб активирован!';
+    $('ws-preview-status').textContent = wsText('Орб активирован!', 'Orb activated!');
   drawCurrentPreview();
   if (wsPreviewState.won && !wsWinAnnounced) {
-    wsWinAnnounced = true;$('ws-preview-status').textContent = `Уровень пройден! Собрано монет: ${wsPreviewState.coins}.`;
-    notice('Уровень пройден!');
+    wsWinAnnounced = true;$('ws-preview-status').textContent =
+      wsText(`Уровень пройден! Собрано монет: ${wsPreviewState.coins}.`,
+        `Level complete! Coins collected: ${wsPreviewState.coins}.`);
+    notice(wsText('Уровень пройден!', 'Level complete!'));
   }
 }
 async function publishWorkshopDraft() {
   const check = validateDraft(wsDraft);
   if (!check.ok) {showWorkshopMessage(check.message);return;}
+  const active = currentSession();
+  if (!active) {
+    publishAfterAccount = true;
+    showWorkshopMessage('Для публикации войдите или создайте аккаунт. После входа уровень опубликуется сам.');
+    openAccountDialog();
+    return;
+  }
   const button = $('ws-publish');button.disabled = true;
   showWorkshopMessage('');
   try {
-    const result = await publishLevel(wsDraft);
+    const result = await publishLevel(wsDraft,
+      {login: active.login, tok: active.token});
+    /* The public record briefly carries this token; retire it right away. */
+    let tokenRetired = false;
+    try {tokenRetired = !!(await rotateToken());} catch { /* surface below */ }
     wsDraft.publishedId = result.id;wsDraft.publishedAt = Date.now();
     saveWorkshopDraft();
-    showWorkshopMessage(`Уровень опубликован под ID ${result.id}. Он доступен в каталоге и нативной игре.`);
+    const message = `Уровень опубликован под ID ${result.id}. Он доступен в каталоге и нативной игре.` +
+      (tokenRetired ? '' : ' Не удалось сразу заменить токен сессии — проверь интернет и войди заново.');
+    showWorkshopMessage(message);
     notice(`Уровень опубликован · ID ${result.id}`, 6000);
   } catch (error) {
-    const message = error.message.startsWith('Уровень ') ? error.message :
+    let tokenWarning = '';
+    if (error.levelWriteAttempted) {
+      if (error.levelWritten) {
+        wsDraft.publishedId = error.levelId;wsDraft.publishedAt = Date.now();
+        saveWorkshopDraft();
+      }
+      let tokenRetired = false;
+      try {tokenRetired = !!(await rotateToken());} catch { /* warn below */ }
+      if (!tokenRetired)
+        tokenWarning = ' Не удалось заменить токен сессии — проверь интернет и войди заново.';
+    }
+    const baseMessage = error.message.startsWith('Уровень ') ? error.message :
       error.status === 401 || error.status === 403 ?
       'Firebase отклонил запись. Для публикации правила должны разрешать создание записей в /levels и /levels-index. Правила базы автоматически не менялись.' :
       error.message;
-    showWorkshopMessage(message);
+    showWorkshopMessage(baseMessage + tokenWarning);
   } finally {button.disabled = false;}
 }
 async function openWorkshop() {
@@ -1070,7 +1436,13 @@ function frame(now) {
       pending:!!pendingSeq,
       liveDelay:slot === 'guest' ? Math.min(.4, (now-lastSnapshot)/1000) : 0});
   }
-  if (screen === 'workshop') workshopFrame(dt);
+  if (screen === 'workshop') {
+    workshopFrame(dt);
+    if (wsPage === 'editor' && wsDraft.objects.some(object =>
+        object.visible !== false && (object.pulse === true || object.shake === true)))
+      drawEditorCanvas($('ws-editor-canvas'), wsDraft, wsSelectedIds, wsTool,
+                       wsArt, wsCamera, now / 1000);
+  }
   requestAnimationFrame(frame);
 }
 function populateBook() {
@@ -1102,6 +1474,10 @@ $('ws-open-catalog').addEventListener('click', () => {setWorkshopPage('catalog')
 $('ws-editor-back').addEventListener('click', () => setWorkshopPage('home'));
 $('ws-catalog-back').addEventListener('click', () => setWorkshopPage('home'));
 $('ws-catalog-refresh').addEventListener('click', loadWorkshopCatalog);
+$('ws-catalog-search').addEventListener('input', renderFilteredCatalog);
+$('ws-catalog-difficulty').addEventListener('change', renderFilteredCatalog);
+$('ws-catalog-tag').addEventListener('change', renderFilteredCatalog);
+$('ws-catalog-sort').addEventListener('change', renderFilteredCatalog);
 $('ws-preview').addEventListener('click', () => {
   const check = validateDraft(wsDraft);
   if (!check.ok) {showWorkshopMessage(check.message);return;}
@@ -1113,12 +1489,6 @@ $('ws-preview-back').addEventListener('click', () => {
   if (wsPreviewReturn === 'catalog') loadWorkshopCatalog();
 });
 $('ws-preview-reset').addEventListener('click', resetWorkshopPreview);
-$('ws-title-input').addEventListener('input', event => {
-  wsDraft.title = event.target.value;showWorkshopMessage('');saveWorkshopDraft();
-});
-$('ws-description-input').addEventListener('input', event => {
-  wsDraft.description = event.target.value;saveWorkshopDraft();
-});
 for (const button of document.querySelectorAll('[data-ws-tool]'))
   button.addEventListener('click', () => setWorkshopTool(button.dataset.wsTool));
 for (const button of document.querySelectorAll('[data-ws-type]')) button.addEventListener('click', () => {
@@ -1154,6 +1524,30 @@ $('ws-rotate-step').addEventListener('input', wsUpdateRotateLabels);
 wsUpdateRotateLabels();
 for (const button of document.querySelectorAll('[data-ws-pan]'))
   button.addEventListener('click', () => wsPan(button.dataset.wsPan));
+$('ws-title-input').addEventListener('input', event => {
+  wsDraft.title = event.target.value;showWorkshopMessage('');saveWorkshopDraft();
+});
+$('ws-description-input').addEventListener('input', event => {
+  wsDraft.description = event.target.value;saveWorkshopDraft();
+});
+$('ws-difficulty-input').addEventListener('change', event => {
+  wsDraft.difficulty = event.target.value;saveWorkshopDraft();
+});
+$('ws-tags-input').addEventListener('input', event => {
+  wsDraft.tags = event.target.value.split(',').map(tag => tag.trim()).filter(Boolean).slice(0, 9);
+  saveWorkshopDraft();
+});
+const movementKeys = {
+  'ws-ability-double-jump': 'doubleJump',
+  'ws-ability-dash': 'dash',
+  'ws-ability-wall-slide': 'wallSlide',
+};
+for (const [id, key] of Object.entries(movementKeys))
+  $(id).addEventListener('change', event => {
+    wsDraft.movement ||= {};
+    wsDraft.movement[key] = event.target.checked;
+    saveWorkshopDraft();
+  });
 $('ws-object-x').addEventListener('change', e => updateSelectedProperty('x', e.target.value));
 $('ws-object-y').addEventListener('change', e => updateSelectedProperty('y', e.target.value));
 $('ws-object-width').addEventListener('change', e => updateSelectedProperty('width', e.target.value));
@@ -1161,6 +1555,8 @@ $('ws-object-height').addEventListener('change', e => updateSelectedProperty('he
 $('ws-object-angle').addEventListener('change', e => updateSelectedProperty('angle', e.target.value));
 $('ws-object-number').addEventListener('change', e => updateSelectedProperty('number', e.target.value));
 $('ws-object-color').addEventListener('input', e => updateSelectedProperty('color', e.target.value));
+$('ws-object-color-default').addEventListener('change', e =>
+  updateSelectedProperty('defaultColor', e.target.checked));
 $('ws-particle-settings').addEventListener('click', openParticleDialog);
 for (const id of ['ws-particle-close', 'ws-particle-close-bottom'])
   $(id).addEventListener('click', () => $('ws-particle-dialog').close());
@@ -1183,6 +1579,8 @@ for (const input of document.querySelectorAll('[data-emitter-key]')) {
 }
 $('ws-trigger-kind').addEventListener('change', e => updateSelectedTrigger('kind', e.target.value));
 $('ws-trigger-event').addEventListener('change', e => updateSelectedTrigger('event', e.target.value));
+$('ws-trigger-touch-mode').addEventListener('change', e => updateSelectedTrigger('touchMode', e.target.value));
+$('ws-trigger-count').addEventListener('change', e => updateSelectedTrigger('count', e.target.value));
 $('ws-trigger-group').addEventListener('change', e => updateSelectedTrigger('groupId', e.target.value));
 $('ws-trigger-forever-group').addEventListener('change', e => updateSelectedTrigger('groupId', e.target.value));
 $('ws-trigger-x').addEventListener('change', e => updateSelectedTrigger('valueX', e.target.value));
@@ -1192,6 +1590,21 @@ $('ws-trigger-gravity').addEventListener('input', e => updateSelectedTrigger('gr
 $('ws-trigger-color').addEventListener('input', e => updateSelectedTrigger('color', e.target.value));
 $('ws-trigger-action').addEventListener('change', e => updateSelectedTrigger('action', e.target.value));
 $('ws-control-select').addEventListener('change', e => applyWorkshopControl(e.target.value));
+$('ws-tutorial-toggle').addEventListener('change', e => applyWorkshopTutorial(e.target.checked));
+$('ws-account-open').addEventListener('click', openAccountDialog);
+$('ws-account-close').addEventListener('click', () => {
+  publishAfterAccount = false;
+  $('ws-account-dialog').close();
+});
+$('ws-account-dialog').addEventListener('cancel', () => {publishAfterAccount = false;});
+$('ws-account-form').addEventListener('submit', event => {
+  event.preventDefault();submitAccount('signin');
+});
+$('ws-account-create').addEventListener('click', () => submitAccount('create'));
+$('ws-account-signout').addEventListener('click', async () => {
+  signOut();notice('Выход выполнен.');
+  if (wsPage === 'catalog') await loadWorkshopCatalog();
+});
 for (const button of document.querySelectorAll('[data-ws-hold]')) {
   const direction = button.dataset.wsHold;
   button.addEventListener('pointerdown', event => {
@@ -1205,8 +1618,12 @@ for (const button of document.querySelectorAll('[data-ws-hold]')) {
   button.addEventListener('lostpointercapture', release);
 }
 for (const button of document.querySelectorAll('[data-ws-press]')) {
-  const action = button.dataset.wsPress === 'jump' ? 'jump' : 'trigger';
-  const press = () => {if (action === 'jump') wsJumpQueued = true;else wsTriggerQueued = true;};
+  const action = button.dataset.wsPress;
+  const press = () => {
+    if (action === 'jump') wsJumpQueued = true;
+    else if (action === 'dash') wsDashQueued = true;
+    else wsTriggerQueued = true;
+  };
   button.addEventListener('pointerdown', event => {
     event.preventDefault();button.setPointerCapture?.(event.pointerId);press();
   });
@@ -1234,7 +1651,7 @@ window.addEventListener('keydown', event => {
   if (wsPage !== 'preview' || wsControlMode !== 'keyboard') return;
   const key = event.key.toLowerCase();
   if (['arrowleft', 'arrowright', 'arrowup', 'arrowdown', ' ',
-       'a', 'd', 'w', 's', 'e'].includes(key)) event.preventDefault();
+       'a', 'd', 'w', 's', 'e', 'x', 'shift'].includes(key)) event.preventDefault();
   wsKeys.add(key);
   if (!wsPreviewState?.jetpack && !event.repeat &&
       ['arrowup', ' ', 'w'].includes(key)) wsJumpQueued = true;
@@ -1267,6 +1684,8 @@ $('music').addEventListener('click', async () => {
   } else {audio.pause();$('music').textContent = 'Музыка';}
 });
 canvas.addEventListener('pointerdown', pointer);
+applyWorkshopTutorial(wsTutorialHints);
+onSessionChange(renderAccountStatus);renderAccountStatus();
 populateBook();preloadArtwork();
 requestAnimationFrame(frame);
 let previous = null;

@@ -32,6 +32,17 @@ int on_http_request(const char *path, const char *method, const char *body,
         return 200;
     }
     if (fake_levels_enabled && !strcmp(method, "GET") && response &&
+        !strcmp(path, "level-stats.json") && response_cap >= 5) {
+        memcpy(response, "null", 5);
+        return 200;
+    }
+    if (fake_levels_enabled && path && !strncmp(path, "level-stats/", 12) &&
+        (!strcmp(method, "PUT") || !strcmp(method, "DELETE")) &&
+        response && response_cap >= 5) {
+        memcpy(response, "null", 5);
+        return 200;
+    }
+    if (fake_levels_enabled && !strcmp(method, "GET") && response &&
         !strcmp(path, "levels-index.json") && response_cap > sizeof test_level_index) {
         memcpy(response, test_level_index, sizeof test_level_index);
         return 200;
