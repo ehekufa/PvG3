@@ -1,0 +1,70 @@
+{
+  "rules": {
+    "rooms": {
+      ".read": true,
+      "$room": {
+        ".write": "$room.matches(/^[A-Z2-9]{6}$/)",
+        ".validate": "!newData.exists() || (newData.child('version').val() === 1 && newData.child('map').isNumber() && newData.child('host/id').isString())"
+      }
+    },
+    "levels": {
+      ".read": true,
+      "$id": {
+        ".write": "$id.matches(/^[1-9][0-9]{0,5}$/) && newData.exists() && (\n  newData.child('format').val() === 'PVG3-PUBLISHED-LEVEL' &&\n  newData.child('version').val() === 1 &&\n  newData.child('id').val() === $id &&\n  newData.child('title').isString() &&\n  newData.child('title').val().length > 0 &&\n  newData.child('title').val().length <= 80 &&\n  (!newData.child('description').exists() || (newData.child('description').isString() && newData.child('description').val().length <= 160)) &&\n  newData.child('project').exists() &&\n  newData.child('author/login').isString() &&\n  newData.child('author/login').val().matches(/^[a-z0-9_]{3,24}$/) &&\n  newData.child('author/tok').isString() &&\n  newData.child('author/tok').val().matches(/^[a-f0-9]{64}$/) &&\n  root.child('tokens').child(newData.child('author/login').val()).child('token').val() === newData.child('author/tok').val() &&\n  root.child('bans').child(newData.child('author/login').val()).child('banned').val() !== true &&\n  (!data.exists() || newData.child('author/login').val() === data.child('author/login').val() || (\n    root.child('admins').child(newData.child('author/login').val()).val() === true &&\n    root.child('tokens').child(newData.child('author/login').val()).child('token').val() === newData.child('author/tok').val()\n  )) &&\n  (!newData.child('official').exists() || newData.child('official').isBoolean()) &&\n  (\n    newData.child('official').val() === data.child('official').val() ||\n    (newData.child('official').val() !== true && data.child('official').val() !== true) ||\n    (root.child('admins').child(newData.child('author/login').val()).val() === true &&\n     root.child('tokens').child(newData.child('author/login').val()).child('token').val() === newData.child('author/tok').val())\n  )\n)"
+      }
+    },
+    "levels-index": {
+      ".read": true,
+      "$id": {
+        ".write": "$id.matches(/^[1-9][0-9]{0,5}$/) && newData.exists() && (\n  newData.child('id').val() === $id &&\n  newData.child('title').isString() &&\n  newData.child('title').val().length > 0 &&\n  newData.child('title').val().length <= 80 &&\n  (!newData.child('description').exists() || (newData.child('description').isString() && newData.child('description').val().length <= 160)) &&\n  (!newData.child('updatedAt').exists() || newData.child('updatedAt').isNumber()) &&\n  newData.child('author').isString() &&\n  newData.child('author').val().matches(/^[a-z0-9_]{3,24}$/) &&\n  newData.child('author').val() === root.child('levels').child($id).child('author/login').val() &&\n  root.child('tokens').child(newData.child('author').val()).child('token').val() === root.child('levels').child($id).child('author/tok').val() &&\n  ((!newData.child('official').exists() && !root.child('levels').child($id).child('official').exists()) ||\n   (newData.child('official').exists() && newData.child('official').val() === root.child('levels').child($id).child('official').val()) ||\n   root.child('admins').child(newData.child('author').val()).val() === true)\n)"
+      }
+    },
+    "level-stats": {
+      ".read": true,
+      "$levelId": {
+        "likes": {
+          "$clientId": {
+            ".write": "$levelId.matches(/^[1-9][0-9]{0,5}$/) && $clientId.matches(/^[a-f0-9]{32}$/) && root.child('levels').child($levelId).exists() && ((data.exists() && !newData.exists()) || (!data.exists() && newData.val() === true && !root.child('level-stats').child($levelId).child('dislikes').child($clientId).exists()))",
+            ".validate": "newData.isBoolean() && newData.val() === true"
+          }
+        },
+        "dislikes": {
+          "$clientId": {
+            ".write": "$levelId.matches(/^[1-9][0-9]{0,5}$/) && $clientId.matches(/^[a-f0-9]{32}$/) && root.child('levels').child($levelId).exists() && ((data.exists() && !newData.exists()) || (!data.exists() && newData.val() === true && !root.child('level-stats').child($levelId).child('likes').child($clientId).exists()))",
+            ".validate": "newData.isBoolean() && newData.val() === true"
+          }
+        }
+      }
+    },
+    "comments": {
+      ".read": true,
+      "$level": {
+        "$cid": {
+          ".write": "$level.matches(/^[1-9][0-9]{0,5}$/) && $cid.matches(/^[a-z0-9]{8,24}$/) && newData.exists() && (\n  (!data.exists() && (\n    newData.hasChildren(['login', 'text', 'at', 'tok']) &&\n    newData.child('login').val().matches(/^[a-z0-9_]{3,24}$/) &&\n    root.child('tokens').child(newData.child('login').val()).child('token').val() === newData.child('tok').val() &&\n    root.child('bans').child(newData.child('login').val()).child('banned').val() !== true &&\n    newData.child('text').isString() &&\n    newData.child('text').val().length >= 1 &&\n    newData.child('text').val().length <= 300 &&\n    newData.child('at').isNumber() &&\n    !newData.child('hidden').exists()\n  )) ||\n  (data.exists() && newData.child('login').val() === data.child('login').val() && newData.child('text').val() === data.child('text').val() && newData.child('hidden').val() === true && newData.child('by').val() === data.child('login').val() && (\n    root.child('tokens').child(newData.child('by').val()).child('token').val() === newData.child('tok').val()\n  )) ||\n  (data.exists() && newData.child('login').val() === data.child('login').val() && newData.child('text').val() === data.child('text').val() && newData.child('hidden').val() === true && (\n    root.child('admins').child(newData.child('by').val()).val() === true &&\n    root.child('tokens').child(newData.child('by').val()).child('token').val() === newData.child('tok').val()\n  ))\n)"
+        }
+      }
+    },
+    "accounts": {
+      ".read": false,
+      "$login": {
+        ".write": "$login.matches(/^[a-z0-9_]{3,24}$/) && newData.exists() && (\n  (!data.exists() && (\n    newData.hasChildren(['salt', 'hash', 'createdAt']) &&\n    newData.child('salt').val().matches(/^[a-f0-9]{64}$/) &&\n    newData.child('hash').val().matches(/^[a-f0-9]{64}$/) &&\n    newData.child('createdAt').isNumber()\n  )) ||\n  (data.exists() && (\n    newData.hasChildren(['salt', 'hash', 'createdAt', 'proof']) &&\n    newData.child('salt').val().matches(/^[a-f0-9]{64}$/) &&\n    newData.child('hash').val().matches(/^[a-f0-9]{64}$/) &&\n    newData.child('createdAt').val() === data.child('createdAt').val() &&\n    newData.child('proof').val() === root.child('tokens').child($login).child('token').val()\n  ))\n)"
+      }
+    },
+    "tokens": {
+      ".read": false,
+      "$login": {
+        ".write": "$login.matches(/^[a-z0-9_]{3,24}$/) && newData.exists() && (\n  root.child('bans').child($login).child('banned').val() !== true &&\n  newData.hasChildren(['token', 'hash']) &&\n  newData.child('token').val().matches(/^[a-f0-9]{64}$/) &&\n  newData.child('hash').val() === root.child('accounts').child($login).child('hash').val()\n)"
+      }
+    },
+    "admins": {
+      ".read": true,
+      ".write": false
+    },
+    "bans": {
+      ".read": true,
+      "$login": {
+        ".write": "$login.matches(/^[a-z0-9_]{3,24}$/) && newData.exists() && (\n  newData.hasChildren(['banned', 'reason', 'at', 'by', 'tok']) &&\n  (newData.child('banned').val() === true || newData.child('banned').val() === false) &&\n  newData.child('reason').isString() &&\n  newData.child('reason').val().length <= 140 &&\n  newData.child('at').isNumber() &&\n  root.child('admins').child(newData.child('by').val()).val() === true &&\n  root.child('tokens').child(newData.child('by').val()).child('token').val() === newData.child('tok').val()\n)"
+      }
+    }
+  }
+}

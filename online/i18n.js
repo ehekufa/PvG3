@@ -4,6 +4,30 @@
  * labels stay Russian canonically; translation happens only for display.
  * {0}, {1} placeholders are filled from the extra arguments. */
 const EN = {
+  'Firebase запретил запись в /levels-index. Проверь правила Firebase.': 'Firebase denied writes to /levels-index. Check the Firebase rules.',
+  'Firebase запретил чтение или запись. Проверь правила Firebase.': 'Firebase denied reads or writes. Check the Firebase rules.',
+  'Firebase не отвечает (таймаут). Проверь интернет.': 'Firebase is not responding (timeout). Check the internet.',
+  'Время {0}': 'Time {0}',
+  'Выбери сложность уровня.': 'Pick the level difficulty.',
+  'Комната закрыта, уже началась или занята.': 'The room is closed, already started, or busy.',
+  'Комната уже занята. Обнови список и попробуй снова.': 'The room is busy. Refresh the list and try again.',
+  'Монеты {0}/{1}': 'Coins {0}/{1}',
+  'Не удалось заменить токен сессии — проверь интернет и войди заново.': 'Could not replace the session token — check your internet and sign in again.',
+  'Не удалось подобрать свободный ID для уровня.': 'Could not find a free level ID.',
+  'Не удалось создать уникальный код комнаты.': 'Could not create a unique room code.',
+  'Не удалось сразу заменить токен сессии — проверь интернет и войди заново.': 'Could not replace the session token right away — check your internet and sign in again.',
+  'Нет соединения с Firebase. Проверь сеть или настройки доступа.': 'No connection to Firebase. Check the network or access settings.',
+  'Нет уровней по выбранным фильтрам.': 'No levels match these filters.',
+  'Переключатель': 'Toggle',
+  'Попытка {0}': 'Attempt {0}',
+  'Появление': 'Spawn',
+  'Проверь настройки способностей игрока.': 'Check the player ability settings.',
+  'Прогресс {0}%': 'Progress {0}%',
+  'Счётчик': 'Count',
+  'Теги не должны повторяться.': 'Tags must not repeat.',
+  'Теги: не больше 8, до 16 символов каждый.': 'Tags: up to 8, max 16 characters each.',
+  'Уровень {0} сохранён, но не появился в каталоге: {1} Повтори публикацию позже или проверь права базы.': 'Level {0} saved, but it did not appear in the catalog: {1} Try publishing again later or check the database permissions.',
+  'Уровень повреждён или его формат не поддерживается.': 'The level is damaged or its format is not supported.',
   'PvG3 Онлайн — растения против уток': 'PvG3 Online — plants vs. ducks',
   'PvG3 Онлайн: играй за растения Кирилла или отправляй уток-зомби другу. Комнаты через Firebase.': 'PvG3 Online: play as Kirill\'s plants or send zombie ducks to a friend. Rooms via Firebase.',
   'онлайн-арена Кирилла': 'Kirill\'s online arena',
@@ -360,9 +384,16 @@ export function setLang(next) {
 export function initLang() {
   let saved = null;
   try { saved = localStorage.getItem('pvg3-lang'); } catch { /* private mode */ }
-  if (saved === 'en' || saved === 'ru') lang = saved;
-  else if (typeof navigator !== 'undefined' &&
-           /^en\b/i.test(navigator.language || '')) lang = 'en';
+  let requested = null;
+  try {
+    if (typeof location !== 'undefined')
+      requested = new URLSearchParams(location.search).get('lang');
+  } catch { /* no location */ }
+  const guess = typeof navigator !== 'undefined' ? (navigator.language || 'ru') : 'ru';
+  const pick = (saved === 'en' || saved === 'ru') ? saved :
+    (requested && /^(en|ru)/i.test(requested) ? requested.slice(0, 2).toLowerCase() :
+      (/^en\b/i.test(guess) ? 'en' : 'ru'));
+  lang = pick === 'en' ? 'en' : 'ru';
   return lang;
 }
 

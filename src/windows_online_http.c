@@ -8,6 +8,7 @@
 #include <windows.h>
 #include <winhttp.h>
 
+#include "online_config.h"
 #include "online_net.h"
 
 #include <stdint.h>
@@ -15,10 +16,29 @@
 #include <string.h>
 #include <wchar.h>
 
-#define FIREBASE_HOST L"pvg3-ae824-default-rtdb.firebaseio.com"
+/* Widened at first use from the configurable ASCII host name. */
+static const wchar_t *firebase_host(void);
+#define FIREBASE_HOST firebase_host()
+
+/* The configurable host name lives in ASCII; widen it once for WinHTTP. */
+static const wchar_t *firebase_host(void) {
+    static wchar_t host[128];
+    static int ready;
+    if (!ready) {
+        char ascii[192];
+        pvg3_database_host(ascii, sizeof ascii);
+        size_t i = 0;
+        for (; ascii[i] && i + 1 < sizeof host / sizeof host[0]; ++i)
+            host[i] = (wchar_t)(unsigned char)ascii[i];
+        host[i] = 0;
+        ready = 1;
+    }
+    return host;
+}
 
 static int safe_path(const char *path) {
-    static const char *const roots[] = {"rooms", "levels", "levels-index"};
+    static const char *const roots[] = {"rooms", "levels", "levels-index",
+        "level-stats", "accounts", "tokens", "admins", "bans", "comments"};
     if (!path) return 0;
     int allowed = 0;
     for (size_t i = 0; i < sizeof roots / sizeof roots[0]; ++i) {
